@@ -1,0 +1,56 @@
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+from app.database import Base
+
+
+class Board(Base):
+    __tablename__ = "board"
+
+    board_id = Column(Integer, primary_key=True, autoincrement=True)
+    board_name = Column(String(100), nullable=False)
+    board_type = Column(String(30), nullable=False)  # notice/qna/free
+    description = Column(Text)
+    created_at = Column(DateTime, server_default=func.now())
+
+    posts = relationship("BoardPost", back_populates="board", cascade="all, delete-orphan")
+
+
+class BoardPost(Base):
+    __tablename__ = "board_post"
+
+    post_id = Column(Integer, primary_key=True, autoincrement=True)
+    board_id = Column(Integer, ForeignKey("board.board_id"), nullable=False)
+    author_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    title = Column(String(200), nullable=False)
+    content = Column(Text, nullable=False)
+    is_notice = Column(Boolean, default=False)
+    attachments = Column(Text)  # JSON
+    view_count = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    board = relationship("Board", back_populates="posts")
+    author = relationship("User", back_populates="board_posts")
+    comments = relationship("PostComment", back_populates="post", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_post_board", "board_id", "created_at"),
+    )
+
+
+class PostComment(Base):
+    __tablename__ = "post_comment"
+
+    comment_id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("board_post.post_id", ondelete="CASCADE"), nullable=False)
+    author_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    post = relationship("BoardPost", back_populates="comments")
+    author = relationship("User", back_populates="post_comments")
+
+    __table_args__ = (
+        Index("idx_post_comment", "post_id"),
+    )

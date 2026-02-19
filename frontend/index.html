@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSP+ 코칭노트 관리 시스템</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/calendar.css" />
+  <link rel="stylesheet" href="/css/dashboard.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="app-header" style="display:none;">
+      <div class="header-inner">
+        <div class="logo">SSP+ 코칭노트</div>
+        <nav id="main-nav"></nav>
+        <div class="header-right">
+          <button id="notif-btn" class="icon-btn" title="알림">🔔 <span id="notif-badge" class="badge" style="display:none;"></span></button>
+          <span id="user-info"></span>
+          <button id="logout-btn" class="btn btn-sm">로그아웃</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="page-content"></main>
+
+    <div id="modal-overlay" class="modal-overlay" style="display:none;">
+      <div id="modal-box" class="modal-box">
+        <button id="modal-close" class="modal-close">✕</button>
+        <div id="modal-body"></div>
+      </div>
+    </div>
+
+    <div id="notif-panel" class="notif-panel" style="display:none;">
+      <div class="notif-header">
+        <span>알림</span>
+        <button id="notif-read-all" class="btn btn-xs">모두 읽음</button>
+      </div>
+      <div id="notif-list"></div>
+    </div>
+  </div>
+
+  <script src="/js/utils/formatter.js"></script>
+  <script src="/js/utils/validator.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/state.js"></script>
+  <script src="/js/components/header.js"></script>
+  <script src="/js/components/modal.js"></script>
+  <script src="/js/components/pagination.js"></script>
+  <script src="/js/components/notification.js"></script>
+  <script src="/js/pages/login.js"></script>
+  <script src="/js/pages/projectList.js"></script>
+  <script src="/js/pages/projectDetail.js"></script>
+  <script src="/js/pages/coachingNote.js"></script>
+  <script src="/js/pages/calendar.js"></script>
+  <script src="/js/pages/dashboard.js"></script>
+  <script src="/js/pages/board.js"></script>
+  <script src="/js/pages/admin.js"></script>
+  <script src="/js/pages/sessionDetail.js"></script>
+  <script src="/js/router.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

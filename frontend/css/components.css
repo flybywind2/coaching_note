@@ -1,0 +1,14 @@
+/* Shared component styles */
+.page-error { text-align: center; padding: 60px; }
+.page-error h2 { color: #757575; }
+
+select { appearance: auto; }
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .project-grid { grid-template-columns: 1fr; }
+  .info-grid { grid-template-columns: 1fr; }
+  .stat-cards { grid-template-columns: repeat(2, 1fr); }
+  #main-nav { display: none; }
+  .header-inner { flex-wrap: wrap; }
+}
