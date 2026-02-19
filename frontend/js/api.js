@@ -46,6 +46,17 @@ const API = {
   getDocuments: (projectId, type) => apiFetch(`/api/projects/${projectId}/documents${type ? '?doc_type=' + type : ''}`),
   getDocument: (id) => apiFetch(`/api/documents/${id}`),
   deleteDocument: (id) => apiFetch(`/api/documents/${id}`, { method: 'DELETE' }),
+  uploadDocument: (projectId, formData) => {
+    const token = Auth.getToken();
+    return fetch(`/api/projects/${projectId}/documents`, {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    }).then(async res => {
+      if (!res.ok) { const e = await res.json().catch(() => ({ detail: res.statusText })); throw new Error(e.detail || 'Upload failed'); }
+      return res.json();
+    });
+  },
 
   // Coaching Notes
   getNotes: (projectId) => apiFetch(`/api/projects/${projectId}/notes`),

@@ -38,10 +38,10 @@ Pages.projectDetail = {
         el.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
         switch (tab) {
           case 'info': this._renderInfo(tabContent, project); break;
-          case 'docs': this._renderDocs(tabContent, projectId); break;
+          case 'docs': this._renderDocs(tabContent, projectId, canWrite); break;
           case 'notes': this._renderNotes(tabContent, notes, projectId, canWrite); break;
           case 'tasks': this._renderTasks(tabContent, tasks, projectId, user); break;
-          case 'sessions': this._renderSessions(tabContent, projectId); break;
+          case 'sessions': this._renderSessions(tabContent, projectId, project, canWrite); break;
           case 'ai': this._renderAI(tabContent, projectId); break;
         }
       };
@@ -67,14 +67,50 @@ Pages.projectDetail = {
     </div>`;
   },
 
-  async _renderDocs(el, projectId) {
+  async _renderDocs(el, projectId, canWrite) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     const docs = await API.getDocuments(projectId);
     const types = { application: '지원서', basic_consulting: '기초컨설팅', workshop_result: '워크샵결과', mid_presentation: '중간발표', final_presentation: '최종발표' };
     el.innerHTML = `<div class="docs-section">${Object.entries(types).map(([t, label]) => {
       const doc = docs.find(d => d.doc_type === t);
-      return `<div class="doc-type-row"><span class="doc-type-label">${label}</span>${doc ? `<span class="tag tag-done">등록됨</span>` : `<span class="empty-doc">미등록</span>`}</div>`;
+      const statusBadge = doc ? `<span class="tag tag-done">등록됨</span>` : `<span class="empty-doc">미등록</span>`;
+      const attachment = doc?.attachments ? JSON.parse(doc.attachments)[0] : null;
+      const downloadBtn = attachment ? `<a href="${Fmt.escape(attachment.url)}" target="_blank" class="btn btn-sm">다운로드</a>` : '';
+      const uploadBtn = canWrite ? `<button class="btn btn-sm btn-secondary upload-doc-btn" data-type="${t}" data-label="${label}">업로드</button>` : '';
+      return `<div class="doc-type-row">
+        <span class="doc-type-label">${label}</span>
+        ${statusBadge}
+        ${downloadBtn}
+        ${uploadBtn}
+      </div>`;
     }).join('')}</div>`;
+
+    if (canWrite) {
+      el.querySelectorAll('.upload-doc-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const docType = btn.dataset.type;
+          const docLabel = btn.dataset.label;
+          Modal.open(`<h2>${docLabel} 업로드</h2>
+            <form id="upload-doc-form">
+              <div class="form-group"><label>제목</label><input name="title" placeholder="${docLabel}" /></div>
+              <div class="form-group"><label>파일 *</label><input type="file" name="file" required /></div>
+              <button type="submit" class="btn btn-primary">업로드</button>
+            </form>`);
+          document.getElementById('upload-doc-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            fd.append('doc_type', docType);
+            try {
+              await API.uploadDocument(projectId, fd);
+              Modal.close();
+              this._renderDocs(el, projectId, canWrite);
+            } catch (err) {
+              alert(err.message);
+            }
+          });
+        });
+      });
+    }
   },
 
   _renderNotes(el, notes, projectId, canWrite) {
@@ -148,15 +184,13 @@ Pages.projectDetail = {
     });
   },
 
-  async _renderSessions(el, projectId) {
+  async _renderSessions(el, projectId, project, canWrite) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const sessions = await API.getSessions({ project_id: projectId });
-      if (!sessions.length) {
-        el.innerHTML = '<p class="empty-state">세션이 없습니다.</p>';
-        return;
-      }
       el.innerHTML = `<div class="sessions-section">
+        ${canWrite ? `<button id="add-session-btn" class="btn btn-primary mb">+ 세션 추가</button>` : ''}
+        ${sessions.length === 0 ? '<p class="empty-state">세션이 없습니다.</p>' : `
         <table class="data-table">
           <thead><tr><th>날짜</th><th>시간</th><th>장소</th><th>상태</th><th></th></tr></thead>
           <tbody>${sessions.map(s => `<tr>
@@ -167,8 +201,37 @@ Pages.projectDetail = {
             <td><a href="#/session/${s.session_id}" class="btn btn-sm">상세</a></td>
           </tr>`).join('')}
           </tbody>
-        </table>
+        </table>`}
       </div>`;
+
+      document.getElementById('add-session-btn')?.addEventListener('click', () => {
+        Modal.open(`<h2>세션 추가</h2>
+          <form id="add-session-form">
+            <div class="form-group"><label>날짜 *</label><input type="date" name="session_date" required /></div>
+            <div class="form-group"><label>시작 시간 *</label><input name="start_time" required placeholder="09:00" /></div>
+            <div class="form-group"><label>종료 시간 *</label><input name="end_time" required placeholder="11:00" /></div>
+            <div class="form-group"><label>장소</label><input name="location" placeholder="회의실 A" /></div>
+            <button type="submit" class="btn btn-primary">추가</button>
+          </form>`);
+        document.getElementById('add-session-form').addEventListener('submit', async e => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          try {
+            await API.createSession({
+              batch_id: project.batch_id,
+              project_id: projectId,
+              session_date: fd.get('session_date'),
+              start_time: fd.get('start_time'),
+              end_time: fd.get('end_time'),
+              location: fd.get('location') || null,
+            });
+            Modal.close();
+            this._renderSessions(el, projectId, project, canWrite);
+          } catch (err) {
+            alert(err.message);
+          }
+        });
+      });
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
