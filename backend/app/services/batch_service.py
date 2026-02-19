@@ -1,6 +1,9 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.batch import Batch
+from app.models.project import Project
+from app.models.session import CoachingSession
+from app.models.schedule import ProgramSchedule
 from app.schemas.batch import BatchCreate, BatchUpdate
 
 
@@ -34,5 +37,17 @@ def update_batch(db: Session, batch_id: int, data: BatchUpdate) -> Batch:
 
 def delete_batch(db: Session, batch_id: int):
     batch = get_batch(db, batch_id)
+    sessions = db.query(CoachingSession).filter(CoachingSession.batch_id == batch_id).all()
+    for session in sessions:
+        db.delete(session)
+
+    schedules = db.query(ProgramSchedule).filter(ProgramSchedule.batch_id == batch_id).all()
+    for schedule in schedules:
+        db.delete(schedule)
+
+    projects = db.query(Project).filter(Project.batch_id == batch_id).all()
+    for project in projects:
+        db.delete(project)
+
     db.delete(batch)
     db.commit()

@@ -6,6 +6,11 @@ from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreat
 from typing import List
 
 
+def _ensure_not_observer(current_user: User):
+    if current_user.role == "observer":
+        raise HTTPException(status_code=403, detail="참관자는 작성 권한이 없습니다.")
+
+
 def get_boards(db: Session) -> List[Board]:
     return db.query(Board).all()
 
@@ -36,6 +41,7 @@ def get_post(db: Session, post_id: int) -> BoardPost:
 
 
 def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user: User) -> BoardPost:
+    _ensure_not_observer(current_user)
     if data.is_notice and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="공지 등록은 관리자만 가능합니다.")
     post = BoardPost(board_id=board_id, author_id=current_user.user_id, **data.model_dump())
@@ -83,6 +89,7 @@ def get_comments(db: Session, post_id: int) -> List[PostComment]:
 
 
 def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_user: User) -> PostComment:
+    _ensure_not_observer(current_user)
     comment = PostComment(post_id=post_id, author_id=current_user.user_id, **data.model_dump())
     db.add(comment)
     db.commit()

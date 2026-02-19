@@ -10,34 +10,87 @@ Pages.projectDetail = {
       ]);
       const user = Auth.getUser();
       const canWrite = user.role === 'admin' || user.role === 'coach';
+      const isAdmin = user.role === 'admin';
+      const progressValue = Math.max(0, Math.min(100, Number(project.progress_rate) || 0));
+      const statusValue = project.status || 'preparing';
+      const noteCount = notes.length;
+      const taskCount = tasks.length;
+      const milestoneCount = tasks.filter(t => t.is_milestone).length;
+      const completedTaskCount = tasks.filter(t => t.status === 'completed').length;
+      const visibilityLabel = project.visibility === 'public' ? '공개' : '비공개';
+      const projectSignalParts = [];
+      if (project.category) projectSignalParts.push(project.category);
+      if (project.representative) projectSignalParts.push(`대표 ${project.representative}`);
+      const projectSignalText = projectSignalParts.length ? Fmt.escape(projectSignalParts.join(' · ')) : '과제 운영 정보를 확인하세요.';
 
       el.innerHTML = `
-        <div class="page-container">
-          <div class="page-header">
-            <a href="#/projects" class="back-link">← 과제 목록</a>
-            <h1>${Fmt.escape(project.project_name)}</h1>
-            <div class="project-meta">
-              <span class="tag tag-${project.status}">${Fmt.status(project.status)}</span>
-              <span>${Fmt.escape(project.organization)}</span>
+        <div class="page-container project-detail-page">
+          <div class="project-hero">
+            <div class="project-hero-top">
+              <a href="#/projects" class="back-link">← 과제 목록</a>
+              ${isAdmin ? `<button id="delete-project-btn" class="btn btn-danger">과제 삭제</button>` : ''}
             </div>
-            ${Fmt.progress(project.progress_rate)}
+            <div class="project-hero-main">
+              <div class="project-hero-title-wrap">
+                <h1 class="project-hero-title">${Fmt.escape(project.project_name)}</h1>
+                <p class="project-hero-sub">${projectSignalText}</p>
+                <div class="project-meta project-meta-row">
+                  <span class="tag tag-${statusValue}">${Fmt.status(statusValue)}</span>
+                  <span class="project-meta-text">${Fmt.escape(project.organization)}</span>
+                  <span class="project-meta-sep">•</span>
+                  <span class="project-meta-text">${visibilityLabel}</span>
+                </div>
+              </div>
+              <div class="project-kpi-row">
+                <div class="project-kpi">
+                  <span class="project-kpi-label">코칭노트</span>
+                  <strong class="project-kpi-value">${noteCount}</strong>
+                </div>
+                <div class="project-kpi">
+                  <span class="project-kpi-label">Task</span>
+                  <strong class="project-kpi-value">${taskCount}</strong>
+                </div>
+                <div class="project-kpi">
+                  <span class="project-kpi-label">마일스톤</span>
+                  <strong class="project-kpi-value">${milestoneCount}</strong>
+                </div>
+                <div class="project-kpi">
+                  <span class="project-kpi-label">완료 Task</span>
+                  <strong class="project-kpi-value">${completedTaskCount}/${taskCount}</strong>
+                </div>
+              </div>
+            </div>
+            <div class="project-progress-wrap">
+              <div class="project-progress-head">
+                <span>전체 진행률</span>
+                <strong>${progressValue}%</strong>
+              </div>
+              ${Fmt.progress(progressValue)}
+            </div>
           </div>
-          <div class="tabs">
-            <button class="tab-btn active" data-tab="info">기본정보</button>
-            <button class="tab-btn" data-tab="docs">문서</button>
-            <button class="tab-btn" data-tab="notes">코칭노트 (${notes.length})</button>
-            <button class="tab-btn" data-tab="tasks">Task (${tasks.length})</button>
-            <button class="tab-btn" data-tab="sessions">세션</button>
-            ${canWrite ? '<button class="tab-btn" data-tab="ai">AI 분석</button>' : ''}
+          <div class="project-tab-shell">
+            <div class="tabs project-tabs">
+              <button class="tab-btn active" data-tab="info">기본정보</button>
+              <button class="tab-btn" data-tab="docs">문서</button>
+              <button class="tab-btn" data-tab="notes">코칭노트 (${noteCount})</button>
+              <button class="tab-btn" data-tab="tasks">Task (${taskCount})</button>
+              <button class="tab-btn" data-tab="sessions">세션</button>
+              ${canWrite ? '<button class="tab-btn" data-tab="ai">AI 분석</button>' : ''}
+            </div>
+            <div id="tab-content" class="project-tab-content"></div>
           </div>
-          <div id="tab-content"></div>
         </div>`;
 
       const tabContent = document.getElementById('tab-content');
       const renderTab = (tab) => {
         el.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
         switch (tab) {
-          case 'info': this._renderInfo(tabContent, project); break;
+          case 'info':
+            this._renderInfo(tabContent, project, canWrite, async (payload) => {
+              await API.updateProject(projectId, payload);
+              await this.render(el, params);
+            });
+            break;
           case 'docs': this._renderDocs(tabContent, projectId, canWrite); break;
           case 'notes': this._renderNotes(tabContent, notes, projectId, canWrite); break;
           case 'tasks': this._renderTasks(tabContent, tasks, projectId, user); break;
@@ -48,23 +101,107 @@ Pages.projectDetail = {
       el.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => renderTab(btn.dataset.tab));
       });
+      if (isAdmin) {
+        document.getElementById('delete-project-btn')?.addEventListener('click', async () => {
+          if (!confirm(`과제를 삭제하시겠습니까?\n${project.project_name}`)) return;
+          try {
+            await API.deleteProject(projectId);
+            Router.go(`/projects/${project.batch_id}`);
+          } catch (err) {
+            alert(err.message || '과제 삭제 실패');
+          }
+        });
+      }
       renderTab('info');
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
   },
 
-  _renderInfo(el, p) {
-    el.innerHTML = `<div class="info-grid">
-      <div class="info-item"><label>과제명</label><span>${Fmt.escape(p.project_name)}</span></div>
-      <div class="info-item"><label>조직</label><span>${Fmt.escape(p.organization)}</span></div>
-      <div class="info-item"><label>대표자</label><span>${Fmt.escape(p.representative || '-')}</span></div>
-      <div class="info-item"><label>분류</label><span>${Fmt.escape(p.category || '-')}</span></div>
-      <div class="info-item"><label>상태</label><span>${Fmt.status(p.status)}</span></div>
-      <div class="info-item"><label>공개여부</label><span>${p.visibility === 'public' ? '공개' : '비공개'}</span></div>
-      <div class="info-item"><label>생성일</label><span>${Fmt.date(p.created_at)}</span></div>
-      ${p.ai_summary ? `<div class="info-item full"><label>AI 요약</label><div class="ai-summary">${Fmt.escape(p.ai_summary)}</div></div>` : ''}
-    </div>`;
+  _renderInfo(el, p, canWrite, onSave) {
+    el.innerHTML = `<div class="project-info-layout">
+      <div class="project-info-panel">
+        <div class="project-info-panel-head">
+          <h3>기본 정보</h3>
+          <p>과제를 식별하는 핵심 항목입니다.</p>
+        </div>
+        <div class="info-grid project-info-grid">
+          <div class="info-item"><label>과제명</label><span>${Fmt.escape(p.project_name)}</span></div>
+          <div class="info-item"><label>조직</label><span>${Fmt.escape(p.organization)}</span></div>
+          <div class="info-item"><label>대표자</label><span>${Fmt.escape(p.representative || '-')}</span></div>
+          <div class="info-item"><label>분류</label><span>${Fmt.escape(p.category || '-')}</span></div>
+        </div>
+      </div>
+      <div class="project-info-panel">
+        <div class="project-info-panel-head">
+          <h3>운영 정보</h3>
+          <p>진행 상태와 공개 범위입니다.</p>
+        </div>
+        <div class="info-grid project-info-grid">
+          <div class="info-item"><label>상태</label><span>${Fmt.status(p.status)}</span></div>
+          <div class="info-item"><label>공개여부</label><span>${p.visibility === 'public' ? '공개' : '비공개'}</span></div>
+          <div class="info-item"><label>생성일</label><span>${Fmt.date(p.created_at)}</span></div>
+        </div>
+      </div>
+      ${p.ai_summary ? `<div class="project-info-panel project-summary-panel">
+        <div class="project-info-panel-head">
+          <h3>AI 요약</h3>
+          <p>최근 코칭 데이터 기반 요약입니다.</p>
+        </div>
+        <div class="info-item full"><div class="ai-summary">${Fmt.escape(p.ai_summary)}</div></div>
+      </div>` : ''}
+    </div>
+    ${canWrite ? `<div class="page-actions"><button id="edit-project-info-btn" class="btn btn-secondary">기본정보 편집</button></div>` : ''}`;
+
+    if (canWrite) {
+      document.getElementById('edit-project-info-btn')?.addEventListener('click', () => {
+        Modal.open(`<h2>기본정보 편집</h2>
+          <form id="edit-project-info-form">
+            <div class="form-group"><label>과제명 *</label><input name="project_name" required value="${Fmt.escape(p.project_name)}" /></div>
+            <div class="form-group"><label>조직 *</label><input name="organization" required value="${Fmt.escape(p.organization)}" /></div>
+            <div class="form-group"><label>대표자</label><input name="representative" value="${Fmt.escape(p.representative || '')}" /></div>
+            <div class="form-group"><label>분류</label><input name="category" value="${Fmt.escape(p.category || '')}" /></div>
+            <div class="form-group"><label>상태</label>
+              <select name="status">
+                <option value="preparing"${p.status === 'preparing' ? ' selected' : ''}>${Fmt.status('preparing')}</option>
+                <option value="in_progress"${p.status === 'in_progress' ? ' selected' : ''}>${Fmt.status('in_progress')}</option>
+                <option value="completed"${p.status === 'completed' ? ' selected' : ''}>${Fmt.status('completed')}</option>
+              </select>
+            </div>
+            <div class="form-group"><label>공개여부</label>
+              <select name="visibility">
+                <option value="public"${p.visibility === 'public' ? ' selected' : ''}>공개</option>
+                <option value="restricted"${p.visibility === 'restricted' ? ' selected' : ''}>비공개</option>
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary">저장</button>
+            <p class="form-error" id="edit-project-info-err" style="display:none;"></p>
+          </form>`);
+
+        document.getElementById('edit-project-info-form')?.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          const payload = {
+            project_name: (fd.get('project_name') || '').toString().trim(),
+            organization: (fd.get('organization') || '').toString().trim(),
+            representative: ((fd.get('representative') || '').toString().trim() || null),
+            category: ((fd.get('category') || '').toString().trim() || null),
+            status: fd.get('status'),
+            visibility: fd.get('visibility'),
+          };
+
+          try {
+            await onSave(payload);
+            Modal.close();
+          } catch (err) {
+            const errEl = document.getElementById('edit-project-info-err');
+            if (!errEl) return;
+            errEl.textContent = err.message || '기본정보 저장 실패';
+            errEl.style.display = 'block';
+          }
+        });
+      });
+    }
   },
 
   async _renderDocs(el, projectId, canWrite) {
@@ -74,43 +211,115 @@ Pages.projectDetail = {
     el.innerHTML = `<div class="docs-section">${Object.entries(types).map(([t, label]) => {
       const doc = docs.find(d => d.doc_type === t);
       const statusBadge = doc ? `<span class="tag tag-done">등록됨</span>` : `<span class="empty-doc">미등록</span>`;
-      const attachment = doc?.attachments ? JSON.parse(doc.attachments)[0] : null;
-      const downloadBtn = attachment ? `<a href="${Fmt.escape(attachment.url)}" target="_blank" class="btn btn-sm">다운로드</a>` : '';
-      const uploadBtn = canWrite ? `<button class="btn btn-sm btn-secondary upload-doc-btn" data-type="${t}" data-label="${label}">업로드</button>` : '';
+      const preview = doc?.content ? Fmt.excerpt(doc.content, 120) : '';
+      const attachment = doc?.attachments ? (() => { try { return JSON.parse(doc.attachments)[0]; } catch { return null; } })() : null;
+      const downloadBtn = attachment ? `<a href="${Fmt.escape(attachment.url)}" target="_blank" class="btn btn-sm">기존 첨부</a>` : '';
+      const viewBtn = doc ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">보기</button>` : '';
+      const editBtn = canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${doc?.doc_id || ''}" data-type="${t}" data-label="${Fmt.escape(label)}">편집</button>` : '';
+      const deleteBtn = (canWrite && doc) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">삭제</button>` : '';
       return `<div class="doc-type-row">
         <span class="doc-type-label">${label}</span>
-        ${statusBadge}
-        ${downloadBtn}
-        ${uploadBtn}
-      </div>`;
+        <div class="doc-actions">
+          ${statusBadge}
+          ${downloadBtn}
+          ${viewBtn}
+          ${editBtn}
+          ${deleteBtn}
+        </div>
+      </div>
+      ${preview ? `<div class="doc-content-preview"><div class="preview-title">${label} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : ''}`;
     }).join('')}</div>`;
 
-    if (canWrite) {
-      el.querySelectorAll('.upload-doc-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const docType = btn.dataset.type;
-          const docLabel = btn.dataset.label;
-          Modal.open(`<h2>${docLabel} 업로드</h2>
-            <form id="upload-doc-form">
-              <div class="form-group"><label>제목</label><input name="title" placeholder="${docLabel}" /></div>
-              <div class="form-group"><label>파일 *</label><input type="file" name="file" required /></div>
-              <button type="submit" class="btn btn-primary">업로드</button>
-            </form>`);
-          document.getElementById('upload-doc-form').addEventListener('submit', async e => {
-            e.preventDefault();
-            const fd = new FormData(e.target);
-            fd.append('doc_type', docType);
-            try {
-              await API.uploadDocument(projectId, fd);
-              Modal.close();
-              this._renderDocs(el, projectId, canWrite);
-            } catch (err) {
-              alert(err.message);
-            }
-          });
-        });
+    el.querySelectorAll('.view-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const doc = await API.getDocument(+btn.dataset.docId);
+      this._openDocViewer(btn.dataset.label, doc);
+    }));
+
+    el.querySelectorAll('.edit-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const docId = btn.dataset.docId ? +btn.dataset.docId : null;
+      const doc = docId ? await API.getDocument(docId) : null;
+      this._openDocEditor({
+        projectId,
+        docId,
+        docType: btn.dataset.type,
+        label: btn.dataset.label,
+        current: doc,
+        onSaved: async () => this._renderDocs(el, projectId, canWrite),
       });
+    }));
+
+    el.querySelectorAll('.delete-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const docId = +btn.dataset.docId;
+      const label = btn.dataset.label || '문서';
+      if (!confirm(`${label} 문서를 삭제하시겠습니까?`)) return;
+      try {
+        await API.deleteDocument(docId);
+        await this._renderDocs(el, projectId, canWrite);
+      } catch (err) {
+        alert(err.message || '문서 삭제 실패');
+      }
+    }));
+  },
+
+  _openDocViewer(label, doc) {
+    const title = doc.title || label;
+    const content = doc.content ? Fmt.rich(doc.content) : '<p class="empty-state">저장된 본문이 없습니다.</p>';
+    let attachmentHtml = '';
+    if (doc.attachments) {
+      try {
+        const at = JSON.parse(doc.attachments);
+        attachmentHtml = at.map((a) => `<a href="${Fmt.escape(a.url)}" target="_blank" class="btn btn-sm">첨부: ${Fmt.escape(a.filename || '파일')}</a>`).join(' ');
+      } catch (_) {
+        attachmentHtml = '';
+      }
     }
+    Modal.open(`<h2>${Fmt.escape(title)}</h2>
+      <div class="rich-content">${content}</div>
+      ${attachmentHtml ? `<div style="margin-top:12px;">${attachmentHtml}</div>` : ''}`);
+  },
+
+  _openDocEditor({ projectId, docId, docType, label, current, onSaved }) {
+    const title = current?.title || label;
+    const content = current?.content || '';
+    Modal.open(`<h2>${Fmt.escape(label)} 편집</h2>
+      <form id="doc-editor-form">
+        <div class="form-group"><label>제목</label><input name="title" value="${Fmt.escape(title)}" placeholder="${Fmt.escape(label)}" /></div>
+        <div class="form-group">
+          <label>문서 본문</label>
+          <div id="doc-editor-wrap"></div>
+        </div>
+        <button type="submit" class="btn btn-primary">저장</button>
+        <p class="form-error" id="doc-editor-err" style="display:none;"></p>
+      </form>`);
+
+    const editor = RichEditor.create(document.getElementById('doc-editor-wrap'), {
+      initialHTML: content,
+      placeholder: '문서를 작성하세요. 이미지/표 삽입이 가능합니다.',
+      onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'document', projectId }),
+    });
+
+    document.getElementById('doc-editor-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const html = editor.getSanitizedHTML();
+      try {
+        if (docId) {
+          await API.updateDocument(docId, { title: fd.get('title') || null, content: html || null });
+        } else {
+          const body = new FormData();
+          body.append('doc_type', docType);
+          body.append('title', fd.get('title') || '');
+          body.append('content', html || '');
+          await API.createDocument(projectId, body);
+        }
+        Modal.close();
+        if (onSaved) onSaved();
+      } catch (err) {
+        const errEl = document.getElementById('doc-editor-err');
+        errEl.textContent = err.message || '문서 저장 실패';
+        errEl.style.display = 'block';
+      }
+    });
   },
 
   _renderNotes(el, notes, projectId, canWrite) {
@@ -123,8 +332,11 @@ Pages.projectDetail = {
             ${n.week_number ? `<span class="tag">${n.week_number}주차</span>` : ''}
             ${n.progress_rate != null ? `<span class="tag">${n.progress_rate}%</span>` : ''}
           </div>
-          <p>${Fmt.escape(n.current_status || '')}</p>
-          <a href="#/project/${projectId}/notes/${n.note_id}" class="btn btn-sm">상세 보기</a>
+          <p>${Fmt.escape(Fmt.excerpt(n.current_status || '', 120))}</p>
+          <div class="note-actions">
+            <a href="#/project/${projectId}/notes/${n.note_id}" class="btn btn-sm">상세 보기</a>
+            ${canWrite ? `<button class="btn btn-sm btn-danger delete-note-btn" data-note-id="${n.note_id}">삭제</button>` : ''}
+          </div>
         </div>`).join('')}
     </div>`;
     if (canWrite) {
@@ -134,30 +346,81 @@ Pages.projectDetail = {
           this._renderNotes(el, updated, projectId, canWrite);
         });
       });
+
+      el.querySelectorAll('.delete-note-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const noteId = +btn.dataset.noteId;
+        if (!confirm('코칭노트를 삭제하시겠습니까?')) return;
+        try {
+          await API.deleteNote(noteId);
+          const updated = await API.getNotes(projectId);
+          this._renderNotes(el, updated, projectId, canWrite);
+        } catch (err) {
+          alert(err.message || '코칭노트 삭제 실패');
+        }
+      }));
     }
   },
 
   _renderTasks(el, tasks, projectId, user) {
     const milestones = tasks.filter(t => t.is_milestone).sort((a, b) => (a.milestone_order||0)-(b.milestone_order||0));
     const regular = tasks.filter(t => !t.is_milestone);
+    const totalCount = tasks.length;
+    const todoCount = tasks.filter(t => t.status === 'todo').length;
+    const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
+    const completedCount = tasks.filter(t => t.status === 'completed').length;
     el.innerHTML = `<div class="tasks-section">
-      <button id="add-task-btn" class="btn btn-primary mb">+ Task 추가</button>
-      ${milestones.length ? `<h3>마일스톤</h3><div class="milestone-list">${milestones.map(t => `
+      <div class="task-head-panel">
+        <div class="task-stat-grid">
+          <div class="task-stat-card"><span>전체</span><strong>${totalCount}</strong></div>
+          <div class="task-stat-card"><span>할일</span><strong>${todoCount}</strong></div>
+          <div class="task-stat-card"><span>진행중</span><strong>${inProgressCount}</strong></div>
+          <div class="task-stat-card"><span>완료</span><strong>${completedCount}</strong></div>
+        </div>
+        <button id="add-task-btn" class="btn btn-primary">+ Task 추가</button>
+      </div>
+      ${milestones.length ? `<section class="task-block">
+        <div class="task-block-head">
+          <h3>마일스톤</h3>
+          <span>${milestones.length}개</span>
+        </div>
+        <div class="milestone-list">${milestones.map(t => `
         <div class="milestone-item">
-          <span class="milestone-order">${t.milestone_order||'-'}</span>
-          <span>${Fmt.escape(t.title)}</span>
-          <span class="tag tag-${t.status}">${Fmt.status(t.status)}</span>
-          <span>${Fmt.date(t.due_date)}</span>
-          <select class="status-sel" data-tid="${t.task_id}">
-            ${['todo','in_progress','completed'].map(s=>`<option value="${s}"${t.status===s?' selected':''}>${Fmt.status(s)}</option>`).join('')}
-          </select>
-        </div>`).join('')}</div>` : ''}
-      ${regular.length ? `<h3>일반 Task</h3><div class="task-list">${regular.map(t => `
+          <div class="milestone-main">
+            <span class="milestone-order">${t.milestone_order||'-'}</span>
+            <div class="milestone-body">
+              <strong class="milestone-title">${Fmt.escape(t.title)}</strong>
+              <div class="milestone-meta">
+                <span class="tag tag-${t.status}">${Fmt.status(t.status)}</span>
+                <span class="due">${Fmt.date(t.due_date)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="milestone-controls">
+            <select class="status-sel" data-tid="${t.task_id}">
+              ${['todo','in_progress','completed'].map(s=>`<option value="${s}"${t.status===s?' selected':''}>${Fmt.status(s)}</option>`).join('')}
+            </select>
+            ${user.role !== 'observer' ? `<button class="btn btn-sm btn-danger del-task-btn" data-tid="${t.task_id}">삭제</button>` : ''}
+          </div>
+        </div>`).join('')}</div>
+      </section>` : ''}
+      ${regular.length ? `<section class="task-block">
+        <div class="task-block-head">
+          <h3>일반 Task</h3>
+          <span>${regular.length}개</span>
+        </div>
+        <div class="task-list">${regular.map(t => `
         <div class="task-item">
-          <input type="checkbox" class="task-chk" data-tid="${t.task_id}" ${t.status==='completed'?'checked':''} />
-          <span class="${t.status==='completed'?'strike':''}">${Fmt.escape(t.title)}</span>
-          <span class="due">${Fmt.date(t.due_date)}</span>
-        </div>`).join('')}</div>` : ''}
+          <label class="task-item-main">
+            <input type="checkbox" class="task-chk" data-tid="${t.task_id}" ${t.status==='completed'?'checked':''} />
+            <span class="task-title ${t.status==='completed'?'strike':''}">${Fmt.escape(t.title)}</span>
+          </label>
+          <div class="task-item-meta">
+            <span class="due">${Fmt.date(t.due_date)}</span>
+            <span class="tag tag-${t.status}">${Fmt.status(t.status)}</span>
+            ${user.role !== 'observer' ? `<button class="btn btn-sm btn-danger del-task-btn" data-tid="${t.task_id}">삭제</button>` : ''}
+          </div>
+        </div>`).join('')}</div>
+      </section>` : ''}
     </div>`;
 
     el.querySelectorAll('.status-sel').forEach(s => s.addEventListener('change', async () => {
@@ -166,6 +429,17 @@ Pages.projectDetail = {
     }));
     el.querySelectorAll('.task-chk').forEach(cb => cb.addEventListener('change', async () => {
       await API.updateTask(+cb.dataset.tid, {status: cb.checked ? 'completed' : 'todo'});
+    }));
+    el.querySelectorAll('.del-task-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const taskId = +btn.dataset.tid;
+      if (!confirm('Task를 삭제하시겠습니까?')) return;
+      try {
+        await API.deleteTask(taskId);
+        const t = await API.getTasks(projectId);
+        this._renderTasks(el, t, projectId, user);
+      } catch (err) {
+        alert(err.message || 'Task 삭제 실패');
+      }
     }));
     document.getElementById('add-task-btn')?.addEventListener('click', () => {
       Modal.open(`<h2>Task 추가</h2><form id="atf">

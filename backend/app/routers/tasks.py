@@ -12,7 +12,7 @@ router = APIRouter(tags=["tasks"])
 
 @router.get("/api/projects/{project_id}/tasks", response_model=List[ProjectTaskOut])
 def list_tasks(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return task_service.get_tasks(db, project_id)
+    return task_service.get_tasks(db, project_id, current_user)
 
 
 @router.post("/api/projects/{project_id}/tasks", response_model=ProjectTaskOut)
@@ -27,7 +27,7 @@ def create_task(
 
 @router.get("/api/tasks/{task_id}", response_model=ProjectTaskOut)
 def get_task(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return task_service.get_task(db, task_id)
+    return task_service.get_task(db, task_id, current_user)
 
 
 @router.put("/api/tasks/{task_id}", response_model=ProjectTaskOut)
@@ -42,5 +42,5 @@ def update_task(
 
 @router.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    task_service.delete_task(db, task_id)
+    task_service.delete_task(db, task_id, current_user)
     return {"message": "삭제되었습니다."}

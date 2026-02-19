@@ -30,7 +30,7 @@ def create_note(
 
 @router.get("/api/notes/{note_id}", response_model=CoachingNoteOut)
 def get_note(note_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return coaching_service.get_note(db, note_id)
+    return coaching_service.get_note(db, note_id, current_user)
 
 
 @router.put("/api/notes/{note_id}", response_model=CoachingNoteOut)

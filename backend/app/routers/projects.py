@@ -56,7 +56,7 @@ def delete_project(
 
 @router.get("/api/projects/{project_id}/members", response_model=List[ProjectMemberOut])
 def get_members(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return project_service.get_members(db, project_id)
+    return project_service.get_members(db, project_id, current_user)
 
 
 @router.post("/api/projects/{project_id}/members", response_model=ProjectMemberOut)

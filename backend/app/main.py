@@ -6,7 +6,7 @@ from app.config import settings
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
-    admin_ip,
+    admin_ip, users, uploads,
 )
 
 app = FastAPI(
@@ -40,6 +40,8 @@ app.include_router(dashboard.router)
 app.include_router(ai.router)
 app.include_router(tasks.router)
 app.include_router(admin_ip.router)
+app.include_router(users.router)
+app.include_router(uploads.router)
 
 
 @app.get("/api/health")

@@ -39,7 +39,10 @@ Pages.projectList = {
                   ${Fmt.progress(p.progress_rate)}
                   <div class="card-footer">
                     <span>${p.category || '-'}</span>
-                    <a href="#/project/${p.project_id}" class="btn btn-sm">상세 보기</a>
+                    <div class="card-actions">
+                      <a href="#/project/${p.project_id}" class="btn btn-sm">상세 보기</a>
+                      ${user.role === 'admin' ? `<button class="btn btn-sm btn-danger delete-project-btn" data-project-id="${p.project_id}" data-project-name="${Fmt.escape(p.project_name)}">삭제</button>` : ''}
+                    </div>
                   </div>
                 </div>`).join('')}
           </div>
@@ -52,6 +55,21 @@ Pages.projectList = {
       if (user.role === 'admin') {
         document.getElementById('add-project-btn')?.addEventListener('click', () => {
           this._showCreateModal(batchId, () => this.render(el, params));
+        });
+
+        el.querySelectorAll('.delete-project-btn').forEach((btn) => {
+          btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const projectId = +btn.dataset.projectId;
+            const projectName = btn.dataset.projectName || '';
+            if (!confirm(`과제를 삭제하시겠습니까?\n${projectName}`)) return;
+            try {
+              await API.deleteProject(projectId);
+              await this.render(el, params);
+            } catch (err) {
+              alert(err.message || '과제 삭제 실패');
+            }
+          });
         });
       }
     } catch (e) {

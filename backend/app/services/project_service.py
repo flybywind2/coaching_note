@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.project import Project, ProjectMember
 from app.models.task import ProjectTask
+from app.models.session import CoachingSession
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberCreate
 from app.utils.permissions import can_view_project
@@ -41,6 +42,9 @@ def update_project(db: Session, project_id: int, data: ProjectUpdate, current_us
 
 def delete_project(db: Session, project_id: int, current_user: User):
     project = get_project(db, project_id, current_user)
+    sessions = db.query(CoachingSession).filter(CoachingSession.project_id == project_id).all()
+    for session in sessions:
+        db.delete(session)
     db.delete(project)
     db.commit()
 
@@ -60,7 +64,8 @@ def recalculate_progress(db: Session, project_id: int):
     db.commit()
 
 
-def get_members(db: Session, project_id: int) -> List[ProjectMember]:
+def get_members(db: Session, project_id: int, current_user: User) -> List[ProjectMember]:
+    get_project(db, project_id, current_user)
     return db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
 
 

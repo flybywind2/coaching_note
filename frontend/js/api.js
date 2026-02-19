@@ -2,7 +2,11 @@ const API_BASE = '';
 
 async function apiFetch(path, options = {}) {
   const token = Auth.getToken();
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const isFormData = options.body instanceof FormData;
+  const headers = { ...(options.headers || {}) };
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(API_BASE + path, { ...options, headers });
@@ -26,6 +30,20 @@ const API = {
   logout: () => apiFetch('/api/auth/logout', { method: 'POST' }),
   me: () => apiFetch('/api/auth/me'),
 
+  // Users (admin)
+  getUsers: (includeInactive = false) => apiFetch(`/api/users${includeInactive ? '?include_inactive=true' : ''}`),
+  createUser: (data) => apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) }),
+  deleteUser: (id) => apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
+  restoreUser: (id) => apiFetch(`/api/users/${id}/restore`, { method: 'PATCH' }),
+  uploadEditorImage: (file, options = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('scope', options.scope || 'general');
+    if (options.projectId) fd.append('project_id', String(options.projectId));
+    if (options.boardId) fd.append('board_id', String(options.boardId));
+    return apiFetch('/api/uploads/images', { method: 'POST', body: fd });
+  },
+
   // Batches
   getBatches: () => apiFetch('/api/batches'),
   getBatch: (id) => apiFetch(`/api/batches/${id}`),
@@ -45,7 +63,9 @@ const API = {
   // Documents
   getDocuments: (projectId, type) => apiFetch(`/api/projects/${projectId}/documents${type ? '?doc_type=' + type : ''}`),
   getDocument: (id) => apiFetch(`/api/documents/${id}`),
+  updateDocument: (id, data) => apiFetch(`/api/documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDocument: (id) => apiFetch(`/api/documents/${id}`, { method: 'DELETE' }),
+  createDocument: (projectId, formData) => apiFetch(`/api/projects/${projectId}/documents`, { method: 'POST', body: formData }),
   uploadDocument: (projectId, formData) => {
     const token = Auth.getToken();
     return fetch(`/api/projects/${projectId}/documents`, {
@@ -99,6 +119,7 @@ const API = {
   deletePost: (postId) => apiFetch(`/api/boards/posts/${postId}`, { method: 'DELETE' }),
   getPostComments: (postId) => apiFetch(`/api/boards/posts/${postId}/comments`),
   createPostComment: (postId, data) => apiFetch(`/api/boards/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+  deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),
@@ -106,7 +127,8 @@ const API = {
   markAllRead: () => apiFetch('/api/notifications/read-all', { method: 'POST' }),
 
   // Calendar
-  getCalendar: (batchId, start, end) => apiFetch(`/api/calendar?batch_id=${batchId}&start=${start}&end=${end}`),
+  getCalendar: (batchId, start, end, projectId = null) =>
+    apiFetch(`/api/calendar?batch_id=${batchId}&start=${start}&end=${end}${projectId ? `&project_id=${projectId}` : ''}`),
 
   // Dashboard
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
