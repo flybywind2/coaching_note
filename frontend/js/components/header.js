@@ -11,8 +11,10 @@ const Header = {
 
     const nav = document.getElementById('main-nav');
     const links = [
+      { path: '/about', label: 'SSP+ 소개', roles: ['admin', 'coach', 'participant', 'observer'] },
       { path: '/projects', label: '과제 목록', roles: ['admin', 'coach', 'participant', 'observer'] },
       { path: '/calendar', label: '캘린더', roles: ['admin', 'coach', 'participant', 'observer'] },
+      { path: '/coaching-plan', label: '코칭 계획/실적', roles: ['admin', 'coach'] },
       { path: '/board', label: '게시판', roles: ['admin', 'coach', 'participant', 'observer'] },
       { path: '/dashboard', label: '대시보드', roles: ['admin', 'coach'] },
       { path: '/admin', label: '관리자', roles: ['admin'] },

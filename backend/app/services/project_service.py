@@ -10,11 +10,13 @@ from app.models.task import ProjectTask
 from app.models.session import CoachingSession
 from app.models.user import User
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberCreate
-from app.utils.permissions import can_view_project
+from app.utils.permissions import can_view_project, can_view_batch
 from typing import List, Optional
 
 
 def get_projects(db: Session, batch_id: int, current_user: User) -> List[Project]:
+    if not can_view_batch(db, batch_id, current_user):
+        return []
     projects = db.query(Project).filter(Project.batch_id == batch_id).all()
     visible = [p for p in projects if can_view_project(db, p, current_user)]
     member_project_ids = {

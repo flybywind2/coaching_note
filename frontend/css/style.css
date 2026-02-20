@@ -757,6 +757,91 @@ body::after {
   color: var(--text-secondary);
 }
 
+.about-page {
+  display: grid;
+  gap: 14px;
+}
+.about-content-card {
+  padding: 18px;
+}
+.about-coach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.about-coach-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow-sm);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+.about-coach-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.about-coach-head h3 {
+  color: #1a2f5f;
+  font-size: 16px;
+}
+.about-coach-card p {
+  color: #334f87;
+  font-size: 13px;
+}
+
+.coaching-plan-page {
+  display: grid;
+  gap: 14px;
+}
+.cp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cp-grid-wrap {
+  padding: 14px;
+}
+.cp-table-wrap {
+  overflow: auto;
+}
+.coaching-plan-table {
+  min-width: 1100px;
+}
+.cp-coach-col {
+  min-width: 180px;
+  width: 180px;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+}
+.cp-cell {
+  display: grid;
+  gap: 8px;
+  min-width: 150px;
+}
+.cp-line {
+  font-size: 12px;
+  color: #2f4678;
+}
+.cp-actions {
+  display: flex;
+  gap: 6px;
+}
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
 /* Login */
 .login-wrap {
   min-height: 100vh;
@@ -897,6 +982,13 @@ body::after {
 .note-feed-item .comments-section { margin-top: 12px; }
 .comment-list { display: grid; gap: 8px; }
 .inline-comment-form { margin-top: 10px; }
+.inline-comment-title {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #355186;
+}
 .inline-comment-form textarea {
   width: 100%;
   min-height: 80px;
@@ -904,8 +996,39 @@ body::after {
 }
 
 .comments-section { margin-top: 24px; }
+.comment-group { margin-top: 12px; }
+.comment-group h3,
+.comment-group h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #274477;
+}
 .comment-card { padding: 11px 14px; margin-bottom: 8px; }
 .comment-card.coach-only { border-left: 3px solid #f59e0b; }
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.comment-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.comment-type-badge.feedback {
+  color: #1f4e8c;
+  border: 1px solid rgba(52, 122, 214, 0.3);
+  background: rgba(221, 237, 255, 0.72);
+}
+.comment-type-badge.memo {
+  color: #0f5d3d;
+  border: 1px solid rgba(16, 155, 107, 0.34);
+  background: rgba(218, 247, 235, 0.8);
+}
 .coach-only-badge {
   display: inline-flex;
   align-items: center;

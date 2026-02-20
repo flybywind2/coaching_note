@@ -13,6 +13,38 @@ Pages.coachingNote = {
       ]);
       const user = Auth.getUser();
       const canWrite = user.role === 'admin' || user.role === 'coach';
+      const canComment = user.role !== 'observer';
+      const resolveCommentType = (comment) => {
+        if (comment.comment_type) return comment.comment_type;
+        return comment.author_role === 'participant' ? 'participant_memo' : 'coaching_feedback';
+      };
+      const coachingFeedbacks = comments.filter((c) => resolveCommentType(c) === 'coaching_feedback');
+      const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo');
+      const commentFormTitle = canWrite ? '코칭 의견 작성' : '메모 작성';
+      const commentPlaceholder = canWrite
+        ? '코칭 의견을 입력하세요. 이미지/표 삽입이 가능합니다.'
+        : '메모를 입력하세요. 이미지/표 삽입이 가능합니다.';
+      const renderCommentCard = (comment) => {
+        const commentType = resolveCommentType(comment);
+        const typeBadge = commentType === 'participant_memo'
+          ? '<span class="comment-type-badge memo">참여자 메모</span>'
+          : '<span class="comment-type-badge feedback">코칭 의견</span>';
+        return `
+          <div class="comment-card ${comment.is_coach_only ? 'coach-only' : ''}">
+            <div class="comment-head">
+              ${typeBadge}
+              ${comment.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+            </div>
+            <div class="comment-content rich-content">${Fmt.rich(comment.content, '-')}</div>
+            ${comment.code_snippet ? `<pre class="code-snippet">${Fmt.escape(comment.code_snippet)}</pre>` : ''}
+            <div class="comment-meta">
+              <span>${Fmt.datetime(comment.created_at)}</span>
+              ${(comment.author_id === user.user_id || user.role === 'admin')
+                ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${comment.comment_id}" data-comment-type="${commentType}">삭제</button>`
+                : ''}
+            </div>
+          </div>`;
+      };
 
       el.innerHTML = `
         <div class="page-container">
@@ -23,7 +55,6 @@ Pages.coachingNote = {
               <div class="note-meta">
                 <span>${Fmt.date(note.coaching_date)}</span>
                 ${note.week_number ? `<span>${note.week_number}주차</span>` : ''}
-                ${note.progress_rate != null ? `<span>진행률 ${note.progress_rate}%</span>` : ''}
               </div>
               ${canWrite ? `
                 <div class="note-actions">
@@ -40,51 +71,54 @@ Pages.coachingNote = {
           </div>
 
           <div class="comments-section">
-            <h3>코칭 의견 (${comments.length})</h3>
-            <div id="comment-list">
-              ${comments.map(c => `
-                <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
-                  ${c.is_coach_only ? '<span class="coach-only-badge">코치 전용</span>' : ''}
-                  <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
-                  ${c.code_snippet ? `<pre class="code-snippet">${Fmt.escape(c.code_snippet)}</pre>` : ''}
-                  <div class="comment-meta">
-                    ${Fmt.datetime(c.created_at)}
-                    ${(c.author_id === user.user_id || user.role === 'admin') ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}">삭제</button>` : ''}
-                  </div>
-                </div>`).join('') || '<p class="empty-state">의견이 없습니다.</p>'}
+            <div class="comment-group">
+              <h3>코칭 의견 (${coachingFeedbacks.length})</h3>
+              <div id="feedback-comment-list">
+                ${coachingFeedbacks.map((c) => renderCommentCard(c)).join('') || '<p class="empty-state">코칭 의견이 없습니다.</p>'}
+              </div>
+            </div>
+            <div class="comment-group">
+              <h3>참여자 메모 (${participantMemos.length})</h3>
+              <div id="memo-comment-list">
+                ${participantMemos.map((c) => renderCommentCard(c)).join('') || '<p class="empty-state">참여자 메모가 없습니다.</p>'}
+              </div>
             </div>
             <div class="comment-form">
-              <h4>의견 작성</h4>
-              <form id="comment-form">
-                <div id="comment-editor-wrap"></div>
-                <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-                ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
-                <button type="submit" class="btn btn-primary">등록</button>
-              </form>
+              ${canComment ? `
+                <h4>${commentFormTitle}</h4>
+                <form id="comment-form">
+                  <div id="comment-editor-wrap"></div>
+                  <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
+                  ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
+                  <button type="submit" class="btn btn-primary">등록</button>
+                </form>
+              ` : '<p class="empty-state">참관자는 의견/메모를 작성할 수 없습니다.</p>'}
             </div>
           </div>
         </div>`;
 
-      const commentEditor = RichEditor.create(document.getElementById('comment-editor-wrap'), {
-        compact: true,
-        placeholder: '의견을 입력하세요. 이미지/표 삽입이 가능합니다.',
-        onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'comment', projectId: +projectId }),
-      });
-
-      document.getElementById('comment-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const fd = new FormData(e.target);
-        const content = commentEditor.getSanitizedHTML();
-        if (commentEditor.isEmpty()) {
-          alert('의견 내용을 입력하세요.');
-          return;
-        }
-        await API.createComment(noteId, {
-          content,
-          is_coach_only: fd.has('is_coach_only'),
+      if (canComment) {
+        const commentEditor = RichEditor.create(document.getElementById('comment-editor-wrap'), {
+          compact: true,
+          placeholder: commentPlaceholder,
+          onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'comment', projectId: +projectId }),
         });
-        await this.render(el, params);
-      });
+
+        document.getElementById('comment-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          const content = commentEditor.getSanitizedHTML();
+          if (commentEditor.isEmpty()) {
+            alert(canWrite ? '코칭 의견 내용을 입력하세요.' : '메모 내용을 입력하세요.');
+            return;
+          }
+          await API.createComment(noteId, {
+            content,
+            is_coach_only: fd.has('is_coach_only'),
+          });
+          await this.render(el, params);
+        });
+      }
 
       if (canWrite) {
         document.getElementById('edit-note-btn')?.addEventListener('click', () => {
@@ -111,12 +145,14 @@ Pages.coachingNote = {
 
       el.querySelectorAll('.delete-comment-btn').forEach((btn) => btn.addEventListener('click', async () => {
         const commentId = +btn.dataset.commentId;
-        if (!confirm('의견을 삭제하시겠습니까?')) return;
+        const commentType = btn.dataset.commentType;
+        const targetLabel = commentType === 'participant_memo' ? '메모' : '코칭 의견';
+        if (!confirm(`${targetLabel}을(를) 삭제하시겠습니까?`)) return;
         try {
           await API.deleteComment(commentId);
           await this.render(el, params);
         } catch (err) {
-          alert(err.message || '의견 삭제 실패');
+          alert(err.message || `${targetLabel} 삭제 실패`);
         }
       }));
     } catch (e) {
@@ -124,10 +160,14 @@ Pages.coachingNote = {
     }
   },
 
-  showCreateModal(projectId, onDone) {
+  showCreateModal(projectId, onDone, options = {}) {
     const draftKey = DraftStore.buildKey('note-create', projectId);
     const autoDate = this._todayString();
     const autoWeek = this._isoWeekNumber(autoDate);
+    const rawDefaultProgress = Number(options.projectProgressRate);
+    const defaultProgressRate = Number.isFinite(rawDefaultProgress)
+      ? Math.max(0, Math.min(100, Math.round(rawDefaultProgress)))
+      : null;
     Modal.open(`<h2>코칭노트 작성</h2>
       <form id="create-note-form">
         <div class="note-auto-meta">
@@ -135,8 +175,15 @@ Pages.coachingNote = {
           <span>주차 자동입력: ${autoWeek}주차</span>
         </div>
         <div class="form-group"><label>현재 상태</label><div id="note-current-editor"></div></div>
-        <div class="form-group"><label>진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" /></div>
-        <div class="form-group"><label>주요 문제</label><div id="note-issue-editor"></div></div>
+        <div class="form-group">
+          <label>진행률 (%)</label>
+          <input type="number" name="progress_rate" min="0" max="100" value="${defaultProgressRate ?? ''}" />
+          <p class="form-hint">기본정보의 전체 진행률을 기본값으로 반영합니다.</p>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" name="use_main_issue" /> 주요 문제 작성</label>
+        </div>
+        <div class="form-group" id="create-main-issue-wrap" style="display:none;"><label>주요 문제</label><div id="note-issue-editor"></div></div>
         <div class="form-group"><label>다음 작업</label><div id="note-action-editor"></div></div>
         <button type="submit" class="btn btn-primary">저장</button>
         <p id="create-note-draft-status" class="draft-status"></p>
@@ -155,11 +202,22 @@ Pages.coachingNote = {
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const createForm = document.getElementById('create-note-form');
+    const useMainIssueInput = createForm.querySelector('[name="use_main_issue"]');
+    const mainIssueWrap = document.getElementById('create-main-issue-wrap');
+    const syncMainIssueVisibility = () => {
+      const enabled = !!useMainIssueInput?.checked;
+      if (mainIssueWrap) {
+        mainIssueWrap.style.display = enabled ? 'block' : 'none';
+      }
+    };
+    useMainIssueInput?.addEventListener('change', syncMainIssueVisibility);
+    syncMainIssueVisibility();
     const createBinding = DraftStore.bindForm({
       form: createForm,
       key: draftKey,
       collect: () => ({
         progress_rate: createForm.querySelector('[name="progress_rate"]').value,
+        use_main_issue: createForm.querySelector('[name="use_main_issue"]').checked,
         current_status: currentEditor.getHTML(),
         main_issue: issueEditor.getHTML(),
         next_action: actionEditor.getHTML(),
@@ -167,9 +225,11 @@ Pages.coachingNote = {
       apply: (payload) => {
         if (!payload || typeof payload !== 'object') return;
         if (payload.progress_rate !== undefined) createForm.querySelector('[name="progress_rate"]').value = payload.progress_rate || '';
+        if (payload.use_main_issue !== undefined) createForm.querySelector('[name="use_main_issue"]').checked = !!payload.use_main_issue;
         if (payload.current_status !== undefined) currentEditor.setHTML(payload.current_status || '');
         if (payload.main_issue !== undefined) issueEditor.setHTML(payload.main_issue || '');
         if (payload.next_action !== undefined) actionEditor.setHTML(payload.next_action || '');
+        syncMainIssueVisibility();
       },
       statusEl: document.getElementById('create-note-draft-status'),
       restoreMessage: '이전에 임시저장된 코칭노트 작성 내용이 있습니다. 복원하시겠습니까?',
@@ -183,7 +243,7 @@ Pages.coachingNote = {
         week_number: autoWeek,
         current_status: currentEditor.getSanitizedHTML() || null,
         progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate'), 10) : null,
-        main_issue: issueEditor.getSanitizedHTML() || null,
+        main_issue: fd.has('use_main_issue') ? (issueEditor.getSanitizedHTML() || null) : null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
       await API.createNote(projectId, data);
@@ -206,7 +266,10 @@ Pages.coachingNote = {
         </div>
         <div class="form-group"><label>현재 상태</label><div id="edit-note-current-editor"></div></div>
         <div class="form-group"><label>진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" value="${note.progress_rate ?? ''}" /></div>
-        <div class="form-group"><label>주요 문제</label><div id="edit-note-issue-editor"></div></div>
+        <div class="form-group">
+          <label><input type="checkbox" name="use_main_issue"${Fmt.excerpt(note.main_issue || '', 1) ? ' checked' : ''} /> 주요 문제 작성</label>
+        </div>
+        <div class="form-group" id="edit-main-issue-wrap" style="display:${Fmt.excerpt(note.main_issue || '', 1) ? 'block' : 'none'};"><label>주요 문제</label><div id="edit-note-issue-editor"></div></div>
         <div class="form-group"><label>다음 작업</label><div id="edit-note-action-editor"></div></div>
         <div class="form-group">
           <label>AI 보완 지시사항 (선택)</label>
@@ -237,6 +300,16 @@ Pages.coachingNote = {
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const editForm = document.getElementById('edit-note-form');
+    const useMainIssueInput = editForm.querySelector('[name="use_main_issue"]');
+    const mainIssueWrap = document.getElementById('edit-main-issue-wrap');
+    const isMainIssueEnabled = () => !!useMainIssueInput?.checked;
+    const syncMainIssueVisibility = () => {
+      if (mainIssueWrap) {
+        mainIssueWrap.style.display = isMainIssueEnabled() ? 'block' : 'none';
+      }
+    };
+    useMainIssueInput?.addEventListener('change', syncMainIssueVisibility);
+    syncMainIssueVisibility();
     const aiBtn = document.getElementById('enhance-note-ai-btn');
     const errEl = document.getElementById('edit-note-err');
     const editBinding = DraftStore.bindForm({
@@ -244,6 +317,7 @@ Pages.coachingNote = {
       key: draftKey,
       collect: () => ({
         progress_rate: editForm.querySelector('[name="progress_rate"]').value,
+        use_main_issue: editForm.querySelector('[name="use_main_issue"]').checked,
         ai_instruction: editForm.querySelector('[name="ai_instruction"]').value,
         current_status: currentEditor.getHTML(),
         main_issue: issueEditor.getHTML(),
@@ -252,10 +326,12 @@ Pages.coachingNote = {
       apply: (payload) => {
         if (!payload || typeof payload !== 'object') return;
         if (payload.progress_rate !== undefined) editForm.querySelector('[name="progress_rate"]').value = payload.progress_rate || '';
+        if (payload.use_main_issue !== undefined) editForm.querySelector('[name="use_main_issue"]').checked = !!payload.use_main_issue;
         if (payload.ai_instruction !== undefined) editForm.querySelector('[name="ai_instruction"]').value = payload.ai_instruction || '';
         if (payload.current_status !== undefined) currentEditor.setHTML(payload.current_status || '');
         if (payload.main_issue !== undefined) issueEditor.setHTML(payload.main_issue || '');
         if (payload.next_action !== undefined) actionEditor.setHTML(payload.next_action || '');
+        syncMainIssueVisibility();
       },
       statusEl: document.getElementById('edit-note-draft-status'),
       restoreMessage: '이전에 임시저장된 코칭노트 편집 내용이 있습니다. 복원하시겠습니까?',
@@ -282,12 +358,14 @@ Pages.coachingNote = {
         const instruction = (document.querySelector('#edit-note-form [name=\"ai_instruction\"]')?.value || '').trim();
         const enhanced = await API.enhanceNote(note.note_id, {
           current_status: currentEditor.getSanitizedHTML() || null,
-          main_issue: issueEditor.getSanitizedHTML() || null,
+          main_issue: isMainIssueEnabled() ? (issueEditor.getSanitizedHTML() || null) : null,
           next_action: actionEditor.getSanitizedHTML() || null,
           instruction: instruction || null,
         });
         currentEditor.setHTML(enhanced.current_status || '');
-        issueEditor.setHTML(enhanced.main_issue || '');
+        if (isMainIssueEnabled()) {
+          issueEditor.setHTML(enhanced.main_issue || '');
+        }
         actionEditor.setHTML(enhanced.next_action || '');
       } catch (err) {
         setFormError(err.message || 'AI 보완 실패');
@@ -311,7 +389,7 @@ Pages.coachingNote = {
         week_number: fixedWeek,
         current_status: currentEditor.getSanitizedHTML() || null,
         progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate'), 10) : null,
-        main_issue: issueEditor.getSanitizedHTML() || null,
+        main_issue: fd.has('use_main_issue') ? (issueEditor.getSanitizedHTML() || null) : null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
       try {

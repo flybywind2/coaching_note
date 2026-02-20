@@ -37,6 +37,10 @@ const API = {
   // Users (admin)
   getUsers: (includeInactive = false) => apiFetch(`/api/users${includeInactive ? '?include_inactive=true' : ''}`),
   createUser: (data) => apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id, data) => apiFetch(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  bulkUpsertUsers: (data) => apiFetch('/api/users/bulk-upsert', { method: 'POST', body: JSON.stringify(data) }),
+  getUserPermissions: (id) => apiFetch(`/api/users/${id}/permissions`),
+  updateUserPermissions: (id, data) => apiFetch(`/api/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteUser: (id) => apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
   restoreUser: (id) => apiFetch(`/api/users/${id}/restore`, { method: 'PATCH' }),
   uploadEditorImage: (file, options = {}) => {
@@ -158,6 +162,35 @@ const API = {
 
   // Dashboard
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
+  getAboutContent: (key) => apiFetch(`/api/about/content?key=${encodeURIComponent(key)}`),
+  updateAboutContent: (key, data) => apiFetch(`/api/about/content/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getCoachProfiles: () => apiFetch('/api/about/coaches'),
+  getCoachingPlanGrid: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      q.set(k, String(v));
+    });
+    return apiFetch(`/api/coaching-plan/grid${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  upsertCoachingPlan: (data) => apiFetch('/api/coaching-plan/plan', { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCoachingPlan: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      q.set(k, String(v));
+    });
+    return apiFetch(`/api/coaching-plan/plan${q.toString() ? `?${q.toString()}` : ''}`, { method: 'DELETE' });
+  },
+  upsertCoachingActualOverride: (data) => apiFetch('/api/coaching-plan/actual-override', { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCoachingActualOverride: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      q.set(k, String(v));
+    });
+    return apiFetch(`/api/coaching-plan/actual-override${q.toString() ? `?${q.toString()}` : ''}`, { method: 'DELETE' });
+  },
   getHome: (batchId) => apiFetch(`/api/home${batchId ? '?batch_id=' + batchId : ''}`),
   searchWorkspace: (params = {}) => {
     const qs = new URLSearchParams();

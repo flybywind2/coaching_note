@@ -27,6 +27,20 @@ def test_create_note_coach(client, seed_users, project):
     assert resp.json()["progress_rate"] == 30
 
 
+def test_create_note_uses_project_progress_default(client, seed_users, db, project):
+    project.progress_rate = 57
+    db.commit()
+
+    headers = auth_headers(client, "coach001")
+    resp = client.post(
+        f"/api/projects/{project.project_id}/notes",
+        json={"coaching_date": str(date.today()), "current_status": "기본 진행률 연동"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["progress_rate"] == 57
+
+
 def test_create_note_participant_forbidden(client, seed_users, project):
     headers = auth_headers(client, "user001")
     resp = client.post(
@@ -90,5 +104,37 @@ def test_admin_sees_coach_only_comments(client, seed_users, project):
     resp = client.get(f"/api/notes/{note_id}/comments", headers=admin_headers)
     assert len(resp.json()) == 1
     assert resp.json()[0]["is_coach_only"] == True
+
+
+def test_comment_type_split_by_author_role(client, seed_users, project):
+    coach_headers = auth_headers(client, "coach001")
+    participant_headers = auth_headers(client, "user001")
+    note_resp = client.post(
+        f"/api/projects/{project.project_id}/notes",
+        json={"coaching_date": str(date.today())},
+        headers=coach_headers,
+    )
+    note_id = note_resp.json()["note_id"]
+
+    coach_comment = client.post(
+        f"/api/notes/{note_id}/comments",
+        json={"content": "코칭 의견 1"},
+        headers=coach_headers,
+    )
+    participant_comment = client.post(
+        f"/api/notes/{note_id}/comments",
+        json={"content": "참여자 메모 1"},
+        headers=participant_headers,
+    )
+
+    assert coach_comment.status_code == 200
+    assert participant_comment.status_code == 200
+    assert coach_comment.json()["comment_type"] == "coaching_feedback"
+    assert participant_comment.json()["comment_type"] == "participant_memo"
+
+    listed = client.get(f"/api/notes/{note_id}/comments", headers=coach_headers)
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert {row["comment_type"] for row in rows} == {"coaching_feedback", "participant_memo"}
 
 
