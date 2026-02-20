@@ -77,6 +77,23 @@ Pages.home = {
           </div>
 
           <section class="home-panel home-project-panel">
+            <h3>주간 공지</h3>
+            ${(home.weekly_notices || []).length === 0 ? '<p class="empty-state">최근 7일 공지가 없습니다.</p>' : `
+              <div class="home-list">
+                ${(home.weekly_notices || []).map((n) => `
+                  <a class="home-list-row" href="#/board/${n.board_id}/post/${n.post_id}">
+                    <div class="home-row-main">
+                      <span class="tag tag-notice">공지</span>
+                      <strong>${Fmt.escape(n.title)}</strong>
+                    </div>
+                    <div class="home-row-sub">${Fmt.escape(n.board_name || '-')} · ${Fmt.datetime(n.created_at)}</div>
+                  </a>
+                `).join('')}
+              </div>
+            `}
+          </section>
+
+          <section class="home-panel home-project-panel">
             <h3>내 과제</h3>
             ${(home.projects || []).length === 0 ? '<p class="empty-state">표시할 과제가 없습니다.</p>' : `
               <div class="home-project-grid">

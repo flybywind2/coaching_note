@@ -110,6 +110,9 @@ const API = {
   },
   createSession: (data) => apiFetch('/api/sessions', { method: 'POST', body: JSON.stringify(data) }),
   updateSession: (id, data) => apiFetch(`/api/sessions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSession: (id) => apiFetch(`/api/sessions/${id}`, { method: 'DELETE' }),
+  getSessionAttendees: (sessionId) => apiFetch(`/api/sessions/${sessionId}/attendees`),
+  addSessionAttendee: (sessionId, data) => apiFetch(`/api/sessions/${sessionId}/attendees`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Schedules
   getSchedules: (batchId) => apiFetch(`/api/schedules?batch_id=${batchId}`),
@@ -126,6 +129,13 @@ const API = {
   // Boards
   getBoards: () => apiFetch('/api/boards'),
   getPosts: (boardId, skip = 0, limit = 20) => apiFetch(`/api/boards/${boardId}/posts?skip=${skip}&limit=${limit}`),
+  getAllPosts: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.skip != null) q.set('skip', String(params.skip));
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.category) q.set('category', String(params.category));
+    return apiFetch(`/api/boards/posts${q.toString() ? `?${q.toString()}` : ''}`);
+  },
   getPost: (boardId, postId) => apiFetch(`/api/boards/posts/${postId}`),
   createPost: (boardId, data) => apiFetch(`/api/boards/${boardId}/posts`, { method: 'POST', body: JSON.stringify(data) }),
   updatePost: (postId, data) => apiFetch(`/api/boards/posts/${postId}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -134,6 +144,7 @@ const API = {
   restorePostVersion: (postId, versionId) => apiFetch(`/api/boards/posts/${postId}/restore/${versionId}`, { method: 'POST' }),
   getPostComments: (postId) => apiFetch(`/api/boards/posts/${postId}/comments`),
   createPostComment: (postId, data) => apiFetch(`/api/boards/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
+  updatePostComment: (commentId, data) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
 
   // Notifications
@@ -170,6 +181,8 @@ const API = {
   // Attendance / Coaching check
   checkIn: (sessionId) => apiFetch(`/api/sessions/${sessionId}/checkin`, { method: 'POST' }),
   checkOut: (sessionId) => apiFetch(`/api/sessions/${sessionId}/checkout`, { method: 'POST' }),
+  getMyAttendanceStatus: (sessionId) => apiFetch(`/api/sessions/${sessionId}/my-attendance-status`),
+  autoCheckInToday: () => apiFetch('/api/sessions/auto-checkin-today', { method: 'POST' }),
   getAttendance: (sessionId) => apiFetch(`/api/sessions/${sessionId}/attendance`),
   coachingStart: (sessionId) => apiFetch(`/api/sessions/${sessionId}/coaching-start`, { method: 'POST' }),
   coachingEnd: (sessionId) => apiFetch(`/api/sessions/${sessionId}/coaching-end`, { method: 'POST' }),

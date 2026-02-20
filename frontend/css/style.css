@@ -1238,6 +1238,14 @@ body::after {
   -webkit-backdrop-filter: blur(var(--blur));
   overflow: hidden;
 }
+.board-table-wrap { overflow: auto; }
+.board-table { min-width: 860px; }
+.board-table .post-title {
+  font-size: 13px;
+  white-space: normal;
+  display: inline-block;
+}
+.board-row.notice td { background: rgba(255, 246, 214, 0.45); }
 .post-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.58); }
 .post-row:last-child { border-bottom: none; }
 .post-row.notice { background: rgba(255, 246, 214, 0.5); }

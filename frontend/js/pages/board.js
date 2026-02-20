@@ -3,75 +3,90 @@
  */
 
 Pages.board = {
-  async render(el, params) {
-    const boardId = parseInt(params.boardId);
+  async render(el, params = {}) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
-      const [boards, posts] = await Promise.all([API.getBoards(), API.getPosts(boardId)]);
-      const board = boards.find(b => b.board_id === boardId) || boards[0];
       const user = Auth.getUser();
+      const [boards, allPosts] = await Promise.all([
+        API.getBoards(),
+        API.getAllPosts({ limit: 300 }),
+      ]);
+
+      if (!boards.length) {
+        el.innerHTML = '<div class="empty-state">게시판 설정이 없습니다.</div>';
+        return;
+      }
+
+      const boardIdFromPath = Number.parseInt(params.boardId, 10);
+      const boardFromPath = Number.isNaN(boardIdFromPath)
+        ? null
+        : boards.find((b) => b.board_id === boardIdFromPath) || null;
+      const initialCategory = boardFromPath?.board_type || 'all';
+      const selectedCategory = params.category || initialCategory;
+
+      const filtered = selectedCategory === 'all'
+        ? allPosts
+        : allPosts.filter((post) => (post.board_type || '') === selectedCategory);
 
       el.innerHTML = `
         <div class="page-container">
           <div class="page-header">
             <h1>게시판</h1>
-            <div class="board-tabs">
-              ${boards.map(b => `<button class="board-tab${b.board_id===boardId?' active':''}" data-bid="${b.board_id}">${Fmt.escape(b.board_name)}</button>`).join('')}
+            <div class="inline-actions">
+              <label class="hint" for="board-category-filter">분류</label>
+              <select id="board-category-filter">
+                <option value="all"${selectedCategory === 'all' ? ' selected' : ''}>전체</option>
+                ${boards.map((b) => `<option value="${Fmt.escape(b.board_type)}"${selectedCategory === b.board_type ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
+              </select>
+              ${user.role !== 'observer' ? '<button id="new-post-btn" class="btn btn-primary">+ 글쓰기</button>' : ''}
             </div>
-            ${user.role !== 'observer' ? `<button id="new-post-btn" class="btn btn-primary">+ 글쓰기</button>` : ''}
           </div>
-          <div class="post-list">
-            ${posts.length === 0 ? '<p class="empty-state">게시글이 없습니다.</p>' : posts.map(p => `
-              <div class="post-row${p.is_notice ? ' notice' : ''}">
-                ${p.is_notice ? '<span class="tag tag-notice">공지</span>' : ''}
-                <a href="#/board/${boardId}/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a>
-                <span class="post-date">${Fmt.escape(Fmt.excerpt(p.content || '', 50))}</span>
-                <span class="post-date">${Fmt.date(p.created_at)}</span>
-                <span class="post-views">👁 ${p.view_count}</span>
-              </div>`).join('')}
+
+          <div class="post-list board-table-wrap">
+            ${filtered.length === 0 ? '<p class="empty-state" style="padding:16px;">게시글이 없습니다.</p>' : `
+              <table class="data-table board-table">
+                <thead>
+                  <tr>
+                    <th style="width:72px;">번호</th>
+                    <th style="width:120px;">분류</th>
+                    <th>제목</th>
+                    <th style="width:130px;">작성자</th>
+                    <th style="width:130px;">날짜</th>
+                    <th style="width:84px;">조회수</th>
+                    <th style="width:84px;">댓글수</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${filtered.map((p, idx) => `
+                    <tr class="board-row ${p.is_notice ? 'notice' : ''}" data-post-id="${p.post_id}">
+                      <td>${filtered.length - idx}</td>
+                      <td>${p.is_notice ? '<span class="tag tag-notice">공지</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
+                      <td><a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a></td>
+                      <td>${Fmt.escape(p.author_name || `#${p.author_id}`)}</td>
+                      <td>${Fmt.date(p.created_at)}</td>
+                      <td>${p.view_count || 0}</td>
+                      <td>${p.comment_count || 0}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            `}
           </div>
         </div>`;
 
-      el.querySelectorAll('.board-tab').forEach(btn => {
-        btn.addEventListener('click', () => Router.go(`/board/${btn.dataset.bid}`));
+      document.getElementById('board-category-filter')?.addEventListener('change', (e) => {
+        const next = e.target.value || 'all';
+        Router.go(next === 'all' ? '/board' : `/board?category=${encodeURIComponent(next)}`);
       });
 
       document.getElementById('new-post-btn')?.addEventListener('click', () => {
-        Modal.open(`<h2>글쓰기</h2>
-          <form id="new-post-form">
-            <div class="form-group"><label>제목 *</label><input name="title" required /></div>
-            <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
-            <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-            ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice" /> 공지로 등록</label></div>` : ''}
-            <button type="submit" class="btn btn-primary">등록</button>
-            <p class="form-error" id="board-post-err" style="display:none;"></p>
-          </form>`);
-        const postEditor = RichEditor.create(document.getElementById('board-post-editor'), {
-          placeholder: '게시글 본문을 입력하세요. 이미지/표 삽입이 가능합니다.',
-          onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_post', boardId }),
-        });
-        document.getElementById('new-post-form').addEventListener('submit', async e => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          const title = (fd.get('title') || '').trim();
-          if (!title) return;
-          if (postEditor.isEmpty()) {
-            document.getElementById('board-post-err').textContent = '내용을 입력하세요.';
-            document.getElementById('board-post-err').style.display = 'block';
-            return;
-          }
-          try {
-            await API.createPost(boardId, {
-              title,
-              content: postEditor.getSanitizedHTML(),
-              is_notice: fd.has('is_notice'),
-            });
-            Modal.close();
-            Pages.board.render(el, params);
-          } catch (err) {
-            document.getElementById('board-post-err').textContent = err.message || '게시글 등록 실패';
-            document.getElementById('board-post-err').style.display = 'block';
-          }
+        this._openPostModal({
+          boards,
+          user,
+          initialBoardId: boardFromPath?.board_id || boards[0].board_id,
+          onSaved: async () => {
+            await this.render(el, params);
+          },
         });
       });
     } catch (e) {
@@ -79,134 +94,221 @@ Pages.board = {
     }
   },
 
+  _openPostModal({ boards, user, post = null, initialBoardId = null, onSaved }) {
+    const isEdit = !!post;
+    const defaultBoardId = post?.board_id || initialBoardId || boards[0]?.board_id;
+    Modal.open(`<h2>${isEdit ? '게시글 수정' : '글쓰기'}</h2>
+      <form id="board-post-form">
+        <div class="form-group">
+          <label>분류 *</label>
+          <select name="board_id" required>
+            ${boards.map((b) => `<option value="${b.board_id}"${b.board_id === defaultBoardId ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
+        <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
+        <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
+        ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice"${post?.is_notice ? ' checked' : ''} /> 공지로 등록</label></div>` : ''}
+        <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
+        <p class="form-error" id="board-post-err" style="display:none;"></p>
+      </form>`, null, { className: 'modal-box-xl' });
+
+    const postEditor = RichEditor.create(document.getElementById('board-post-editor'), {
+      initialHTML: post?.content || '',
+      placeholder: '게시글 본문을 입력하세요. 이미지/표 삽입이 가능합니다.',
+      onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_post', boardId: post?.board_id || defaultBoardId }),
+    });
+
+    document.getElementById('board-post-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const title = (fd.get('title') || '').toString().trim();
+      const boardId = Number.parseInt((fd.get('board_id') || '').toString(), 10);
+      if (!title || Number.isNaN(boardId)) return;
+      if (postEditor.isEmpty()) {
+        const errEl = document.getElementById('board-post-err');
+        errEl.textContent = '내용을 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        if (isEdit) {
+          const payload = {
+            title,
+            content: postEditor.getSanitizedHTML(),
+            is_notice: fd.has('is_notice'),
+          };
+          if (boardId !== post.board_id) {
+            await API.createPost(boardId, payload);
+            await API.deletePost(post.post_id);
+          } else {
+            await API.updatePost(post.post_id, payload);
+          }
+        } else {
+          await API.createPost(boardId, {
+            title,
+            content: postEditor.getSanitizedHTML(),
+            is_notice: fd.has('is_notice'),
+          });
+        }
+        Modal.close();
+        if (onSaved) onSaved();
+      } catch (err) {
+        const errEl = document.getElementById('board-post-err');
+        errEl.textContent = err.message || `게시글 ${isEdit ? '수정' : '등록'} 실패`;
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  _openCommentModal({ postId, comment = null, boardId = null, onSaved }) {
+    const isEdit = !!comment;
+    Modal.open(`<h2>${isEdit ? '댓글 수정' : '댓글 작성'}</h2>
+      <form id="board-comment-form">
+        <div id="board-comment-editor"></div>
+        <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
+        <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
+        <p class="form-error" id="board-comment-err" style="display:none;"></p>
+      </form>`, null, { className: 'modal-box-xl' });
+
+    const commentEditor = RichEditor.create(document.getElementById('board-comment-editor'), {
+      compact: true,
+      initialHTML: comment?.content || '',
+      placeholder: '댓글을 입력하세요. 이미지/표 삽입이 가능합니다.',
+      onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_comment', boardId }),
+    });
+
+    document.getElementById('board-comment-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (commentEditor.isEmpty()) {
+        const errEl = document.getElementById('board-comment-err');
+        errEl.textContent = '댓글 내용을 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        const content = commentEditor.getSanitizedHTML();
+        if (isEdit) {
+          await API.updatePostComment(comment.comment_id, { content });
+        } else {
+          await API.createPostComment(postId, { content });
+        }
+        Modal.close();
+        if (onSaved) onSaved();
+      } catch (err) {
+        const errEl = document.getElementById('board-comment-err');
+        errEl.textContent = err.message || `댓글 ${isEdit ? '수정' : '등록'} 실패`;
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
   async renderPost(el, params) {
-    const { boardId, postId } = params;
+    const postId = Number.parseInt(params.postId, 10);
+    if (Number.isNaN(postId)) {
+      el.innerHTML = '<div class="error-state">잘못된 게시글 주소입니다.</div>';
+      return;
+    }
+
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
-      const [post, comments] = await Promise.all([
-        API.getPost(boardId, postId),
+      const [post, comments, boards] = await Promise.all([
+        API.getPost(params.boardId, postId),
         API.getPostComments(postId),
+        API.getBoards(),
       ]);
       const user = Auth.getUser();
       const canManagePost = user.role === 'admin' || post.author_id === user.user_id;
 
       el.innerHTML = `
         <div class="page-container">
-          <a href="#/board/${boardId}" class="back-link">← 게시판으로</a>
+          <a href="#/board" class="back-link">← 게시판으로</a>
           <div class="post-detail">
-            ${post.is_notice ? '<span class="tag tag-notice">공지</span>' : ''}
+            <div class="inline-actions">
+              ${post.is_notice ? '<span class="tag tag-notice">공지</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
+            </div>
             <h2>${Fmt.escape(post.title)}</h2>
-            <div class="post-meta">${Fmt.datetime(post.created_at)} · 조회 ${post.view_count}</div>
+            <div class="post-meta">${Fmt.datetime(post.created_at)} · 작성자 ${Fmt.escape(post.author_name || `#${post.author_id}`)} · 조회 ${post.view_count}</div>
             ${canManagePost ? `
               <div class="post-actions">
                 <button id="edit-post-btn" class="btn btn-sm btn-secondary">수정</button>
-                <button id="post-version-btn" class="btn btn-sm btn-secondary">이력</button>
                 <button id="delete-post-btn" class="btn btn-sm btn-danger">삭제</button>
               </div>` : ''}
             <div class="post-body rich-content">${Fmt.rich(post.content, '-')}</div>
           </div>
+
           <div class="comments-section">
-            <h3>댓글 (${comments.length})</h3>
-            ${comments.map(c => `
+            <div class="inline-actions" style="justify-content:space-between; width:100%;">
+              <h3>댓글 (${comments.length})</h3>
+              ${user.role !== 'observer' ? '<button id="new-comment-btn" class="btn btn-sm btn-primary">댓글 작성</button>' : ''}
+            </div>
+            ${comments.map((c) => `
               <div class="comment-card">
                 <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                 <div class="comment-meta">
-                  ${Fmt.datetime(c.created_at)}
-                  ${(user.role === 'admin' || c.author_id === user.user_id) ? `<button class="btn btn-sm btn-danger delete-post-comment-btn" data-comment-id="${c.comment_id}">삭제</button>` : ''}
+                  <span>${Fmt.datetime(c.created_at)}</span>
+                  ${(user.role === 'admin' || c.author_id === user.user_id)
+                    ? `<span class="inline-actions">
+                        <button class="btn btn-sm btn-secondary edit-post-comment-btn" data-comment-id="${c.comment_id}">수정</button>
+                        <button class="btn btn-sm btn-danger delete-post-comment-btn" data-comment-id="${c.comment_id}">삭제</button>
+                      </span>`
+                    : ''}
                 </div>
-              </div>`).join('') || '<p class="empty-state">댓글이 없습니다.</p>'}
-            ${user.role !== 'observer' ? `
-            <form id="post-comment-form" class="comment-form">
-              <div id="board-comment-editor"></div>
-              <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-              <button type="submit" class="btn btn-primary">등록</button>
-              <p class="form-error" id="board-comment-err" style="display:none;"></p>
-            </form>` : '<p class="empty-state">참관자는 댓글을 작성할 수 없습니다.</p>'}
+              </div>
+            `).join('') || '<p class="empty-state">댓글이 없습니다.</p>'}
+            ${user.role === 'observer' ? '<p class="empty-state">참관자는 댓글을 작성할 수 없습니다.</p>' : ''}
           </div>
         </div>`;
 
-      if (user.role !== 'observer') {
-        const commentEditor = RichEditor.create(document.getElementById('board-comment-editor'), {
-          compact: true,
-          placeholder: '댓글을 입력하세요. 이미지/표 삽입이 가능합니다.',
-          onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_comment', boardId: +boardId }),
-        });
-
-        document.getElementById('post-comment-form').addEventListener('submit', async e => {
-          e.preventDefault();
-          if (commentEditor.isEmpty()) {
-            document.getElementById('board-comment-err').textContent = '댓글 내용을 입력하세요.';
-            document.getElementById('board-comment-err').style.display = 'block';
-            return;
-          }
-          try {
-            await API.createPostComment(postId, { content: commentEditor.getSanitizedHTML() });
-            Pages.board.renderPost(el, params);
-          } catch (err) {
-            document.getElementById('board-comment-err').textContent = err.message || '댓글 등록 실패';
-            document.getElementById('board-comment-err').style.display = 'block';
-          }
-        });
-      }
-
       document.getElementById('edit-post-btn')?.addEventListener('click', () => {
-        Modal.open(`<h2>게시글 수정</h2>
-          <form id="edit-post-form">
-            <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post.title)}" /></div>
-            <div class="form-group"><label>내용 *</label><div id="edit-board-post-editor"></div></div>
-            <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-            ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice"${post.is_notice ? ' checked' : ''} /> 공지로 등록</label></div>` : ''}
-            <button type="submit" class="btn btn-primary">저장</button>
-            <p class="form-error" id="edit-board-post-err" style="display:none;"></p>
-          </form>`);
-        const editEditor = RichEditor.create(document.getElementById('edit-board-post-editor'), {
-          initialHTML: post.content || '',
-          placeholder: '게시글 본문을 입력하세요. 이미지/표 삽입이 가능합니다.',
-          onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_post', boardId: +boardId }),
-        });
-        document.getElementById('edit-post-form').addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const fd = new FormData(e.target);
-          const title = (fd.get('title') || '').trim();
-          if (!title) return;
-          if (editEditor.isEmpty()) {
-            document.getElementById('edit-board-post-err').textContent = '내용을 입력하세요.';
-            document.getElementById('edit-board-post-err').style.display = 'block';
-            return;
-          }
-          try {
-            await API.updatePost(+postId, {
-              title,
-              content: editEditor.getSanitizedHTML(),
-              is_notice: fd.has('is_notice'),
-            });
-            Modal.close();
+        this._openPostModal({
+          boards,
+          user,
+          post,
+          onSaved: async () => {
             await this.renderPost(el, params);
-          } catch (err) {
-            document.getElementById('edit-board-post-err').textContent = err.message || '게시글 수정 실패';
-            document.getElementById('edit-board-post-err').style.display = 'block';
-          }
-        });
-      });
-
-      document.getElementById('post-version-btn')?.addEventListener('click', async () => {
-        await this.showVersionModal(+postId, async () => {
-          await this.renderPost(el, params);
+          },
         });
       });
 
       document.getElementById('delete-post-btn')?.addEventListener('click', async () => {
         if (!confirm('게시글을 삭제하시겠습니까?')) return;
         try {
-          await API.deletePost(+postId);
-          Router.go(`/board/${boardId}`);
+          await API.deletePost(postId);
+          Router.go('/board');
         } catch (err) {
           alert(err.message || '게시글 삭제 실패');
         }
       });
 
+      document.getElementById('new-comment-btn')?.addEventListener('click', () => {
+        this._openCommentModal({
+          postId,
+          boardId: post.board_id,
+          onSaved: async () => {
+            await this.renderPost(el, params);
+          },
+        });
+      });
+
+      const commentById = new Map(comments.map((c) => [c.comment_id, c]));
+      el.querySelectorAll('.edit-post-comment-btn').forEach((btn) => btn.addEventListener('click', () => {
+        const commentId = Number.parseInt(btn.dataset.commentId, 10);
+        const comment = commentById.get(commentId);
+        if (!comment) return;
+        this._openCommentModal({
+          postId,
+          comment,
+          boardId: post.board_id,
+          onSaved: async () => {
+            await this.renderPost(el, params);
+          },
+        });
+      }));
+
       el.querySelectorAll('.delete-post-comment-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        const commentId = +btn.dataset.commentId;
+        const commentId = Number.parseInt(btn.dataset.commentId, 10);
+        if (Number.isNaN(commentId)) return;
         if (!confirm('댓글을 삭제하시겠습니까?')) return;
         try {
           await API.deletePostComment(commentId);
@@ -219,45 +321,4 @@ Pages.board = {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
   },
-
-  async showVersionModal(postId, onRestored) {
-    try {
-      const versions = await API.getPostVersions(postId);
-      Modal.open(`<h2>게시글 변경 이력</h2>
-        <div class="version-list">
-          ${versions.length ? versions.map((v) => `
-            <div class="version-item">
-              <div class="version-meta">
-                <strong>v${v.version_no}</strong>
-                <span>${Fmt.escape(v.change_type)}</span>
-                <span>${Fmt.datetime(v.created_at)}</span>
-              </div>
-              <div class="version-preview">
-                <strong>${Fmt.escape(v.snapshot.title || '-')}</strong>
-                <p>${Fmt.escape(Fmt.excerpt(v.snapshot.content || '', 180) || '-')}</p>
-              </div>
-              <div class="version-actions">
-                <button class="btn btn-sm btn-secondary restore-post-version-btn" data-version-id="${v.version_id}">이 버전으로 복원</button>
-              </div>
-            </div>
-          `).join('') : '<p class="empty-state">저장된 이력이 없습니다.</p>'}
-        </div>`);
-
-      document.querySelectorAll('.restore-post-version-btn').forEach((btn) => btn.addEventListener('click', async () => {
-        const versionId = +btn.dataset.versionId;
-        if (!confirm('선택한 버전으로 복원하시겠습니까?')) return;
-        try {
-          await API.restorePostVersion(postId, versionId);
-          Modal.close();
-          if (onRestored) onRestored();
-        } catch (err) {
-          alert(err.message || '게시글 복원 실패');
-        }
-      }));
-    } catch (err) {
-      alert(err.message || '게시글 이력을 불러오지 못했습니다.');
-    }
-  },
 };
-
-

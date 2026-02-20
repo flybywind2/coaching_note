@@ -39,6 +39,10 @@ class BoardPostOut(BoardPostBase):
     view_count: int
     created_at: datetime
     updated_at: Optional[datetime]
+    board_name: Optional[str] = None
+    board_type: Optional[str] = None
+    author_name: Optional[str] = None
+    comment_count: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -49,6 +53,10 @@ class PostCommentBase(BaseModel):
 
 class PostCommentCreate(PostCommentBase):
     pass
+
+
+class PostCommentUpdate(BaseModel):
+    content: str
 
 
 class PostCommentOut(PostCommentBase):

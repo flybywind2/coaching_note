@@ -60,9 +60,20 @@ Pages.sessionDetail = {
     const el = document.getElementById('checkin-area');
     if (!el) return;
     try {
-      const logs = await API.getAttendance(sessionId).catch(() => []);
-      const myLog = logs.find(l => l.user_id === user.user_id);
+      const status = await API.getMyAttendanceStatus(sessionId);
+      const myLog = status.attendance_log;
+      const canUseAttendance = ['admin', 'coach', 'participant'].includes(user.role);
+
+      if (!canUseAttendance) {
+        el.innerHTML = '<p class="empty-state">출결 기능은 참여자/코치/관리자에게만 제공됩니다.</p>';
+        return;
+      }
+
       if (!myLog) {
+        if (!status.can_checkin) {
+          el.innerHTML = '<p class="empty-state">허용된 네트워크(IP)에서 접속하면 입실 버튼이 표시됩니다.</p>';
+          return;
+        }
         el.innerHTML = `<button id="checkin-btn" class="btn btn-primary">입실 체크</button>`;
         document.getElementById('checkin-btn').addEventListener('click', async () => {
           try {
@@ -75,15 +86,17 @@ Pages.sessionDetail = {
       } else if (!myLog.check_out_time) {
         el.innerHTML = `
           <p class="success-state">입실: ${Fmt.datetime(myLog.check_in_time)}</p>
-          <button id="checkout-btn" class="btn btn-secondary">퇴실 체크</button>`;
-        document.getElementById('checkout-btn').addEventListener('click', async () => {
-          try {
-            await API.checkOut(sessionId);
-            await this._renderCheckinArea(sessionId, user);
-          } catch (e) {
-            el.innerHTML += `<div class="error-state mt">${Fmt.escape(e.message)}</div>`;
-          }
-        });
+          ${status.can_checkout ? '<button id="checkout-btn" class="btn btn-secondary">퇴실 체크</button>' : '<p class="empty-state mt">허용된 네트워크(IP)에서 접속하면 퇴실 버튼이 표시됩니다.</p>'}`;
+        if (status.can_checkout) {
+          document.getElementById('checkout-btn').addEventListener('click', async () => {
+            try {
+              await API.checkOut(sessionId);
+              await this._renderCheckinArea(sessionId, user);
+            } catch (e) {
+              el.innerHTML += `<div class="error-state mt">${Fmt.escape(e.message)}</div>`;
+            }
+          });
+        }
       } else {
         el.innerHTML = `
           <p class="success-state">입실: ${Fmt.datetime(myLog.check_in_time)}</p>
