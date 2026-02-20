@@ -165,6 +165,9 @@ const API = {
   getAboutContent: (key) => apiFetch(`/api/about/content?key=${encodeURIComponent(key)}`),
   updateAboutContent: (key, data) => apiFetch(`/api/about/content/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(data) }),
   getCoachProfiles: () => apiFetch('/api/about/coaches'),
+  createCoachProfile: (data) => apiFetch('/api/about/coaches', { method: 'POST', body: JSON.stringify(data) }),
+  updateCoachProfile: (coachId, data) => apiFetch(`/api/about/coaches/${coachId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCoachProfile: (coachId) => apiFetch(`/api/about/coaches/${coachId}`, { method: 'DELETE' }),
   getCoachingPlanGrid: (params = {}) => {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {

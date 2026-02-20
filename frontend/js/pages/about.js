@@ -22,6 +22,9 @@ Pages.about = {
         coach: coachContent,
         coaches: Array.isArray(coaches) ? coaches : [],
       };
+      const reloadCoachProfiles = async () => {
+        state.coaches = await API.getCoachProfiles();
+      };
 
       const draw = () => {
         const isIntroTab = state.tab === 'intro';
@@ -35,7 +38,12 @@ Pages.about = {
                 <button class="tab-btn${isIntroTab ? ' active' : ''}" data-tab="intro">SSP+ 소개</button>
                 <button class="tab-btn${!isIntroTab ? ' active' : ''}" data-tab="coach">코치 소개</button>
               </div>
-              ${isAdmin ? '<button id="about-edit-btn" class="btn btn-secondary">현재 탭 편집</button>' : ''}
+              ${isAdmin ? `
+                <div class="inline-actions">
+                  <button id="about-edit-btn" class="btn btn-secondary">현재 탭 편집</button>
+                  ${isIntroTab ? '' : '<button id="coach-add-btn" class="btn btn-primary">+ 코치 추가</button>'}
+                </div>
+              ` : ''}
             </div>
 
             <section class="card about-content-card">
@@ -54,6 +62,12 @@ Pages.about = {
                     <p><strong>소속:</strong> ${Fmt.escape(coach.affiliation || coach.department || '-')}</p>
                     <p><strong>전문분야:</strong> ${Fmt.escape(coach.specialty || '-')}</p>
                     <p><strong>경력:</strong> ${Fmt.escape(coach.career || '-')}</p>
+                    ${isAdmin ? `
+                      <div class="page-actions">
+                        <button class="btn btn-sm btn-secondary edit-coach-btn" data-coach-id="${coach.coach_id || ''}">편집</button>
+                        ${coach.coach_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name)}">삭제</button>` : ''}
+                      </div>
+                    ` : ''}
                   </article>
                 `).join('') : '<p class="empty-state">등록된 코치 정보가 없습니다.</p>'}
               </section>
@@ -82,6 +96,49 @@ Pages.about = {
             },
           });
         });
+
+        document.getElementById('coach-add-btn')?.addEventListener('click', async () => {
+          await this._openCoachModal({
+            mode: 'create',
+            onSaved: async () => {
+              await reloadCoachProfiles();
+              draw();
+            },
+          });
+        });
+
+        el.querySelectorAll('.edit-coach-btn').forEach((btn) => btn.addEventListener('click', async () => {
+          const coachIdRaw = (btn.dataset.coachId || '').trim();
+          const coachId = coachIdRaw ? parseInt(coachIdRaw, 10) : null;
+          if (!coachId) {
+            alert('기본 코치 사용자(프로필 미등록)는 편집 전에 코치 추가로 등록해주세요.');
+            return;
+          }
+          const coach = state.coaches.find((row) => row.coach_id === coachId);
+          if (!coach) return;
+          await this._openCoachModal({
+            mode: 'edit',
+            coach,
+            onSaved: async () => {
+              await reloadCoachProfiles();
+              draw();
+            },
+          });
+        }));
+
+        el.querySelectorAll('.delete-coach-btn').forEach((btn) => btn.addEventListener('click', async () => {
+          const coachId = parseInt(btn.dataset.coachId, 10);
+          const coachName = btn.dataset.coachName || '선택한 코치';
+          if (!coachId) return;
+          if (!confirm(`${coachName} 코치 프로필을 삭제하시겠습니까?`)) return;
+          try {
+            await API.deleteCoachProfile(coachId);
+            await reloadCoachProfiles();
+            draw();
+          } catch (err) {
+            alert(err.message || '코치 프로필 삭제 실패');
+          }
+        }));
       };
 
       draw();
@@ -121,6 +178,58 @@ Pages.about = {
       } catch (err) {
         const errEl = document.getElementById('about-edit-err');
         errEl.textContent = err.message || '저장에 실패했습니다.';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  async _openCoachModal({ mode, coach = null, onSaved }) {
+    const isEdit = mode === 'edit';
+    Modal.open(`<h2>${isEdit ? '코치 프로필 편집' : '코치 프로필 추가'}</h2>
+      <form id="coach-profile-form">
+        <div class="form-group"><label>이름 *</label><input name="name" required value="${Fmt.escape(coach?.name || '')}" /></div>
+        <div class="form-group">
+          <label>코치 타입</label>
+          <select name="coach_type">
+            <option value="internal"${(coach?.coach_type || 'internal') === 'internal' ? ' selected' : ''}>internal</option>
+            <option value="external"${(coach?.coach_type || 'internal') === 'external' ? ' selected' : ''}>external</option>
+          </select>
+        </div>
+        <div class="form-group"><label>부서</label><input name="department" value="${Fmt.escape(coach?.department || '')}" /></div>
+        <div class="form-group"><label>소속</label><input name="affiliation" value="${Fmt.escape(coach?.affiliation || '')}" /></div>
+        <div class="form-group"><label>전문분야</label><input name="specialty" value="${Fmt.escape(coach?.specialty || '')}" /></div>
+        <div class="form-group"><label>경력</label><textarea name="career" rows="4">${Fmt.escape(coach?.career || '')}</textarea></div>
+        <div class="form-group"><label>사진 URL</label><input name="photo_url" value="${Fmt.escape(coach?.photo_url || '')}" /></div>
+        <div class="page-actions">
+          <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '추가'}</button>
+        </div>
+        <p class="form-error" id="coach-profile-err" style="display:none;"></p>
+      </form>`, null, { className: 'modal-box-xl' });
+
+    document.getElementById('coach-profile-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const payload = {
+        name: (fd.get('name') || '').toString().trim() || null,
+        coach_type: (fd.get('coach_type') || 'internal').toString(),
+        department: (fd.get('department') || '').toString().trim() || null,
+        affiliation: (fd.get('affiliation') || '').toString().trim() || null,
+        specialty: (fd.get('specialty') || '').toString().trim() || null,
+        career: (fd.get('career') || '').toString().trim() || null,
+        photo_url: (fd.get('photo_url') || '').toString().trim() || null,
+      };
+
+      try {
+        if (isEdit) {
+          await API.updateCoachProfile(coach.coach_id, payload);
+        } else {
+          await API.createCoachProfile(payload);
+        }
+        Modal.close();
+        if (onSaved) onSaved();
+      } catch (err) {
+        const errEl = document.getElementById('coach-profile-err');
+        errEl.textContent = err.message || `코치 프로필 ${isEdit ? '저장' : '추가'} 실패`;
         errEl.style.display = 'block';
       }
     });

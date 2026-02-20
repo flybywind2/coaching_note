@@ -189,6 +189,18 @@ const RichEditor = {
       await insertImageFromFile(image);
     });
 
+    editor.addEventListener('keydown', (e) => {
+      if (sourceMode) return;
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      focusEditor();
+      if (e.shiftKey) {
+        document.execCommand('outdent', false, null);
+      } else {
+        document.execCommand('indent', false, null);
+      }
+    });
+
     root.querySelector('[data-action="table-insert"]').addEventListener('click', () => {
       const rows = parseInt(prompt('행 수를 입력하세요', '3') || '', 10);
       const cols = parseInt(prompt('열 수를 입력하세요', '3') || '', 10);

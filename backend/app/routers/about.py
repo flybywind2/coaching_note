@@ -8,7 +8,13 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.site_content import SiteContent
 from app.models.user import User, Coach
-from app.schemas.about import SiteContentOut, SiteContentUpdate, CoachProfileOut
+from app.schemas.about import (
+    SiteContentOut,
+    SiteContentUpdate,
+    CoachProfileOut,
+    CoachProfileCreate,
+    CoachProfileUpdate,
+)
 
 router = APIRouter(prefix="/api/about", tags=["about"])
 
@@ -37,6 +43,29 @@ def _validate_key(key: str) -> str:
     if key not in ALLOWED_CONTENT_KEYS:
         raise HTTPException(status_code=400, detail="지원하지 않는 콘텐츠 키입니다.")
     return key
+
+
+def _coach_to_out(coach: Coach) -> CoachProfileOut:
+    return CoachProfileOut(
+        coach_id=coach.coach_id,
+        user_id=coach.user_id,
+        name=coach.name,
+        coach_type=coach.coach_type,
+        department=coach.department,
+        affiliation=coach.affiliation,
+        specialty=coach.specialty,
+        career=coach.career,
+        photo_url=coach.photo_url,
+    )
+
+
+def _validate_coach_user(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.user_id == user_id, User.is_active == True).first()  # noqa: E712
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    if user.role != "coach":
+        raise HTTPException(status_code=400, detail="코치 역할 사용자만 연결할 수 있습니다.")
+    return user
 
 
 def _get_or_default_content(db: Session, key: str) -> SiteContentOut:
@@ -110,21 +139,7 @@ def list_coaches(
         .order_by(Coach.name.asc())
         .all()
     )
-    if coaches:
-        return [
-            CoachProfileOut(
-                coach_id=coach.coach_id,
-                user_id=coach.user_id,
-                name=coach.name,
-                coach_type=coach.coach_type,
-                department=coach.department,
-                affiliation=coach.affiliation,
-                specialty=coach.specialty,
-                career=coach.career,
-                photo_url=coach.photo_url,
-            )
-            for coach in coaches
-        ]
+    coach_user_ids = {coach.user_id for coach in coaches if coach.user_id}
 
     fallback_users = (
         db.query(User)
@@ -132,7 +147,7 @@ def list_coaches(
         .order_by(User.name.asc())
         .all()
     )
-    return [
+    fallback_rows = [
         CoachProfileOut(
             coach_id=None,
             user_id=user.user_id,
@@ -145,4 +160,111 @@ def list_coaches(
             photo_url=None,
         )
         for user in fallback_users
+        if user.user_id not in coach_user_ids
     ]
+    merged = [_coach_to_out(coach) for coach in coaches] + fallback_rows
+    merged.sort(key=lambda row: (row.name or "").lower())
+    return merged
+
+
+@router.post("/coaches", response_model=CoachProfileOut)
+def create_coach(
+    data: CoachProfileCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    linked_user = None
+    if data.user_id is not None:
+        linked_user = _validate_coach_user(db, data.user_id)
+        exists = (
+            db.query(Coach)
+            .filter(
+                Coach.user_id == data.user_id,
+                Coach.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if exists:
+            raise HTTPException(status_code=409, detail="이미 코치 프로필이 연결된 사용자입니다.")
+
+    coach_name = (data.name or "").strip()
+    if not coach_name and linked_user:
+        coach_name = linked_user.name
+    if not coach_name:
+        raise HTTPException(status_code=400, detail="코치 이름을 입력하세요.")
+
+    row = Coach(
+        user_id=data.user_id,
+        name=coach_name,
+        coach_type=data.coach_type or "internal",
+        department=(data.department or (linked_user.department if linked_user else None)),
+        affiliation=data.affiliation,
+        specialty=data.specialty,
+        career=data.career,
+        photo_url=data.photo_url,
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _coach_to_out(row)
+
+
+@router.put("/coaches/{coach_id}", response_model=CoachProfileOut)
+def update_coach(
+    coach_id: int,
+    data: CoachProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    row = (
+        db.query(Coach)
+        .filter(Coach.coach_id == coach_id, Coach.is_active == True)  # noqa: E712
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="코치 프로필을 찾을 수 없습니다.")
+
+    if data.user_id is not None:
+        _validate_coach_user(db, data.user_id)
+        duplicate = (
+            db.query(Coach)
+            .filter(
+                Coach.coach_id != coach_id,
+                Coach.user_id == data.user_id,
+                Coach.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="이미 다른 코치 프로필에 연결된 사용자입니다.")
+        row.user_id = data.user_id
+
+    payload = data.model_dump(exclude_none=True, exclude={"user_id"})
+    for key, value in payload.items():
+        setattr(row, key, value)
+
+    if not (row.name or "").strip():
+        raise HTTPException(status_code=400, detail="코치 이름을 입력하세요.")
+
+    db.commit()
+    db.refresh(row)
+    return _coach_to_out(row)
+
+
+@router.delete("/coaches/{coach_id}")
+def delete_coach(
+    coach_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    row = (
+        db.query(Coach)
+        .filter(Coach.coach_id == coach_id, Coach.is_active == True)  # noqa: E712
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="코치 프로필을 찾을 수 없습니다.")
+    row.is_active = False
+    db.commit()
+    return {"message": "삭제되었습니다."}

@@ -28,3 +28,25 @@ class CoachProfileOut(BaseModel):
     specialty: Optional[str] = None
     career: Optional[str] = None
     photo_url: Optional[str] = None
+
+
+class CoachProfileCreate(BaseModel):
+    user_id: Optional[int] = None
+    name: Optional[str] = None
+    coach_type: str = "internal"
+    department: Optional[str] = None
+    affiliation: Optional[str] = None
+    specialty: Optional[str] = None
+    career: Optional[str] = None
+    photo_url: Optional[str] = None
+
+
+class CoachProfileUpdate(BaseModel):
+    user_id: Optional[int] = None
+    name: Optional[str] = None
+    coach_type: Optional[str] = None
+    department: Optional[str] = None
+    affiliation: Optional[str] = None
+    specialty: Optional[str] = None
+    career: Optional[str] = None
+    photo_url: Optional[str] = None

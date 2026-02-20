@@ -1302,6 +1302,18 @@ body::after {
 .rte-toolbar .sep { width: 1px; height: 22px; background: rgba(140, 156, 198, 0.4); margin: 0 4px; }
 .rte-editor { min-height: 220px; padding: 12px; outline: none; line-height: 1.6; }
 .rte.compact .rte-editor { min-height: 140px; }
+.rte-editor ul,
+.rte-editor ol,
+.rich-content ul,
+.rich-content ol {
+  margin: 6px 0;
+  padding-left: 1.35em;
+  list-style-position: outside;
+}
+.rte-editor li,
+.rich-content li {
+  margin: 2px 0;
+}
 .rte-source {
   width: 100%;
   min-height: 220px;
