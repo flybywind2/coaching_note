@@ -234,3 +234,55 @@ def test_task_assignee_must_be_project_member_and_unassign_on_member_remove(clie
     assert get_task_resp.json()["assigned_to"] is None
 
 
+def test_project_profile_fields_and_my_project_flag(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+    coach_headers = auth_headers(client, "coach001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Profile Test", "organization": "AI Team"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_member_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert add_member_resp.status_code == 200
+
+    participant_list_resp = client.get(f"/api/batches/{seed_batch.batch_id}/projects", headers=participant_headers)
+    assert participant_list_resp.status_code == 200
+    participant_row = next((p for p in participant_list_resp.json() if p["project_id"] == project_id), None)
+    assert participant_row is not None
+    assert participant_row["is_my_project"] is True
+
+    coach_list_resp = client.get(f"/api/batches/{seed_batch.batch_id}/projects", headers=coach_headers)
+    assert coach_list_resp.status_code == 200
+    coach_row = next((p for p in coach_list_resp.json() if p["project_id"] == project_id), None)
+    assert coach_row is not None
+    assert coach_row["is_my_project"] is False
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}",
+        headers=coach_headers,
+        json={
+            "ai_tech_category": "생성형AI",
+            "ai_tech_used": "GPT-4o, LangGraph",
+            "project_summary": "프로젝트 요약 테스트",
+            "github_repos": ["https://github.com/example/app", "https://github.com/example/api"],
+            "progress_rate": 35,
+        },
+    )
+    assert update_resp.status_code == 200
+    body = update_resp.json()
+    assert body["ai_tech_category"] == "생성형AI"
+    assert body["ai_tech_used"] == "GPT-4o, LangGraph"
+    assert body["project_summary"] == "프로젝트 요약 테스트"
+    assert body["github_repos"] == ["https://github.com/example/app", "https://github.com/example/api"]
+    assert body["progress_rate"] == 35
+
+

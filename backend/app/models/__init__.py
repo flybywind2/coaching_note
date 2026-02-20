@@ -3,6 +3,7 @@
 from app.models.user import User, Coach
 from app.models.batch import Batch
 from app.models.project import Project, ProjectMember
+from app.models.project_profile import ProjectProfile
 from app.models.coaching_note import CoachingNote, CoachingComment
 from app.models.document import ProjectDocument
 from app.models.session import CoachingSession, SessionAttendee, AttendanceLog, CoachingTimeLog
@@ -19,6 +20,7 @@ __all__ = [
     "User", "Coach",
     "Batch",
     "Project", "ProjectMember",
+    "ProjectProfile",
     "CoachingNote", "CoachingComment",
     "ProjectDocument",
     "CoachingSession", "SessionAttendee", "AttendanceLog", "CoachingTimeLog",

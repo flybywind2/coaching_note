@@ -7,13 +7,16 @@ FastAPI + Vanilla JS(SPA) 기반 코칭 프로그램 운영 시스템입니다.
 
 - 인증/권한: 사번(`emp_id`) 로그인, JWT 인증, 역할 기반 권한(`admin`, `coach`, `participant`, `observer`)
 - 운영 관리: 차수 CRUD, 과제 CRUD, 과제 멤버 추가/삭제, 관리자 사용자 추가/삭제/복구
+- 워크스페이스: 개인 홈(오늘 할 일), 통합 검색(과제/노트/문서/게시글 + 필터)
 - 코칭노트: 작성/편집/삭제, 코멘트 작성/삭제, 코치 전용 메모
+- 협업 강화(P2): 코칭노트 템플릿 저장/재사용, 코칭노트/문서/게시글 변경 이력 조회/복원, 멘션(`@`) 알림 연동
 - 문서/게시판: 리치 에디터 기반 편집(표/이미지/링크/HTML 모드), 게시글/댓글 편집 및 삭제
-- Task/마일스톤: 생성/편집/삭제, 상태 변경, 마일스톤 순서/캘린더 연동
+- Task/마일스톤: 생성/편집/삭제, 상태 변경, 마일스톤 순서/캘린더 연동, Task 담당자 지정(해당 과제 팀원만 가능)
 - 세션/출석: 세션 관리, 출석 체크인/체크아웃, 코칭 시작/종료 로그
 - 캘린더/대시보드: 월간 뷰 + 10주 뷰, 프로젝트별 마일스톤 시각화, 진행 통계 대시보드
 - AI: 과제 요약 생성, Q&A 세트 생성, 코칭노트 섹션(`현재 상태/당면 문제/다음 액션`) AI 보완
 - 파일 업로드: 문서/에디터 이미지 파일 서버 저장(`uploads/`) + 고아 이미지 정리 API
+- 편집 안정성: 코칭노트/문서 편집 자동 임시저장 및 복구
 
 ## 기술 스택
 
@@ -74,10 +77,14 @@ uvicorn app.main:app --reload
 | Project | `POST /api/batches/{batch_id}/projects`, `DELETE /api/projects/{id}` | `admin` |
 | Project | `PUT /api/projects/{id}` | `admin`, `coach` |
 | Project Member | `GET/POST/DELETE /api/projects/{id}/members...` | 조회: 로그인 사용자, 변경: `admin` |
+| Workspace | `GET /api/home`, `GET /api/search` | 로그인 사용자 |
 | Coaching Note | `GET /api/projects/{id}/notes`, `GET /api/notes/{id}` | 로그인 사용자 |
 | Coaching Note | `POST/PUT/DELETE /api/projects/{id}/notes`, `/api/notes/{id}` | `admin`, `coach` |
+| Coaching Note Template | `GET/POST/PUT/DELETE /api/note-templates...` | `admin`, `coach` |
+| Coaching Note Version | `GET /api/notes/{id}/versions`, `POST /api/notes/{id}/restore/{version_id}` | 조회: 로그인 사용자, 복원: `admin`, `coach` |
 | Coaching Comment | `POST /api/notes/{id}/comments`, `DELETE /api/comments/{id}` | 로그인 사용자 (정책 적용) |
 | Document | `GET/POST /api/projects/{id}/documents`, `GET/PUT/DELETE /api/documents/{id}` | 로그인 사용자 (정책 적용) |
+| Document Version | `GET /api/documents/{id}/versions`, `POST /api/documents/{id}/restore/{version_id}` | 로그인 사용자 (정책 적용) |
 | Upload | `POST /api/uploads/images` | 로그인 사용자 |
 | Upload(Admin) | `POST /api/uploads/editor-images/cleanup` | `admin` |
 | Task | `GET/POST /api/projects/{id}/tasks`, `GET/PUT/DELETE /api/tasks/{id}` | 로그인 사용자 (변경 권한 정책 적용) |
@@ -87,6 +94,7 @@ uvicorn app.main:app --reload
 | Attendance | `POST /api/sessions/{id}/checkin`, `/checkout` | 로그인 사용자 (허용 IP 대역 검사) |
 | Coaching Time | `POST /api/sessions/{id}/coaching-start`, `/coaching-end` | `admin`, `coach` |
 | Board | `/api/boards...` (게시글/댓글 CRUD) | 로그인 사용자 (수정/삭제 정책 적용) |
+| Board Version | `GET /api/boards/posts/{id}/versions`, `POST /api/boards/posts/{id}/restore/{version_id}` | 조회: 작성자/관리자/코치, 복원: 작성자/관리자 |
 | Notification | `/api/notifications...` | 로그인 사용자 |
 | Schedule | `GET /api/schedules...` | 로그인 사용자 |
 | Schedule | `POST/PUT/DELETE /api/schedules...` | `admin` |
@@ -132,6 +140,9 @@ cd backend
 alembic revision --autogenerate -m "message"
 alembic upgrade head
 ```
+
+- 참고: 앱 시작 시(`app.main`) `Base.metadata.create_all()`로 누락 테이블을 자동 생성하도록 구성되어 있습니다.
+- 운영 환경에서는 Alembic 마이그레이션을 우선 사용하고, 자동 생성은 보조 안전장치로 사용하는 것을 권장합니다.
 
 ## 시드 데이터 로그인 예시
 

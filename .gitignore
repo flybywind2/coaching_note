@@ -26,3 +26,7 @@ uploads/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# doc
+feedback.txt
+tasks.md

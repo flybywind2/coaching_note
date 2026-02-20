@@ -29,8 +29,12 @@ const Router = {
 
   resolve() {
     const { path, params } = this.getCurrentParams();
+    if (path === '/home') {
+      this.go('/projects');
+      return;
+    }
     if (path === '/') {
-      this.go(Auth.isLoggedIn() ? '/home' : '/login');
+      this.go(Auth.isLoggedIn() ? '/projects' : '/login');
       return;
     }
 
@@ -39,7 +43,7 @@ const Router = {
       return;
     }
     if (Auth.isLoggedIn() && path === '/login') {
-      this.go('/home');
+      this.go('/projects');
       return;
     }
 
