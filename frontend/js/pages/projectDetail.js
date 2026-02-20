@@ -7,85 +7,29 @@ Pages.projectDetail = {
     const projectId = parseInt(params.id);
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
-      const [project, notes, tasks, members] = await Promise.all([
+      const [project, notes, members] = await Promise.all([
         API.getProject(projectId),
         API.getNotes(projectId),
-        API.getTasks(projectId),
         API.getMembers(projectId),
       ]);
+      const sortedNotes = [...notes].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date));
+      const latestNote = sortedNotes[0] || null;
+      const latestComments = latestNote ? await API.getComments(latestNote.note_id).catch(() => []) : [];
+      const latestComment = latestComments.length ? latestComments[latestComments.length - 1] : null;
       const user = Auth.getUser();
       const canWrite = user.role === 'admin' || user.role === 'coach';
       const isAdmin = user.role === 'admin';
-      const progressValue = Math.max(0, Math.min(100, Number(project.progress_rate) || 0));
-      const statusValue = project.status || 'preparing';
-      const noteCount = notes.length;
-      const taskCount = tasks.length;
-      const milestoneCount = tasks.filter(t => t.is_milestone).length;
-      const completedTaskCount = tasks.filter(t => t.status === 'completed').length;
-      const memberCount = members.length;
-      const visibilityLabel = project.visibility === 'public' ? '공개' : '비공개';
-      const projectSignalParts = [];
-      if (project.category) projectSignalParts.push(project.category);
-      if (project.representative) projectSignalParts.push(`대표 ${project.representative}`);
-      const projectSignalText = projectSignalParts.length ? Fmt.escape(projectSignalParts.join(' · ')) : '과제 운영 정보를 확인하세요.';
+      const noteCount = sortedNotes.length;
+      const initialTab = ['info', 'records', 'notes'].includes(params.tab) ? params.tab : 'info';
 
       el.innerHTML = `
         <div class="page-container project-detail-page">
-          <div class="project-hero">
-            <div class="project-hero-top">
-              <a href="#/projects" class="back-link">← 과제 목록</a>
-              ${isAdmin ? `<button id="delete-project-btn" class="btn btn-danger">과제 삭제</button>` : ''}
-            </div>
-            <div class="project-hero-main">
-              <div class="project-hero-title-wrap">
-                <h1 class="project-hero-title">${Fmt.escape(project.project_name)}</h1>
-                <p class="project-hero-sub">${projectSignalText}</p>
-                <div class="project-meta project-meta-row">
-                  <span class="tag tag-${statusValue}">${Fmt.status(statusValue)}</span>
-                  <span class="project-meta-text">${Fmt.escape(project.organization)}</span>
-                  <span class="project-meta-sep">•</span>
-                  <span class="project-meta-text">${visibilityLabel}</span>
-                </div>
-              </div>
-              <div class="project-kpi-row">
-                <div class="project-kpi">
-                  <span class="project-kpi-label">코칭노트</span>
-                  <strong class="project-kpi-value">${noteCount}</strong>
-                </div>
-                <div class="project-kpi">
-                  <span class="project-kpi-label">Task</span>
-                  <strong class="project-kpi-value">${taskCount}</strong>
-                </div>
-                <div class="project-kpi">
-                  <span class="project-kpi-label">마일스톤</span>
-                  <strong class="project-kpi-value">${milestoneCount}</strong>
-                </div>
-                <div class="project-kpi">
-                  <span class="project-kpi-label">완료 Task</span>
-                  <strong class="project-kpi-value">${completedTaskCount}/${taskCount}</strong>
-                </div>
-                <div class="project-kpi">
-                  <span class="project-kpi-label">팀원</span>
-                  <strong class="project-kpi-value">${memberCount}</strong>
-                </div>
-              </div>
-            </div>
-            <div class="project-progress-wrap">
-              <div class="project-progress-head">
-                <span>전체 진행률</span>
-                <strong>${progressValue}%</strong>
-              </div>
-              ${Fmt.progress(progressValue)}
-            </div>
-          </div>
+          <a href="#/projects" class="back-link">← 과제 목록</a>
           <div class="project-tab-shell">
             <div class="tabs project-tabs">
               <button class="tab-btn active" data-tab="info">기본정보</button>
-              <button class="tab-btn" data-tab="docs">문서</button>
+              <button class="tab-btn" data-tab="records">과제기록</button>
               <button class="tab-btn" data-tab="notes">코칭노트 (${noteCount})</button>
-              <button class="tab-btn" data-tab="tasks">Task (${taskCount})</button>
-              <button class="tab-btn" data-tab="sessions">세션</button>
-              ${canWrite ? '<button class="tab-btn" data-tab="ai">AI 분석</button>' : ''}
             </div>
             <div id="tab-content" class="project-tab-content"></div>
           </div>
@@ -101,6 +45,8 @@ Pages.projectDetail = {
               isAdmin,
               members,
               projectId,
+              latestNote,
+              latestComment,
               onSave: async (payload) => {
                 await API.updateProject(projectId, payload);
                 await this.render(el, params);
@@ -110,124 +56,139 @@ Pages.projectDetail = {
               },
             });
             break;
-          case 'docs': this._renderDocs(tabContent, projectId, canWrite); break;
-          case 'notes': this._renderNotes(tabContent, notes, projectId, canWrite); break;
-          case 'tasks': this._renderTasks(tabContent, tasks, projectId, user, members); break;
-          case 'sessions': this._renderSessions(tabContent, projectId, project, canWrite); break;
-          case 'ai': this._renderAI(tabContent, projectId); break;
+          case 'records': this._renderDocs(tabContent, projectId, canWrite); break;
+          case 'notes': this._renderNotes(tabContent, sortedNotes, projectId, canWrite, user); break;
         }
       };
       el.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => renderTab(btn.dataset.tab));
       });
-      if (isAdmin) {
-        document.getElementById('delete-project-btn')?.addEventListener('click', async () => {
-          if (!confirm(`과제를 삭제하시겠습니까?\n${project.project_name}`)) return;
-          try {
-            await API.deleteProject(projectId);
-            Router.go(`/projects/${project.batch_id}`);
-          } catch (err) {
-            alert(err.message || '과제 삭제 실패');
-          }
-        });
-      }
-      renderTab('info');
+      renderTab(initialTab);
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
   },
 
   _renderInfo(el, p, options) {
-    const { canWrite, isAdmin, members, projectId, onSave, onMemberChanged } = options;
+    const { canWrite, isAdmin, members, projectId, latestNote, latestComment, onSave, onMemberChanged } = options;
+    const repos = Array.isArray(p.github_repos) ? p.github_repos : [];
+    const progressValue = Math.max(0, Math.min(100, Number(p.progress_rate) || 0));
     el.innerHTML = `<div class="project-info-layout">
-      <div class="project-info-panel">
-        <div class="project-info-panel-head">
-          <h3>기본 정보</h3>
-          <p>과제를 식별하는 핵심 항목입니다.</p>
-        </div>
-        <div class="info-grid project-info-grid">
-          <div class="info-item"><label>과제명</label><span>${Fmt.escape(p.project_name)}</span></div>
-          <div class="info-item"><label>조직</label><span>${Fmt.escape(p.organization)}</span></div>
-          <div class="info-item"><label>대표자</label><span>${Fmt.escape(p.representative || '-')}</span></div>
-          <div class="info-item"><label>분류</label><span>${Fmt.escape(p.category || '-')}</span></div>
-        </div>
-      </div>
-      <div class="project-info-panel">
-        <div class="project-info-panel-head">
-          <h3>운영 정보</h3>
-          <p>진행 상태와 공개 범위입니다.</p>
-        </div>
-        <div class="info-grid project-info-grid">
-          <div class="info-item"><label>상태</label><span>${Fmt.status(p.status)}</span></div>
-          <div class="info-item"><label>공개여부</label><span>${p.visibility === 'public' ? '공개' : '비공개'}</span></div>
-          <div class="info-item"><label>생성일</label><span>${Fmt.date(p.created_at)}</span></div>
-        </div>
-      </div>
-      ${p.ai_summary ? `<div class="project-info-panel project-summary-panel">
-        <div class="project-info-panel-head">
-          <h3>AI 요약</h3>
-          <p>최근 코칭 데이터 기반 요약입니다.</p>
-        </div>
-        <div class="info-item full"><div class="ai-summary">${Fmt.escape(p.ai_summary)}</div></div>
-      </div>` : ''}
-      <div class="project-info-panel">
-        <div class="project-info-panel-head">
-          <h3>팀원</h3>
-          <p>과제 팀원과 역할을 관리합니다.</p>
-        </div>
-        <div class="project-member-list">
-          ${members.length ? members.map((m) => `
-            <div class="project-member-item">
-              <div class="project-member-main">
-                <strong>${Fmt.escape(m.user_name || `사용자#${m.user_id}`)}</strong>
-                <span>${Fmt.escape(m.user_emp_id || '-')}</span>
-                <span class="tag">${Fmt.escape(m.role || 'member')}</span>
-                ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
-              </div>
-              ${isAdmin ? `<button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>` : ''}
+      <div class="project-info-main">
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>기본 정보</h3>
+            <p>과제 운영 핵심 정보를 확인합니다.</p>
+          </div>
+          <div class="info-grid project-info-grid">
+            <div class="info-item"><label>과제명</label><span>${Fmt.escape(p.project_name)}</span></div>
+            <div class="info-item"><label>부서명</label><span>${Fmt.escape(p.organization)}</span></div>
+            <div class="info-item"><label>과제 대표자</label><span>${Fmt.escape(p.representative || '-')}</span></div>
+            <div class="info-item"><label>AI기술 분류</label><span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span></div>
+            <div class="info-item"><label>사용된 AI기술</label><span>${Fmt.escape(p.ai_tech_used || '-')}</span></div>
+            <div class="info-item">
+              <label>전체 진행률</label>
+              <span>${progressValue}%</span>
+              ${Fmt.progress(progressValue)}
             </div>
-          `).join('') : '<p class="empty-state">등록된 팀원이 없습니다.</p>'}
+            <div class="info-item full">
+              <label>과제 요약</label>
+              <div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>
+            </div>
+            <div class="info-item full">
+              <label>Github Repository</label>
+              ${repos.length ? `
+                <div class="repo-list">
+                  ${repos.map((url) => `<a href="${Fmt.escape(url)}" target="_blank" rel="noopener noreferrer">${Fmt.escape(url)}</a>`).join('')}
+                </div>
+              ` : '<span>-</span>'}
+            </div>
+          </div>
+          ${canWrite ? `<div class="page-actions"><button id="edit-project-info-btn" class="btn btn-secondary">기본정보 편집</button></div>` : ''}
         </div>
-        ${isAdmin ? `<div class="page-actions"><button id="add-member-btn" class="btn btn-secondary">팀원 추가</button></div>` : ''}
+
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>팀원</h3>
+            <p>과제 팀원과 역할을 관리합니다.</p>
+          </div>
+          <div class="project-member-list">
+            ${members.length ? members.map((m) => `
+              <div class="project-member-item">
+                <div class="project-member-main">
+                  <strong>${Fmt.escape(m.user_name || `사용자#${m.user_id}`)}</strong>
+                  <span>${Fmt.escape(m.user_emp_id || '-')}</span>
+                  <span class="tag">${Fmt.escape(m.role || 'member')}</span>
+                  ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
+                </div>
+                ${isAdmin ? `<button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>` : ''}
+              </div>
+            `).join('') : '<p class="empty-state">등록된 팀원이 없습니다.</p>'}
+          </div>
+          ${isAdmin ? `<div class="page-actions"><button id="add-member-btn" class="btn btn-secondary">팀원 추가</button></div>` : ''}
+        </div>
       </div>
-    </div>
-    ${canWrite ? `<div class="page-actions"><button id="edit-project-info-btn" class="btn btn-secondary">기본정보 편집</button></div>` : ''}`;
+      <div class="project-info-side">
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>최근 코칭노트</h3>
+            <p>가장 최근 코칭 내용을 빠르게 확인합니다.</p>
+          </div>
+          ${latestNote ? `
+            <a href="#/project/${projectId}?tab=notes" class="recent-note-card">
+              <strong>${Fmt.date(latestNote.coaching_date)}</strong>
+              <p>${Fmt.escape(Fmt.excerpt(latestNote.current_status || '', 140) || '-')}</p>
+            </a>
+          ` : '<p class="empty-state">코칭노트가 없습니다.</p>'}
+        </div>
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>최근 코칭 의견</h3>
+            <p>직전 코칭의견을 확인하고 코칭노트로 이동합니다.</p>
+          </div>
+          ${latestComment ? `
+            <a href="#/project/${projectId}?tab=notes" class="recent-note-card">
+              <strong>${Fmt.datetime(latestComment.created_at)}</strong>
+              <p>${Fmt.escape(Fmt.excerpt(latestComment.content || '', 140) || '-')}</p>
+            </a>
+          ` : '<p class="empty-state">코칭 의견이 없습니다.</p>'}
+        </div>
+      </div>
+    </div>`;
 
     if (canWrite) {
       document.getElementById('edit-project-info-btn')?.addEventListener('click', () => {
         Modal.open(`<h2>기본정보 편집</h2>
           <form id="edit-project-info-form">
             <div class="form-group"><label>과제명 *</label><input name="project_name" required value="${Fmt.escape(p.project_name)}" /></div>
-            <div class="form-group"><label>조직 *</label><input name="organization" required value="${Fmt.escape(p.organization)}" /></div>
+            <div class="form-group"><label>부서명 *</label><input name="organization" required value="${Fmt.escape(p.organization)}" /></div>
             <div class="form-group"><label>대표자</label><input name="representative" value="${Fmt.escape(p.representative || '')}" /></div>
-            <div class="form-group"><label>분류</label><input name="category" value="${Fmt.escape(p.category || '')}" /></div>
-            <div class="form-group"><label>상태</label>
-              <select name="status">
-                <option value="preparing"${p.status === 'preparing' ? ' selected' : ''}>${Fmt.status('preparing')}</option>
-                <option value="in_progress"${p.status === 'in_progress' ? ' selected' : ''}>${Fmt.status('in_progress')}</option>
-                <option value="completed"${p.status === 'completed' ? ' selected' : ''}>${Fmt.status('completed')}</option>
-              </select>
-            </div>
-            <div class="form-group"><label>공개여부</label>
-              <select name="visibility">
-                <option value="public"${p.visibility === 'public' ? ' selected' : ''}>공개</option>
-                <option value="restricted"${p.visibility === 'restricted' ? ' selected' : ''}>비공개</option>
-              </select>
-            </div>
+            <div class="form-group"><label>AI기술 분류</label><input name="ai_tech_category" value="${Fmt.escape(p.ai_tech_category || p.category || '')}" /></div>
+            <div class="form-group"><label>사용된 AI기술</label><input name="ai_tech_used" value="${Fmt.escape(p.ai_tech_used || '')}" /></div>
+            <div class="form-group"><label>과제 요약</label><textarea name="project_summary" rows="4">${Fmt.escape(p.project_summary || '')}</textarea></div>
+            <div class="form-group"><label>Github Repository (줄바꿈으로 복수 입력)</label><textarea name="github_repos" rows="4">${Fmt.escape(repos.join('\n'))}</textarea></div>
+            <div class="form-group"><label>전체 진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" value="${progressValue}" /></div>
             <button type="submit" class="btn btn-primary">저장</button>
             <p class="form-error" id="edit-project-info-err" style="display:none;"></p>
-          </form>`);
+          </form>`, null, { className: 'modal-box-xl' });
 
         document.getElementById('edit-project-info-form')?.addEventListener('submit', async (e) => {
           e.preventDefault();
           const fd = new FormData(e.target);
+          const repoLines = (fd.get('github_repos') || '').toString().split('\n').map((v) => v.trim()).filter(Boolean);
           const payload = {
             project_name: (fd.get('project_name') || '').toString().trim(),
             organization: (fd.get('organization') || '').toString().trim(),
             representative: ((fd.get('representative') || '').toString().trim() || null),
-            category: ((fd.get('category') || '').toString().trim() || null),
-            status: fd.get('status'),
-            visibility: fd.get('visibility'),
+            progress_rate: (() => {
+              const v = parseInt((fd.get('progress_rate') || '').toString(), 10);
+              if (Number.isNaN(v)) return null;
+              return Math.max(0, Math.min(100, v));
+            })(),
+            ai_tech_category: ((fd.get('ai_tech_category') || '').toString().trim() || null),
+            ai_tech_used: ((fd.get('ai_tech_used') || '').toString().trim() || null),
+            project_summary: ((fd.get('project_summary') || '').toString().trim() || null),
+            github_repos: repoLines,
           };
 
           try {
@@ -324,68 +285,77 @@ Pages.projectDetail = {
   async _renderDocs(el, projectId, canWrite) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     const docs = await API.getDocuments(projectId);
-    const types = { application: '지원서', basic_consulting: '기초컨설팅', workshop_result: '워크샵결과', mid_presentation: '중간발표', final_presentation: '최종발표' };
-    el.innerHTML = `<div class="docs-section">${Object.entries(types).map(([t, label]) => {
-      const doc = docs.find(d => d.doc_type === t);
-      const statusBadge = doc ? `<span class="tag tag-done">등록됨</span>` : `<span class="empty-doc">미등록</span>`;
-      const preview = doc?.content ? Fmt.excerpt(doc.content, 120) : '';
-      const attachment = doc?.attachments ? (() => { try { return JSON.parse(doc.attachments)[0]; } catch { return null; } })() : null;
-      const downloadBtn = attachment ? `<a href="${Fmt.escape(attachment.url)}" target="_blank" class="btn btn-sm">기존 첨부</a>` : '';
-      const viewBtn = doc ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">보기</button>` : '';
-      const editBtn = canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${doc?.doc_id || ''}" data-type="${t}" data-label="${Fmt.escape(label)}">편집</button>` : '';
-      const historyBtn = (canWrite && doc) ? `<button class="btn btn-sm btn-secondary doc-version-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">이력</button>` : '';
-      const deleteBtn = (canWrite && doc) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">삭제</button>` : '';
-      return `<div class="doc-type-row">
-        <span class="doc-type-label">${label}</span>
-        <div class="doc-actions">
-          ${statusBadge}
-          ${downloadBtn}
-          ${viewBtn}
-          ${editBtn}
-          ${historyBtn}
-          ${deleteBtn}
-        </div>
-      </div>
-      ${preview ? `<div class="doc-content-preview"><div class="preview-title">${label} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : ''}`;
-    }).join('')}</div>`;
+    const types = [
+      ['application', '지원서'],
+      ['basic_consulting', '기초컨설팅'],
+      ['workshop_result', '워크샵결과'],
+      ['mid_presentation', '중간발표'],
+      ['final_presentation', '최종발표'],
+    ];
+    let openedType = types[0][0];
 
-    el.querySelectorAll('.view-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
-      const doc = await API.getDocument(+btn.dataset.docId);
-      this._openDocViewer(btn.dataset.label, doc);
-    }));
+    const draw = () => {
+      el.innerHTML = `<div class="records-accordion">
+        ${types.map(([t, label]) => {
+          const doc = docs.find((d) => d.doc_type === t);
+          const isOpen = openedType === t;
+          const preview = doc?.content ? Fmt.excerpt(doc.content, 180) : '';
+          return `
+            <section class="record-item ${isOpen ? 'open' : ''}">
+              <button class="record-head" data-doc-type="${t}">
+                <span>${label}</span>
+                <span>${doc ? '등록됨' : '미등록'}</span>
+              </button>
+              <div class="record-body" style="display:${isOpen ? 'block' : 'none'};">
+                <div class="record-actions">
+                  ${doc ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">보기</button>` : ''}
+                  ${canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${doc?.doc_id || ''}" data-type="${t}" data-label="${Fmt.escape(label)}">${doc ? '편집' : '작성'}</button>` : ''}
+                  ${(canWrite && doc) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">삭제</button>` : ''}
+                </div>
+                ${preview ? `<div class="doc-content-preview"><div class="preview-title">${label} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : '<p class="empty-state">저장된 내용이 없습니다.</p>'}
+              </div>
+            </section>
+          `;
+        }).join('')}
+      </div>`;
 
-    el.querySelectorAll('.edit-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
-      const docId = btn.dataset.docId ? +btn.dataset.docId : null;
-      const doc = docId ? await API.getDocument(docId) : null;
-      this._openDocEditor({
-        projectId,
-        docId,
-        docType: btn.dataset.type,
-        label: btn.dataset.label,
-        current: doc,
-        onSaved: async () => this._renderDocs(el, projectId, canWrite),
-      });
-    }));
+      el.querySelectorAll('.record-head').forEach((btn) => btn.addEventListener('click', () => {
+        openedType = btn.dataset.docType;
+        draw();
+      }));
 
-    el.querySelectorAll('.doc-version-btn').forEach((btn) => btn.addEventListener('click', async () => {
-      const docId = +btn.dataset.docId;
-      await this._openDocVersionModal({
-        docId,
-        onRestored: async () => this._renderDocs(el, projectId, canWrite),
-      });
-    }));
+      el.querySelectorAll('.view-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const doc = await API.getDocument(+btn.dataset.docId);
+        this._openDocViewer(btn.dataset.label, doc);
+      }));
 
-    el.querySelectorAll('.delete-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
-      const docId = +btn.dataset.docId;
-      const label = btn.dataset.label || '문서';
-      if (!confirm(`${label} 문서를 삭제하시겠습니까?`)) return;
-      try {
-        await API.deleteDocument(docId);
-        await this._renderDocs(el, projectId, canWrite);
-      } catch (err) {
-        alert(err.message || '문서 삭제 실패');
-      }
-    }));
+      el.querySelectorAll('.edit-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const docId = btn.dataset.docId ? +btn.dataset.docId : null;
+        const doc = docId ? await API.getDocument(docId) : null;
+        this._openDocEditor({
+          projectId,
+          docId,
+          docType: btn.dataset.type,
+          label: btn.dataset.label,
+          current: doc,
+          onSaved: async () => this._renderDocs(el, projectId, canWrite),
+        });
+      }));
+
+      el.querySelectorAll('.delete-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const docId = +btn.dataset.docId;
+        const label = btn.dataset.label || '과제기록';
+        if (!confirm(`${label} 내용을 삭제하시겠습니까?`)) return;
+        try {
+          await API.deleteDocument(docId);
+          await this._renderDocs(el, projectId, canWrite);
+        } catch (err) {
+          alert(err.message || '과제기록 삭제 실패');
+        }
+      }));
+    };
+
+    draw();
   },
 
   _openDocViewer(label, doc) {
@@ -413,17 +383,17 @@ Pages.projectDetail = {
       <form id="doc-editor-form">
         <div class="form-group"><label>제목</label><input name="title" value="${Fmt.escape(title)}" placeholder="${Fmt.escape(label)}" /></div>
         <div class="form-group">
-          <label>문서 본문</label>
+          <label>과제기록 본문</label>
           <div id="doc-editor-wrap"></div>
           <p id="doc-editor-draft-status" class="draft-status"></p>
         </div>
         <button type="submit" class="btn btn-primary">저장</button>
         <p class="form-error" id="doc-editor-err" style="display:none;"></p>
-      </form>`);
+      </form>`, null, { className: 'modal-box-xl' });
 
     const editor = RichEditor.create(document.getElementById('doc-editor-wrap'), {
       initialHTML: content,
-      placeholder: '문서를 작성하세요. 이미지/표 삽입이 가능합니다.',
+      placeholder: '과제기록을 작성하세요. 이미지/표 삽입이 가능합니다.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'document', projectId }),
     });
     const formEl = document.getElementById('doc-editor-form');
@@ -506,30 +476,105 @@ Pages.projectDetail = {
     }
   },
 
-  _renderNotes(el, notes, projectId, canWrite) {
-    el.innerHTML = `<div class="notes-section">
-      ${canWrite ? `<button id="add-note-btn" class="btn btn-primary mb">+ 코칭노트 작성</button>` : ''}
-      ${notes.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : notes.map(n => `
-        <div class="note-card">
-          <div class="note-header">
-            <span class="note-date">${Fmt.date(n.coaching_date)}</span>
-            ${n.week_number ? `<span class="tag">${n.week_number}주차</span>` : ''}
-            ${n.progress_rate != null ? `<span class="tag">${n.progress_rate}%</span>` : ''}
-          </div>
-          <p>${Fmt.escape(Fmt.excerpt(n.current_status || '', 120))}</p>
-          <div class="note-actions">
-            <a href="#/project/${projectId}/notes/${n.note_id}" class="btn btn-sm">상세 보기</a>
-            ${canWrite ? `<button class="btn btn-sm btn-danger delete-note-btn" data-note-id="${n.note_id}">삭제</button>` : ''}
-          </div>
-        </div>`).join('')}
-    </div>`;
-    if (canWrite) {
+  _renderNotes(el, notes, projectId, canWrite, user) {
+    if (!this._noteFeedState) this._noteFeedState = {};
+    const state = this._noteFeedState[projectId] || { visible: 3 };
+    this._noteFeedState[projectId] = state;
+    const canComment = user.role !== 'observer';
+
+    const draw = async () => {
+      const shown = notes.slice(0, state.visible);
+      const commentBundles = await Promise.all(shown.map((n) => API.getComments(n.note_id).catch(() => [])));
+
+      el.innerHTML = `<div class="notes-section">
+        <div class="page-actions">
+          ${canWrite ? `<button id="add-note-btn" class="btn btn-primary">+ 코칭노트 작성</button>` : ''}
+          ${canWrite ? `<button id="note-ai-summary-btn" class="btn btn-secondary">AI 요약</button>` : ''}
+          ${canWrite ? `<button id="note-ai-qa-btn" class="btn btn-secondary">AI Q&A</button>` : ''}
+        </div>
+        ${shown.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : shown.map((n, i) => {
+          const comments = commentBundles[i] || [];
+          return `
+            <div class="note-card note-feed-card">
+              <div class="note-header">
+                <span class="note-date">${Fmt.date(n.coaching_date)}</span>
+                ${canWrite ? `<button class="btn btn-sm btn-secondary edit-note-btn" data-note-id="${n.note_id}">수정</button>` : ''}
+                ${canWrite ? `<button class="btn btn-sm btn-danger delete-note-btn" data-note-id="${n.note_id}">삭제</button>` : ''}
+              </div>
+              <div class="note-fields">
+                <div class="note-field"><label>현재 상태</label><div class="field-val rich-content">${Fmt.rich(n.current_status, '-')}</div></div>
+                <div class="note-field"><label>주요 문제</label><div class="field-val rich-content">${Fmt.rich(n.main_issue, '-')}</div></div>
+                <div class="note-field"><label>다음 작업</label><div class="field-val rich-content">${Fmt.rich(n.next_action, '-')}</div></div>
+              </div>
+              <div class="comments-section">
+                <h4>${user.role === 'coach' || user.role === 'admin' ? '코칭 의견' : '메모'} (${comments.length})</h4>
+                <div class="comment-list">
+                  ${comments.length ? comments.map((c) => `
+                    <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
+                      ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                      <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
+                      <div class="comment-meta">
+                        ${Fmt.datetime(c.created_at)}
+                        ${(c.author_id === user.user_id || user.role === 'admin') ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}">삭제</button>` : ''}
+                      </div>
+                    </div>
+                  `).join('') : '<p class="empty-state">등록된 의견이 없습니다.</p>'}
+                </div>
+                ${canComment ? `
+                  <form class="inline-comment-form" data-note-id="${n.note_id}">
+                    <textarea name="content" rows="3" placeholder="${user.role === 'coach' || user.role === 'admin' ? '코칭 의견을 입력하세요' : '메모를 입력하세요'}"></textarea>
+                    <div class="page-actions">
+                      ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
+                      <button type="submit" class="btn btn-primary btn-sm">등록</button>
+                    </div>
+                  </form>
+                ` : '<p class="empty-state">참관자는 의견을 작성할 수 없습니다.</p>'}
+              </div>
+            </div>
+          `;
+        }).join('')}
+        ${state.visible < notes.length ? `<div class="page-actions"><button id="load-more-notes-btn" class="btn btn-secondary">이전 코칭노트 더 보기</button></div>` : ''}
+      </div>`;
+
       document.getElementById('add-note-btn')?.addEventListener('click', () => {
         Pages.coachingNote.showCreateModal(projectId, async () => {
           const updated = await API.getNotes(projectId);
-          this._renderNotes(el, updated, projectId, canWrite);
+          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user);
         });
       });
+
+      document.getElementById('note-ai-summary-btn')?.addEventListener('click', async () => {
+        const data = await API.generateSummary(projectId).catch((err) => ({ error: err.message }));
+        if (data?.error) {
+          alert(data.error);
+          return;
+        }
+        Modal.open(`<h2>AI 요약</h2><div class="ai-content"><h4>${Fmt.escape(data.title || '요약')}</h4><pre>${Fmt.escape(data.content || '')}</pre></div>`);
+      });
+
+      document.getElementById('note-ai-qa-btn')?.addEventListener('click', async () => {
+        const data = await API.generateQASet(projectId).catch((err) => ({ error: err.message }));
+        if (data?.error) {
+          alert(data.error);
+          return;
+        }
+        Modal.open(`<h2>AI Q&A</h2><div class="ai-content"><h4>${Fmt.escape(data.title || 'Q&A')}</h4><pre>${Fmt.escape(data.content || '')}</pre></div>`);
+      });
+
+      document.getElementById('load-more-notes-btn')?.addEventListener('click', () => {
+        state.visible += 3;
+        draw();
+      });
+
+      el.querySelectorAll('.edit-note-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const noteId = +btn.dataset.noteId;
+        const note = notes.find((item) => item.note_id === noteId);
+        if (!note) return;
+        Pages.coachingNote.showEditModal(projectId, note, async () => {
+          const updated = await API.getNotes(projectId);
+          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user);
+        });
+      }));
 
       el.querySelectorAll('.delete-note-btn').forEach((btn) => btn.addEventListener('click', async () => {
         const noteId = +btn.dataset.noteId;
@@ -537,12 +582,45 @@ Pages.projectDetail = {
         try {
           await API.deleteNote(noteId);
           const updated = await API.getNotes(projectId);
-          this._renderNotes(el, updated, projectId, canWrite);
+          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user);
         } catch (err) {
           alert(err.message || '코칭노트 삭제 실패');
         }
       }));
-    }
+
+      el.querySelectorAll('.delete-comment-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const commentId = +btn.dataset.commentId;
+        if (!confirm('의견을 삭제하시겠습니까?')) return;
+        try {
+          await API.deleteComment(commentId);
+          draw();
+        } catch (err) {
+          alert(err.message || '의견 삭제 실패');
+        }
+      }));
+
+      el.querySelectorAll('.inline-comment-form').forEach((form) => form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const content = (fd.get('content') || '').toString().trim();
+        if (!content) {
+          alert('내용을 입력하세요.');
+          return;
+        }
+        try {
+          await API.createComment(+form.dataset.noteId, {
+            content,
+            is_coach_only: fd.has('is_coach_only'),
+          });
+          form.reset();
+          draw();
+        } catch (err) {
+          alert(err.message || '의견 등록 실패');
+        }
+      }));
+    };
+
+    draw();
   },
 
   _renderTasks(el, tasks, projectId, user, members = []) {

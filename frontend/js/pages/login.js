@@ -9,7 +9,7 @@ Pages.login = {
     el.innerHTML = `
       <div class="login-wrap">
         <div class="login-card">
-          <h1 class="login-title">SSP+ 코칭노트</h1>
+          <h1 class="login-title">SSP+ Space</h1>
           <p class="login-sub">사번으로 로그인하세요</p>
           <form id="login-form">
             <div class="form-group">
@@ -32,7 +32,7 @@ Pages.login = {
       const errEl = document.getElementById('login-err');
       try {
         await Auth.login(emp_id);
-        Router.go('/home');
+        Router.go('/projects');
       } catch (err) {
         errEl.textContent = err.message || '로그인 실패';
         errEl.style.display = 'block';

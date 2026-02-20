@@ -16,7 +16,7 @@ Pages.coachingNote = {
 
       el.innerHTML = `
         <div class="page-container">
-          <a href="#/project/${projectId}" class="back-link">← 과제로 돌아가기</a>
+          <a href="#/project/${projectId}?tab=notes" class="back-link">← 코칭노트 목록으로</a>
           <div class="note-detail">
             <div class="note-detail-header">
               <h2>코칭노트</h2>
@@ -28,15 +28,14 @@ Pages.coachingNote = {
               ${canWrite ? `
                 <div class="note-actions">
                   <button id="edit-note-btn" class="btn btn-sm btn-secondary">편집</button>
-                  <button id="note-version-btn" class="btn btn-sm btn-secondary">이력</button>
                   <button id="ai-enhance-note-btn" class="btn btn-sm">AI 보완</button>
                   <button id="delete-note-btn" class="btn btn-sm btn-danger">삭제</button>
                 </div>` : ''}
             </div>
             <div class="note-fields">
               <div class="note-field"><label>현재 상태</label><div class="field-val rich-content">${Fmt.rich(note.current_status, '-')}</div></div>
-              <div class="note-field"><label>당면 문제</label><div class="field-val rich-content">${Fmt.rich(note.main_issue, '-')}</div></div>
-              <div class="note-field"><label>다음 액션</label><div class="field-val rich-content">${Fmt.rich(note.next_action, '-')}</div></div>
+              <div class="note-field"><label>주요 문제</label><div class="field-val rich-content">${Fmt.rich(note.main_issue, '-')}</div></div>
+              <div class="note-field"><label>다음 작업</label><div class="field-val rich-content">${Fmt.rich(note.next_action, '-')}</div></div>
             </div>
           </div>
 
@@ -59,7 +58,7 @@ Pages.coachingNote = {
               <form id="comment-form">
                 <div id="comment-editor-wrap"></div>
                 <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-                ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치 전용 메모</label>` : ''}
+                ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
                 <button type="submit" class="btn btn-primary">등록</button>
               </form>
             </div>
@@ -93,11 +92,6 @@ Pages.coachingNote = {
             await this.render(el, params);
           });
         });
-        document.getElementById('note-version-btn')?.addEventListener('click', () => {
-          this.showVersionModal(note, async () => {
-            await this.render(el, params);
-          });
-        });
         document.getElementById('ai-enhance-note-btn')?.addEventListener('click', () => {
           this.showEditModal(projectId, note, async () => {
             await this.render(el, params);
@@ -108,7 +102,7 @@ Pages.coachingNote = {
           if (!confirm('코칭노트를 삭제하시겠습니까?')) return;
           try {
             await API.deleteNote(note.note_id);
-            Router.go(`/project/${projectId}`);
+            Router.go(`/project/${projectId}?tab=notes`);
           } catch (err) {
             alert(err.message || '코칭노트 삭제 실패');
           }
@@ -132,67 +126,39 @@ Pages.coachingNote = {
 
   showCreateModal(projectId, onDone) {
     const draftKey = DraftStore.buildKey('note-create', projectId);
+    const autoDate = this._todayString();
+    const autoWeek = this._isoWeekNumber(autoDate);
     Modal.open(`<h2>코칭노트 작성</h2>
       <form id="create-note-form">
-        <div class="form-group">
-          <label>템플릿</label>
-          <div class="inline-actions">
-            <select id="create-note-template-select"><option value="">템플릿 선택</option></select>
-            <button type="button" id="apply-create-note-template-btn" class="btn btn-sm btn-secondary">불러오기</button>
-            <button type="button" id="save-create-note-template-btn" class="btn btn-sm">템플릿 저장</button>
-          </div>
+        <div class="note-auto-meta">
+          <span>코칭 날짜 자동입력: ${Fmt.date(autoDate)}</span>
+          <span>주차 자동입력: ${autoWeek}주차</span>
         </div>
-        <div class="form-group"><label>코칭 날짜 *</label><input type="date" name="coaching_date" required value="${new Date().toISOString().slice(0,10)}" /></div>
-        <div class="form-group"><label>주차</label><input type="number" name="week_number" min="1" /></div>
         <div class="form-group"><label>현재 상태</label><div id="note-current-editor"></div></div>
         <div class="form-group"><label>진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" /></div>
-        <div class="form-group"><label>당면 문제</label><div id="note-issue-editor"></div></div>
-        <div class="form-group"><label>다음 액션</label><div id="note-action-editor"></div></div>
+        <div class="form-group"><label>주요 문제</label><div id="note-issue-editor"></div></div>
+        <div class="form-group"><label>다음 작업</label><div id="note-action-editor"></div></div>
         <button type="submit" class="btn btn-primary">저장</button>
         <p id="create-note-draft-status" class="draft-status"></p>
-      </form>`);
+      </form>`, null, { className: 'modal-box-xl' });
 
     const currentEditor = RichEditor.create(document.getElementById('note-current-editor'), {
-      compact: true,
       placeholder: '현재 상태를 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const issueEditor = RichEditor.create(document.getElementById('note-issue-editor'), {
-      compact: true,
-      placeholder: '당면 문제를 입력하세요.',
+      placeholder: '주요 문제를 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const actionEditor = RichEditor.create(document.getElementById('note-action-editor'), {
-      compact: true,
-      placeholder: '다음 액션을 입력하세요.',
+      placeholder: '다음 작업을 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const createForm = document.getElementById('create-note-form');
-    this.bindTemplateControls({
-      selectEl: document.getElementById('create-note-template-select'),
-      applyBtn: document.getElementById('apply-create-note-template-btn'),
-      saveBtn: document.getElementById('save-create-note-template-btn'),
-      collect: () => ({
-        week_number: createForm.querySelector('[name="week_number"]').value || null,
-        progress_rate: createForm.querySelector('[name="progress_rate"]').value || null,
-        current_status: currentEditor.getSanitizedHTML() || null,
-        main_issue: issueEditor.getSanitizedHTML() || null,
-        next_action: actionEditor.getSanitizedHTML() || null,
-      }),
-      apply: (tpl) => {
-        createForm.querySelector('[name="week_number"]').value = tpl.week_number ?? '';
-        createForm.querySelector('[name="progress_rate"]').value = tpl.progress_rate ?? '';
-        currentEditor.setHTML(tpl.current_status || '');
-        issueEditor.setHTML(tpl.main_issue || '');
-        actionEditor.setHTML(tpl.next_action || '');
-      },
-    });
     const createBinding = DraftStore.bindForm({
       form: createForm,
       key: draftKey,
       collect: () => ({
-        coaching_date: createForm.querySelector('[name="coaching_date"]').value,
-        week_number: createForm.querySelector('[name="week_number"]').value,
         progress_rate: createForm.querySelector('[name="progress_rate"]').value,
         current_status: currentEditor.getHTML(),
         main_issue: issueEditor.getHTML(),
@@ -200,8 +166,6 @@ Pages.coachingNote = {
       }),
       apply: (payload) => {
         if (!payload || typeof payload !== 'object') return;
-        if (payload.coaching_date !== undefined) createForm.querySelector('[name="coaching_date"]').value = payload.coaching_date || '';
-        if (payload.week_number !== undefined) createForm.querySelector('[name="week_number"]').value = payload.week_number || '';
         if (payload.progress_rate !== undefined) createForm.querySelector('[name="progress_rate"]').value = payload.progress_rate || '';
         if (payload.current_status !== undefined) currentEditor.setHTML(payload.current_status || '');
         if (payload.main_issue !== undefined) issueEditor.setHTML(payload.main_issue || '');
@@ -215,10 +179,10 @@ Pages.coachingNote = {
       e.preventDefault();
       const fd = new FormData(e.target);
       const data = {
-        coaching_date: fd.get('coaching_date'),
-        week_number: fd.get('week_number') ? parseInt(fd.get('week_number')) : null,
+        coaching_date: autoDate,
+        week_number: autoWeek,
         current_status: currentEditor.getSanitizedHTML() || null,
-        progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate')) : null,
+        progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate'), 10) : null,
         main_issue: issueEditor.getSanitizedHTML() || null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
@@ -232,25 +196,21 @@ Pages.coachingNote = {
 
   showEditModal(projectId, note, onDone, options = {}) {
     const draftKey = DraftStore.buildKey('note-edit', note.note_id);
+    const fixedDate = note.coaching_date || this._todayString();
+    const fixedWeek = note.week_number || this._isoWeekNumber(fixedDate);
     Modal.open(`<h2>코칭노트 편집</h2>
       <form id="edit-note-form">
-        <div class="form-group">
-          <label>템플릿</label>
-          <div class="inline-actions">
-            <select id="edit-note-template-select"><option value="">템플릿 선택</option></select>
-            <button type="button" id="apply-edit-note-template-btn" class="btn btn-sm btn-secondary">불러오기</button>
-            <button type="button" id="save-edit-note-template-btn" class="btn btn-sm">템플릿 저장</button>
-          </div>
+        <div class="note-auto-meta">
+          <span>코칭 날짜 자동입력: ${Fmt.date(fixedDate)}</span>
+          <span>주차 자동입력: ${fixedWeek}주차</span>
         </div>
-        <div class="form-group"><label>코칭 날짜 *</label><input type="date" name="coaching_date" required value="${note.coaching_date}" /></div>
-        <div class="form-group"><label>주차</label><input type="number" name="week_number" min="1" value="${note.week_number || ''}" /></div>
         <div class="form-group"><label>현재 상태</label><div id="edit-note-current-editor"></div></div>
         <div class="form-group"><label>진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" value="${note.progress_rate ?? ''}" /></div>
-        <div class="form-group"><label>당면 문제</label><div id="edit-note-issue-editor"></div></div>
-        <div class="form-group"><label>다음 액션</label><div id="edit-note-action-editor"></div></div>
+        <div class="form-group"><label>주요 문제</label><div id="edit-note-issue-editor"></div></div>
+        <div class="form-group"><label>다음 작업</label><div id="edit-note-action-editor"></div></div>
         <div class="form-group">
           <label>AI 보완 지시사항 (선택)</label>
-          <input type="text" name="ai_instruction" placeholder="예: 다음 액션을 더 구체적인 일정/담당으로 정리" />
+          <input type="text" name="ai_instruction" placeholder="예: 다음 작업을 더 구체적인 일정/담당으로 정리" />
           <p class="form-hint">현재 편집 중인 내용으로 AI 보완 제안을 생성합니다.</p>
         </div>
         <div class="page-actions">
@@ -259,54 +219,30 @@ Pages.coachingNote = {
         </div>
         <p id="edit-note-draft-status" class="draft-status"></p>
         <p class="form-error" id="edit-note-err" style="display:none;"></p>
-      </form>`);
+      </form>`, null, { className: 'modal-box-xl' });
 
     const currentEditor = RichEditor.create(document.getElementById('edit-note-current-editor'), {
-      compact: true,
       initialHTML: note.current_status || '',
       placeholder: '현재 상태를 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const issueEditor = RichEditor.create(document.getElementById('edit-note-issue-editor'), {
-      compact: true,
       initialHTML: note.main_issue || '',
-      placeholder: '당면 문제를 입력하세요.',
+      placeholder: '주요 문제를 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const actionEditor = RichEditor.create(document.getElementById('edit-note-action-editor'), {
-      compact: true,
       initialHTML: note.next_action || '',
-      placeholder: '다음 액션을 입력하세요.',
+      placeholder: '다음 작업을 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
     const editForm = document.getElementById('edit-note-form');
-    this.bindTemplateControls({
-      selectEl: document.getElementById('edit-note-template-select'),
-      applyBtn: document.getElementById('apply-edit-note-template-btn'),
-      saveBtn: document.getElementById('save-edit-note-template-btn'),
-      collect: () => ({
-        week_number: editForm.querySelector('[name="week_number"]').value || null,
-        progress_rate: editForm.querySelector('[name="progress_rate"]').value || null,
-        current_status: currentEditor.getSanitizedHTML() || null,
-        main_issue: issueEditor.getSanitizedHTML() || null,
-        next_action: actionEditor.getSanitizedHTML() || null,
-      }),
-      apply: (tpl) => {
-        editForm.querySelector('[name="week_number"]').value = tpl.week_number ?? '';
-        editForm.querySelector('[name="progress_rate"]').value = tpl.progress_rate ?? '';
-        currentEditor.setHTML(tpl.current_status || '');
-        issueEditor.setHTML(tpl.main_issue || '');
-        actionEditor.setHTML(tpl.next_action || '');
-      },
-    });
     const aiBtn = document.getElementById('enhance-note-ai-btn');
     const errEl = document.getElementById('edit-note-err');
     const editBinding = DraftStore.bindForm({
       form: editForm,
       key: draftKey,
       collect: () => ({
-        coaching_date: editForm.querySelector('[name="coaching_date"]').value,
-        week_number: editForm.querySelector('[name="week_number"]').value,
         progress_rate: editForm.querySelector('[name="progress_rate"]').value,
         ai_instruction: editForm.querySelector('[name="ai_instruction"]').value,
         current_status: currentEditor.getHTML(),
@@ -315,8 +251,6 @@ Pages.coachingNote = {
       }),
       apply: (payload) => {
         if (!payload || typeof payload !== 'object') return;
-        if (payload.coaching_date !== undefined) editForm.querySelector('[name="coaching_date"]').value = payload.coaching_date || '';
-        if (payload.week_number !== undefined) editForm.querySelector('[name="week_number"]').value = payload.week_number || '';
         if (payload.progress_rate !== undefined) editForm.querySelector('[name="progress_rate"]').value = payload.progress_rate || '';
         if (payload.ai_instruction !== undefined) editForm.querySelector('[name="ai_instruction"]').value = payload.ai_instruction || '';
         if (payload.current_status !== undefined) currentEditor.setHTML(payload.current_status || '');
@@ -373,10 +307,10 @@ Pages.coachingNote = {
       setFormError('');
       const fd = new FormData(e.target);
       const data = {
-        coaching_date: fd.get('coaching_date'),
-        week_number: fd.get('week_number') ? parseInt(fd.get('week_number')) : null,
+        coaching_date: fixedDate,
+        week_number: fixedWeek,
         current_status: currentEditor.getSanitizedHTML() || null,
-        progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate')) : null,
+        progress_rate: fd.get('progress_rate') ? parseInt(fd.get('progress_rate'), 10) : null,
         main_issue: issueEditor.getSanitizedHTML() || null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
@@ -392,52 +326,21 @@ Pages.coachingNote = {
     });
   },
 
-  async bindTemplateControls({ selectEl, applyBtn, saveBtn, collect, apply }) {
-    if (!selectEl || !applyBtn || !saveBtn) return;
-    const templateMap = new Map();
-    const loadTemplates = async () => {
-      try {
-        const templates = await API.getNoteTemplates();
-        templateMap.clear();
-        selectEl.innerHTML = '<option value="">템플릿 선택</option>' + templates.map((t) =>
-          `<option value="${t.template_id}">${Fmt.escape(t.template_name)}${t.is_shared ? ' (공유)' : ''}</option>`
-        ).join('');
-        templates.forEach((tpl) => templateMap.set(String(tpl.template_id), tpl));
-      } catch (_) {
-        selectEl.innerHTML = '<option value="">템플릿 로드 실패</option>';
-      }
-    };
+  _todayString() {
+    const now = new Date();
+    const localTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    return localTime.toISOString().slice(0, 10);
+  },
 
-    await loadTemplates();
-
-    applyBtn.addEventListener('click', () => {
-      const tpl = templateMap.get(selectEl.value);
-      if (!tpl) {
-        alert('적용할 템플릿을 선택하세요.');
-        return;
-      }
-      apply(tpl);
-    });
-
-    saveBtn.addEventListener('click', async () => {
-      const templateName = prompt('템플릿 이름을 입력하세요.');
-      if (!templateName || !templateName.trim()) return;
-      try {
-        const payload = collect();
-        await API.createNoteTemplate({
-          template_name: templateName.trim(),
-          week_number: payload.week_number ? parseInt(payload.week_number, 10) : null,
-          progress_rate: payload.progress_rate ? parseInt(payload.progress_rate, 10) : null,
-          current_status: payload.current_status || null,
-          main_issue: payload.main_issue || null,
-          next_action: payload.next_action || null,
-          is_shared: false,
-        });
-        await loadTemplates();
-      } catch (err) {
-        alert(err.message || '템플릿 저장 실패');
-      }
-    });
+  _isoWeekNumber(dateString) {
+    const baseDate = dateString ? new Date(`${dateString}T00:00:00`) : new Date();
+    const date = new Date(baseDate.getTime());
+    const day = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - day + 3);
+    const firstThursday = new Date(date.getFullYear(), 0, 4);
+    const firstThursdayDay = (firstThursday.getDay() + 6) % 7;
+    firstThursday.setDate(firstThursday.getDate() - firstThursdayDay + 3);
+    return 1 + Math.round((date - firstThursday) / (7 * 24 * 60 * 60 * 1000));
   },
 
   async showVersionModal(note, onRestored) {

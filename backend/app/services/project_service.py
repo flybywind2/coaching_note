@@ -1,8 +1,11 @@
 """Project Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
 
+import json
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.project import Project, ProjectMember
+from app.models.project_profile import ProjectProfile
 from app.models.task import ProjectTask
 from app.models.session import CoachingSession
 from app.models.user import User
@@ -13,7 +16,16 @@ from typing import List, Optional
 
 def get_projects(db: Session, batch_id: int, current_user: User) -> List[Project]:
     projects = db.query(Project).filter(Project.batch_id == batch_id).all()
-    return [p for p in projects if can_view_project(db, p, current_user)]
+    visible = [p for p in projects if can_view_project(db, p, current_user)]
+    member_project_ids = {
+        row[0]
+        for row in db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.user_id)
+        .all()
+    }
+    for p in visible:
+        p._is_my_project = p.project_id in member_project_ids
+    return visible
 
 
 def get_project(db: Session, project_id: int, current_user: User) -> Project:
@@ -22,6 +34,12 @@ def get_project(db: Session, project_id: int, current_user: User) -> Project:
         raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
     if not can_view_project(db, project, current_user):
         raise HTTPException(status_code=403, detail="이 과제에 접근할 권한이 없습니다.")
+    project._is_my_project = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.project_id == project_id, ProjectMember.user_id == current_user.user_id)
+        .first()
+        is not None
+    )
     return project
 
 
@@ -33,10 +51,38 @@ def create_project(db: Session, batch_id: int, data: ProjectCreate) -> Project:
     return project
 
 
+def _get_or_create_profile(db: Session, project_id: int) -> ProjectProfile:
+    profile = db.query(ProjectProfile).filter(ProjectProfile.project_id == project_id).first()
+    if profile:
+        return profile
+    profile = ProjectProfile(project_id=project_id)
+    db.add(profile)
+    db.flush()
+    return profile
+
+
 def update_project(db: Session, project_id: int, data: ProjectUpdate, current_user: User) -> Project:
     project = get_project(db, project_id, current_user)
-    for k, v in data.model_dump(exclude_none=True).items():
+    payload = data.model_dump(exclude_none=True)
+    profile_keys = {"ai_tech_category", "ai_tech_used", "project_summary", "github_repos"}
+    profile_payload = {k: payload.pop(k) for k in list(payload.keys()) if k in profile_keys}
+
+    for k, v in payload.items():
         setattr(project, k, v)
+
+    if profile_payload:
+        profile = _get_or_create_profile(db, project_id)
+        if "ai_tech_category" in profile_payload:
+            profile.ai_tech_category = profile_payload["ai_tech_category"]
+            project.category = profile_payload["ai_tech_category"] or project.category
+        if "ai_tech_used" in profile_payload:
+            profile.ai_tech_used = profile_payload["ai_tech_used"]
+        if "project_summary" in profile_payload:
+            profile.project_summary = profile_payload["project_summary"]
+        if "github_repos" in profile_payload:
+            repos = [item.strip() for item in profile_payload["github_repos"] if str(item).strip()]
+            profile.github_repos = json.dumps(repos, ensure_ascii=False)
+
     db.commit()
     db.refresh(project)
     return project

@@ -21,8 +21,11 @@ Pages.search = {
     el.innerHTML = `
       <div class="page-container">
         <div class="page-header">
-          <h1>통합 검색</h1>
-          <p class="search-sub">과제/코칭노트/문서/게시글을 한 번에 검색합니다.</p>
+          <div class="page-title-row">
+            <h1>통합 검색</h1>
+            <button id="back-to-projects-btn" class="btn btn-secondary">과제 목록으로</button>
+          </div>
+          <p class="search-sub">과제/코칭노트/과제기록/게시글을 한 번에 검색합니다.</p>
         </div>
 
         <form id="workspace-search-form" class="search-form">
@@ -59,7 +62,7 @@ Pages.search = {
             ${[
               ['project', '과제'],
               ['note', '코칭노트'],
-              ['document', '문서'],
+              ['document', '과제기록'],
               ['board', '게시글'],
             ].map(([v, label]) => `
               <label><input type="checkbox" name="types" value="${v}"${types.includes(v) ? ' checked' : ''} /> ${label}</label>
@@ -139,13 +142,16 @@ Pages.search = {
     document.getElementById('search-reset-btn')?.addEventListener('click', () => {
       Router.go('/search');
     });
+    document.getElementById('back-to-projects-btn')?.addEventListener('click', () => {
+      Router.go('/projects');
+    });
   },
 
   _label(type) {
     const map = {
       project: '과제',
       note: '코칭노트',
-      document: '문서',
+      document: '과제기록',
       board: '게시글',
     };
     return map[type] || type;

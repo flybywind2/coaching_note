@@ -1,6 +1,6 @@
 """Project 요청/응답 계약을 위한 Pydantic 스키마입니다."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -25,6 +25,11 @@ class ProjectUpdate(BaseModel):
     category: Optional[str] = None
     visibility: Optional[str] = None
     status: Optional[str] = None
+    progress_rate: Optional[int] = None
+    ai_tech_category: Optional[str] = None
+    ai_tech_used: Optional[str] = None
+    project_summary: Optional[str] = None
+    github_repos: Optional[List[str]] = None
 
 
 class ProjectOut(ProjectBase):
@@ -32,6 +37,11 @@ class ProjectOut(ProjectBase):
     batch_id: int
     progress_rate: int
     ai_summary: Optional[str]
+    ai_tech_category: Optional[str] = None
+    ai_tech_used: Optional[str] = None
+    project_summary: Optional[str] = None
+    github_repos: List[str] = Field(default_factory=list)
+    is_my_project: bool = False
     created_at: datetime
     updated_at: Optional[datetime]
 
