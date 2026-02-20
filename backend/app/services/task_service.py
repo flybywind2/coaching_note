@@ -25,6 +25,22 @@ def _ensure_not_observer(current_user: User):
         raise HTTPException(status_code=403, detail="참관자는 수정 권한이 없습니다.")
 
 
+def _ensure_participant_member(db: Session, project_id: int, current_user: User):
+    if current_user.role != "participant":
+        return
+    is_member = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == current_user.user_id,
+        )
+        .first()
+        is not None
+    )
+    if not is_member:
+        raise HTTPException(status_code=403, detail="참여자는 본인 과제의 일정만 수정할 수 있습니다.")
+
+
 def _validate_assignee_in_project(db: Session, project_id: int, assigned_to: int | None):
     if assigned_to is None:
         return
@@ -57,6 +73,7 @@ def get_task(db: Session, task_id: int, current_user: User) -> ProjectTask:
 def create_task(db: Session, project_id: int, data: ProjectTaskCreate, current_user: User) -> ProjectTask:
     _get_accessible_project(db, project_id, current_user)
     _ensure_not_observer(current_user)
+    _ensure_participant_member(db, project_id, current_user)
     _validate_assignee_in_project(db, project_id, data.assigned_to)
     payload = data.model_dump()
     if payload.get("status") == "completed":
@@ -72,6 +89,7 @@ def create_task(db: Session, project_id: int, data: ProjectTaskCreate, current_u
 def update_task(db: Session, task_id: int, data: ProjectTaskUpdate, current_user: User) -> ProjectTask:
     task = get_task(db, task_id, current_user)
     _ensure_not_observer(current_user)
+    _ensure_participant_member(db, task.project_id, current_user)
     # Only admin/coach can change milestone order
     if data.milestone_order is not None and not is_admin_or_coach(current_user):
         raise HTTPException(status_code=403, detail="마일스톤 순서 변경은 관리자/코치만 가능합니다.")
@@ -103,6 +121,7 @@ def update_task(db: Session, task_id: int, data: ProjectTaskUpdate, current_user
 def delete_task(db: Session, task_id: int, current_user: User):
     task = get_task(db, task_id, current_user)
     _ensure_not_observer(current_user)
+    _ensure_participant_member(db, task.project_id, current_user)
     project_id = task.project_id
     db.delete(task)
     db.commit()
