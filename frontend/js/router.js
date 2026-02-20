@@ -1,3 +1,7 @@
+/**
+ * URL 해시를 페이지 렌더 모듈에 매핑하는 라우터입니다.
+ */
+
 const Router = {
   routes: {},
   currentPath: null,
@@ -83,3 +87,5 @@ const Router = {
     this.resolve();
   },
 };
+
+

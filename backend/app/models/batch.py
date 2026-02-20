@@ -1,3 +1,5 @@
+"""Batch 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Date, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -17,3 +19,5 @@ class Batch(Base):
     projects = relationship("Project", back_populates="batch")
     schedules = relationship("ProgramSchedule", back_populates="batch")
     sessions = relationship("CoachingSession", back_populates="batch")
+
+

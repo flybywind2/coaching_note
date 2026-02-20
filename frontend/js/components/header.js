@@ -1,3 +1,7 @@
+/**
+ * Header 재사용 UI 컴포넌트 모듈입니다.
+ */
+
 const Header = {
   render() {
     const user = Auth.getUser();
@@ -20,3 +24,5 @@ const Header = {
       .join('');
   },
 };
+
+

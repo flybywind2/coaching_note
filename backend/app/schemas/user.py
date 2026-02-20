@@ -1,3 +1,5 @@
+"""User 요청/응답 계약을 위한 Pydantic 스키마입니다."""
+
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from datetime import datetime
@@ -62,3 +64,5 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
+

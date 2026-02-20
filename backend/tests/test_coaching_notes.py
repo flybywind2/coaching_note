@@ -1,3 +1,5 @@
+"""Test Coaching Notes 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 import pytest
 from tests.conftest import auth_headers
 from app.models.project import Project
@@ -88,3 +90,5 @@ def test_admin_sees_coach_only_comments(client, seed_users, project):
     resp = client.get(f"/api/notes/{note_id}/comments", headers=admin_headers)
     assert len(resp.json()) == 1
     assert resp.json()[0]["is_coach_only"] == True
+
+

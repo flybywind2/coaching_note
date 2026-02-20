@@ -1,3 +1,5 @@
+/* Dashboard 화면 표현과 레이아웃 규칙을 담당하는 스타일시트입니다. */
+
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -118,3 +120,5 @@
     gap: 6px;
   }
 }
+
+

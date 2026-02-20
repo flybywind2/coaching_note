@@ -1,3 +1,5 @@
+"""Sessions 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -160,3 +162,5 @@ def get_coaching_log(
 ):
     from app.models.session import CoachingTimeLog
     return db.query(CoachingTimeLog).filter(CoachingTimeLog.session_id == session_id).all()
+
+

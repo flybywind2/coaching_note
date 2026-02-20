@@ -1,3 +1,5 @@
+"""Auth Middleware 관심사를 처리하는 애플리케이션 미들웨어입니다."""
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -62,3 +64,5 @@ def get_optional_user(
         return db.query(User).filter(User.user_id == int(user_id), User.is_active == True).first()
     except Exception:
         return None
+
+

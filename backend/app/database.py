@@ -1,3 +1,5 @@
+"""데이터베이스 엔진/세션 초기화와 공용 SQLAlchemy Base를 정의합니다."""
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.config import settings
@@ -20,3 +22,5 @@ def get_db():
         yield db
     finally:
         db.close()
+
+

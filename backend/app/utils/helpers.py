@@ -1,3 +1,5 @@
+"""Helpers 관련 공용 유틸리티 헬퍼입니다."""
+
 import os
 import uuid
 from fastapi import UploadFile, HTTPException
@@ -34,3 +36,5 @@ async def save_upload(file: UploadFile, subfolder: str = "") -> dict:
         "url": f"/uploads/{subfolder}/{filename}".replace("\\", "/"),
         "size": len(content),
     }
+
+

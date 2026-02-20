@@ -1,3 +1,5 @@
+"""Document 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -24,3 +26,5 @@ class ProjectDocument(Base):
     __table_args__ = (
         Index("idx_document_project", "project_id", "doc_type"),
     )
+
+

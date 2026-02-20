@@ -1,3 +1,5 @@
+"""환경 변수 기반 애플리케이션 설정을 중앙에서 관리합니다."""
+
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -38,3 +40,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+

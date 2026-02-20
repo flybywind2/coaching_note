@@ -1,3 +1,5 @@
+"""User Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -64,3 +66,5 @@ def restore_user(db: Session, user_id: int) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+

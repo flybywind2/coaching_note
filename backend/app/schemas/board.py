@@ -1,3 +1,5 @@
+"""Board 요청/응답 계약을 위한 Pydantic 스키마입니다."""
+
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -56,3 +58,5 @@ class PostCommentOut(PostCommentBase):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+

@@ -1,3 +1,7 @@
+/**
+ * Pagination 재사용 UI 컴포넌트 모듈입니다.
+ */
+
 function renderPagination(container, total, limit, currentPage, onPageChange) {
   const totalPages = Math.ceil(total / limit);
   if (totalPages <= 1) { container.innerHTML = ''; return; }
@@ -12,3 +16,5 @@ function renderPagination(container, total, limit, currentPage, onPageChange) {
     btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.page)));
   });
 }
+
+

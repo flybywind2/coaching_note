@@ -1,3 +1,5 @@
+"""Upload 요청/응답 계약을 위한 Pydantic 스키마입니다."""
+
 from pydantic import BaseModel
 
 
@@ -14,3 +16,5 @@ class EditorImageCleanupOut(BaseModel):
     orphan_count: int
     deleted_count: int
     orphan_urls: list[str]
+
+

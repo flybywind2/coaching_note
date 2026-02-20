@@ -1,3 +1,7 @@
+/**
+ * Formatter 관련 프론트엔드 유틸리티 헬퍼입니다.
+ */
+
 const Fmt = {
   date(str) {
     if (!str) return '-';
@@ -140,3 +144,5 @@ const Fmt = {
     return tpl.innerHTML;
   },
 };
+
+

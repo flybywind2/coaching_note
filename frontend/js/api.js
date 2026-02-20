@@ -1,3 +1,7 @@
+/**
+ * 백엔드 HTTP 엔드포인트를 호출하고 요청/응답을 정규화하는 API 클라이언트 래퍼입니다.
+ */
+
 const API_BASE = '';
 
 async function apiFetch(path, options = {}) {
@@ -138,6 +142,7 @@ const API = {
   getSummary: (projectId) => apiFetch(`/api/projects/${projectId}/summary`),
   generateQASet: (projectId, force = false) => apiFetch(`/api/projects/${projectId}/qa-set`, { method: 'POST', body: JSON.stringify({ force_regenerate: force }) }),
   getQASets: (projectId) => apiFetch(`/api/projects/${projectId}/qa-sets`),
+  enhanceNote: (noteId, data) => apiFetch(`/api/notes/${noteId}/enhance`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Sessions (single)
   getSession: (id) => apiFetch(`/api/sessions/${id}`),
@@ -155,3 +160,5 @@ const API = {
   createIPRange: (data) => apiFetch('/api/admin/ip-ranges', { method: 'POST', body: JSON.stringify(data) }),
   deleteIPRange: (id) => apiFetch(`/api/admin/ip-ranges/${id}`, { method: 'DELETE' }),
 };
+
+

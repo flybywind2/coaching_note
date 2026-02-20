@@ -1,3 +1,7 @@
+/**
+ * Admin 페이지 렌더링과 사용자 상호작용을 담당하는 SPA 페이지 모듈입니다.
+ */
+
 Pages.admin = {
   async render(el, params) {
     const user = Auth.getUser();
@@ -259,3 +263,5 @@ Pages.admin = {
     return `<button class="btn btn-sm btn-danger del-user-btn" data-id="${user.user_id}">삭제</button>`;
   },
 };
+
+

@@ -1,3 +1,5 @@
+"""SQLAlchemy 모델 패키지 초기화 모듈입니다."""
+
 from app.models.user import User, Coach
 from app.models.batch import Batch
 from app.models.project import Project, ProjectMember
@@ -25,3 +27,5 @@ __all__ = [
     "Notification",
     "AIGeneratedContent",
 ]
+
+

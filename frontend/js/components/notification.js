@@ -1,3 +1,7 @@
+/**
+ * Notification 재사용 UI 컴포넌트 모듈입니다.
+ */
+
 const Notifications = {
   _items: [],
 
@@ -50,3 +54,5 @@ const Notifications = {
     });
   },
 };
+
+

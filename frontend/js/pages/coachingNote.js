@@ -1,3 +1,7 @@
+/**
+ * CoachingNote 페이지 렌더링과 사용자 상호작용을 담당하는 SPA 페이지 모듈입니다.
+ */
+
 Pages.coachingNote = {
   async render(el, params) {
     const { id: projectId, noteId } = params;
@@ -24,6 +28,7 @@ Pages.coachingNote = {
               ${canWrite ? `
                 <div class="note-actions">
                   <button id="edit-note-btn" class="btn btn-sm btn-secondary">편집</button>
+                  <button id="ai-enhance-note-btn" class="btn btn-sm">AI 보완</button>
                   <button id="delete-note-btn" class="btn btn-sm btn-danger">삭제</button>
                 </div>` : ''}
             </div>
@@ -85,6 +90,11 @@ Pages.coachingNote = {
           this.showEditModal(projectId, note, async () => {
             await this.render(el, params);
           });
+        });
+        document.getElementById('ai-enhance-note-btn')?.addEventListener('click', () => {
+          this.showEditModal(projectId, note, async () => {
+            await this.render(el, params);
+          }, { autoEnhance: true });
         });
 
         document.getElementById('delete-note-btn')?.addEventListener('click', async () => {
@@ -158,7 +168,7 @@ Pages.coachingNote = {
     });
   },
 
-  showEditModal(projectId, note, onDone) {
+  showEditModal(projectId, note, onDone, options = {}) {
     Modal.open(`<h2>코칭노트 편집</h2>
       <form id="edit-note-form">
         <div class="form-group"><label>코칭 날짜 *</label><input type="date" name="coaching_date" required value="${note.coaching_date}" /></div>
@@ -167,7 +177,16 @@ Pages.coachingNote = {
         <div class="form-group"><label>진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" value="${note.progress_rate ?? ''}" /></div>
         <div class="form-group"><label>당면 문제</label><div id="edit-note-issue-editor"></div></div>
         <div class="form-group"><label>다음 액션</label><div id="edit-note-action-editor"></div></div>
-        <button type="submit" class="btn btn-primary">저장</button>
+        <div class="form-group">
+          <label>AI 보완 지시사항 (선택)</label>
+          <input type="text" name="ai_instruction" placeholder="예: 다음 액션을 더 구체적인 일정/담당으로 정리" />
+          <p class="form-hint">현재 편집 중인 내용으로 AI 보완 제안을 생성합니다.</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" id="enhance-note-ai-btn" class="btn btn-secondary">AI 보완</button>
+          <button type="submit" class="btn btn-primary">저장</button>
+        </div>
+        <p class="form-error" id="edit-note-err" style="display:none;"></p>
       </form>`);
 
     const currentEditor = RichEditor.create(document.getElementById('edit-note-current-editor'), {
@@ -188,9 +207,53 @@ Pages.coachingNote = {
       placeholder: '다음 액션을 입력하세요.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'note', projectId: +projectId }),
     });
+    const aiBtn = document.getElementById('enhance-note-ai-btn');
+    const errEl = document.getElementById('edit-note-err');
+
+    const setFormError = (msg) => {
+      if (!errEl) return;
+      if (!msg) {
+        errEl.style.display = 'none';
+        errEl.textContent = '';
+        return;
+      }
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    };
+
+    const runAiEnhance = async () => {
+      if (!aiBtn) return;
+      setFormError('');
+      const original = aiBtn.textContent;
+      aiBtn.disabled = true;
+      aiBtn.textContent = 'AI 보완 중...';
+      try {
+        const instruction = (document.querySelector('#edit-note-form [name=\"ai_instruction\"]')?.value || '').trim();
+        const enhanced = await API.enhanceNote(note.note_id, {
+          current_status: currentEditor.getSanitizedHTML() || null,
+          main_issue: issueEditor.getSanitizedHTML() || null,
+          next_action: actionEditor.getSanitizedHTML() || null,
+          instruction: instruction || null,
+        });
+        currentEditor.setHTML(enhanced.current_status || '');
+        issueEditor.setHTML(enhanced.main_issue || '');
+        actionEditor.setHTML(enhanced.next_action || '');
+      } catch (err) {
+        setFormError(err.message || 'AI 보완 실패');
+      } finally {
+        aiBtn.disabled = false;
+        aiBtn.textContent = original;
+      }
+    };
+
+    aiBtn?.addEventListener('click', runAiEnhance);
+    if (options.autoEnhance) {
+      runAiEnhance();
+    }
 
     document.getElementById('edit-note-form').addEventListener('submit', async (e) => {
       e.preventDefault();
+      setFormError('');
       const fd = new FormData(e.target);
       const data = {
         coaching_date: fd.get('coaching_date'),
@@ -200,9 +263,15 @@ Pages.coachingNote = {
         main_issue: issueEditor.getSanitizedHTML() || null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
-      await API.updateNote(note.note_id, data);
-      Modal.close();
-      if (onDone) onDone();
+      try {
+        await API.updateNote(note.note_id, data);
+        Modal.close();
+        if (onDone) onDone();
+      } catch (err) {
+        setFormError(err.message || '코칭노트 저장 실패');
+      }
     });
   },
 };
+
+

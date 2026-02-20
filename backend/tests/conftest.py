@@ -1,3 +1,5 @@
+"""Conftest 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -93,3 +95,5 @@ def get_token(client, emp_id: str) -> str:
 
 def auth_headers(client, emp_id: str) -> dict:
     return {"Authorization": f"Bearer {get_token(client, emp_id)}"}
+
+

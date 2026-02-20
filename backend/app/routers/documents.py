@@ -1,3 +1,5 @@
+"""Documents 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 import json
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
@@ -92,3 +94,5 @@ def delete_document(
     db.delete(doc)
     db.commit()
     return {"message": "삭제되었습니다."}
+
+

@@ -1,3 +1,5 @@
+"""Coaching Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote, CoachingComment
@@ -104,3 +106,5 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
     db.delete(comment)
     db.commit()
+
+

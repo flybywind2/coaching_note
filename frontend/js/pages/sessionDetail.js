@@ -1,3 +1,7 @@
+/**
+ * SessionDetail 페이지 렌더링과 사용자 상호작용을 담당하는 SPA 페이지 모듈입니다.
+ */
+
 Pages.sessionDetail = {
   async render(el, params) {
     const sessionId = parseInt(params.id);
@@ -161,3 +165,5 @@ Pages.sessionDetail = {
     </table>`;
   },
 };
+
+

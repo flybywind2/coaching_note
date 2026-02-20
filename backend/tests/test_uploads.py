@@ -1,3 +1,5 @@
+"""Test Uploads 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -59,3 +61,5 @@ def test_upload_image_rejects_invalid_scope(client, seed_users, monkeypatch):
         assert resp.status_code == 400
     finally:
         shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
+
+

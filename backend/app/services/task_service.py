@@ -1,3 +1,5 @@
+"""Task Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime
@@ -95,3 +97,5 @@ def _recalculate_progress(db: Session, project_id: int):
     rate = int(completed / len(milestones) * 100)
     db.query(Project).filter(Project.project_id == project_id).update({"progress_rate": rate})
     db.commit()
+
+

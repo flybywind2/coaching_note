@@ -1,3 +1,5 @@
+"""Test Auth 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 import pytest
 from tests.conftest import auth_headers
 
@@ -37,3 +39,5 @@ def test_logout(client, seed_users):
     headers = auth_headers(client, "admin001")
     resp = client.post("/api/auth/logout", headers=headers)
     assert resp.status_code == 200
+
+

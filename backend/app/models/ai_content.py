@@ -1,3 +1,5 @@
+"""AI Content 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -25,3 +27,5 @@ class AIGeneratedContent(Base):
     __table_args__ = (
         Index("idx_ai_content_project", "project_id", "content_type"),
     )
+
+

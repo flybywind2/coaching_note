@@ -1,3 +1,5 @@
+"""Notification 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,3 +24,5 @@ class Notification(Base):
     __table_args__ = (
         Index("idx_notification_user", "user_id", "is_read", "created_at"),
     )
+
+

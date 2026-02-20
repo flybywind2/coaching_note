@@ -1,3 +1,5 @@
+"""Projects 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
@@ -78,3 +80,5 @@ def remove_member(
 ):
     project_service.remove_member(db, project_id, user_id)
     return {"message": "멤버가 제거되었습니다."}
+
+

@@ -1,3 +1,5 @@
+"""Test Editor Image Cleanup 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 from pathlib import Path
 import shutil
 from uuid import uuid4
@@ -74,3 +76,5 @@ def test_cleanup_editor_images_admin_only(client, seed_users):
     headers = auth_headers(client, "user001")
     resp = client.post("/api/uploads/editor-images/cleanup?dry_run=true", headers=headers)
     assert resp.status_code == 403
+
+

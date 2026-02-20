@@ -1,3 +1,5 @@
+"""Notification Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from sqlalchemy.orm import Session
 from app.models.notification import Notification
 from app.models.user import User
@@ -49,3 +51,5 @@ def create_notification(
     db.add(noti)
     db.commit()
     return noti
+
+

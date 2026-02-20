@@ -1,3 +1,7 @@
+/**
+ * Modal 재사용 UI 컴포넌트 모듈입니다.
+ */
+
 const Modal = {
   open(html, onClose) {
     document.getElementById('modal-body').innerHTML = html;
@@ -15,3 +19,5 @@ document.getElementById('modal-close').addEventListener('click', () => Modal.clo
 document.getElementById('modal-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'modal-overlay') Modal.close();
 });
+
+

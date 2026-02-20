@@ -1,3 +1,5 @@
+"""Project 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -45,3 +47,5 @@ class ProjectMember(Base):
 
     project = relationship("Project", back_populates="members")
     user = relationship("User", back_populates="project_memberships")
+
+

@@ -1,3 +1,7 @@
+/**
+ * 로그인 상태와 권한 체크를 담당하는 인증/세션 헬퍼입니다.
+ */
+
 const Auth = {
   _key: 'ssp_token',
   _userKey: 'ssp_user',
@@ -32,3 +36,5 @@ const Auth = {
     localStorage.removeItem(this._userKey);
   },
 };
+
+

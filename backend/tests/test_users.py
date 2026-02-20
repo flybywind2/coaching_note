@@ -1,3 +1,5 @@
+"""Test Users 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 from tests.conftest import auth_headers
 
 
@@ -80,3 +82,5 @@ def test_restore_active_user_conflict(client, seed_users):
     headers = auth_headers(client, "admin001")
     resp = client.patch("/api/users/2/restore", headers=headers)
     assert resp.status_code == 409
+
+

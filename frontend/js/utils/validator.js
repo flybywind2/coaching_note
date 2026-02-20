@@ -1,3 +1,7 @@
+/**
+ * Validator 관련 프론트엔드 유틸리티 헬퍼입니다.
+ */
+
 const Validator = {
   required(val, label) {
     if (!val || !String(val).trim()) throw new Error(`${label}은(는) 필수입니다.`);
@@ -10,3 +14,5 @@ const Validator = {
       throw new Error('시작일이 종료일보다 늦을 수 없습니다.');
   },
 };
+
+

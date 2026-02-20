@@ -1,3 +1,5 @@
+"""Schedule 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -26,3 +28,5 @@ class ProgramSchedule(Base):
     __table_args__ = (
         Index("idx_schedule_batch", "batch_id", "start_datetime"),
     )
+
+

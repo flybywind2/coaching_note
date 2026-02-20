@@ -1,9 +1,17 @@
+"""AI 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.schemas.ai_content import AIContentOut, AIGenerateRequest
+from app.schemas.ai_content import (
+    AIContentOut,
+    AIGenerateRequest,
+    AINoteEnhanceRequest,
+    AINoteEnhanceResponse,
+)
 from app.services.ai_service import AIService
+from app.services import coaching_service
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 
@@ -67,3 +75,32 @@ def get_qa_sets(
 ):
     svc = AIService(db)
     return svc.get_contents(project_id, "qa_set")
+
+
+@router.post("/api/notes/{note_id}/enhance", response_model=AINoteEnhanceResponse)
+def enhance_coaching_note(
+    note_id: int,
+    req: AINoteEnhanceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "coach"):
+        raise HTTPException(status_code=403, detail="관리자/코치만 코칭노트 AI 보완을 사용할 수 있습니다.")
+
+    note = coaching_service.get_note(db, note_id, current_user)
+    try:
+        svc = AIService(db)
+        return svc.enhance_note_sections(
+            note=note,
+            user_id=str(current_user.user_id),
+            current_status=req.current_status,
+            main_issue=req.main_issue,
+            next_action=req.next_action,
+            instruction=req.instruction,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 서비스 오류: {str(e)}")
+
+

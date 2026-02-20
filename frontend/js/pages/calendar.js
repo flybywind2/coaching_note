@@ -1,3 +1,7 @@
+/**
+ * Calendar 페이지 렌더링과 사용자 상호작용을 담당하는 SPA 페이지 모듈입니다.
+ */
+
 Pages.calendar = {
   currentDate: new Date(),
   viewMode: 'month',
@@ -293,3 +297,5 @@ Pages.calendar = {
     }
   },
 };
+
+

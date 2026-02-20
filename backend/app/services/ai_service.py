@@ -1,4 +1,7 @@
+"""AI Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 import json
+import re
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
@@ -63,6 +66,94 @@ class AIService:
                 f"다음 액션: {n.next_action or '-'}\n"
             )
         return "\n---\n".join(parts)
+
+    def _parse_json_object(self, raw_text: str) -> Dict[str, Any]:
+        text = (raw_text or "").strip()
+        if not text:
+            return {}
+
+        # Try raw JSON first.
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # Strip markdown code fences if present.
+        fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+        if fenced:
+            try:
+                parsed = json.loads(fenced.group(1))
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        # Fallback: first JSON-looking object block.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            candidate = text[start:end + 1]
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                return {}
+        return {}
+
+    def enhance_note_sections(
+        self,
+        note: CoachingNote,
+        user_id: str,
+        current_status: Optional[str],
+        main_issue: Optional[str],
+        next_action: Optional[str],
+        instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not settings.AI_FEATURES_ENABLED:
+            raise HTTPException(status_code=503, detail="AI 기능이 비활성화되어 있습니다.")
+
+        project = self.db.query(Project).filter(Project.project_id == note.project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+
+        base_current = current_status if current_status is not None else note.current_status
+        base_issue = main_issue if main_issue is not None else note.main_issue
+        base_action = next_action if next_action is not None else note.next_action
+        extra_instruction = (instruction or "").strip()
+
+        system_prompt = (
+            "당신은 기업 코칭노트 편집을 돕는 전문 코치입니다.\n"
+            "입력된 내용을 과장 없이 명확하고 실행 가능하게 보완하세요.\n"
+            "HTML 태그가 있으면 가능한 유지하되, 가독성을 개선하세요.\n"
+            "반드시 아래 JSON 객체만 반환하세요. 다른 설명은 금지합니다.\n"
+            "{\"current_status\":\"...\", \"main_issue\":\"...\", \"next_action\":\"...\"}"
+        )
+        prompt = (
+            f"과제명: {project.project_name}\n"
+            f"코칭노트 ID: {note.note_id}\n\n"
+            f"[현재 상태]\n{base_current or '-'}\n\n"
+            f"[당면 문제]\n{base_issue or '-'}\n\n"
+            f"[다음 액션]\n{base_action or '-'}\n\n"
+            f"[보완 지시사항]\n{extra_instruction or '없음'}\n"
+        )
+
+        client = AIClient.get_client("general", user_id)
+        raw = client.invoke(prompt, system_prompt)
+        parsed = self._parse_json_object(raw)
+
+        enhanced_current = parsed.get("current_status")
+        enhanced_issue = parsed.get("main_issue")
+        enhanced_action = parsed.get("next_action")
+
+        return {
+            "current_status": (enhanced_current if isinstance(enhanced_current, str) else base_current),
+            "main_issue": (enhanced_issue if isinstance(enhanced_issue, str) else base_issue),
+            "next_action": (enhanced_action if isinstance(enhanced_action, str) else base_action),
+            "model_used": client.model_name,
+        }
 
     def generate_summary(self, project_id: int, user_id: str, force: bool = False) -> Dict[str, Any]:
         if not settings.AI_FEATURES_ENABLED:
@@ -168,3 +259,5 @@ class AIService:
             .order_by(AIGeneratedContent.created_at.desc())
             .all()
         )
+
+

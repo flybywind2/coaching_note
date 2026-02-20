@@ -1,3 +1,5 @@
+"""AI Client 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 import uuid
 import os
 from typing import Optional
@@ -64,3 +66,5 @@ class AIClient:
             "general": settings.AI_DEFAULT_MODEL,
         }
         return cls(model_name=mapping.get(purpose, settings.AI_DEFAULT_MODEL), user_id=user_id)
+
+

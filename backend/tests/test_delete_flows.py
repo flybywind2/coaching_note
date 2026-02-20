@@ -1,3 +1,5 @@
+"""Test Delete Flows 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 from datetime import date, datetime, timedelta
 
 from app.models.batch import Batch
@@ -94,3 +96,5 @@ def test_delete_batch_removes_projects_sessions_schedules(client, db, seed_users
     assert db.query(Project).filter(Project.batch_id == batch.batch_id).count() == 0
     assert db.query(CoachingSession).filter(CoachingSession.batch_id == batch.batch_id).count() == 0
     assert db.query(ProgramSchedule).filter(ProgramSchedule.batch_id == batch.batch_id).count() == 0
+
+

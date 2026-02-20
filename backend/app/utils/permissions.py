@@ -1,3 +1,5 @@
+"""Permissions 관련 공용 유틸리티 헬퍼입니다."""
+
 from app.models.user import User
 from app.models.project import Project, ProjectMember
 from sqlalchemy.orm import Session
@@ -62,3 +64,5 @@ def can_assign_session(user: User) -> bool:
 
 def can_view_dashboard(user: User) -> bool:
     return user.role in ADMIN_COACH
+
+

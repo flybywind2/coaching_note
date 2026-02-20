@@ -1,3 +1,5 @@
+"""Editor Image Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 import os
 import re
 from typing import Iterable
@@ -89,4 +91,6 @@ def _remove_empty_dirs(root: str):
             os.rmdir(dirpath)
         except OSError:
             pass
+
+
 

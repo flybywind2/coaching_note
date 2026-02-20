@@ -1,3 +1,5 @@
+"""Attendance Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 import ipaddress
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -101,3 +103,5 @@ def coaching_end(session_id: int, coach_user_id: int, db: Session) -> CoachingTi
     db.commit()
     db.refresh(log)
     return log
+
+

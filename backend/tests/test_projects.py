@@ -1,3 +1,5 @@
+"""Test Projects 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 import pytest
 from tests.conftest import auth_headers
 from app.models.project import Project, ProjectMember
@@ -111,3 +113,5 @@ def test_update_project_status_participant_forbidden(client, seed_users, seed_ba
         headers=participant_headers,
     )
     assert update_resp.status_code == 403
+
+

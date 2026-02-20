@@ -1,3 +1,5 @@
+"""Task 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,3 +34,5 @@ class ProjectTask(Base):
         Index("idx_task_due_date", "due_date"),
         Index("idx_task_assigned", "assigned_to"),
     )
+
+

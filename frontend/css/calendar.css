@@ -1,3 +1,5 @@
+/* Calendar 화면 표현과 레이아웃 규칙을 담당하는 스타일시트입니다. */
+
 .cal-controls {
   display: flex;
   align-items: center;
@@ -264,3 +266,5 @@
   .cal-day-num { font-size: 11px; }
   .cal-event { font-size: 9px; }
 }
+
+

@@ -1,3 +1,5 @@
+"""Project Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.project import Project, ProjectMember
@@ -92,3 +94,5 @@ def remove_member(db: Session, project_id: int, user_id: int):
         raise HTTPException(status_code=404, detail="멤버를 찾을 수 없습니다.")
     db.delete(member)
     db.commit()
+
+

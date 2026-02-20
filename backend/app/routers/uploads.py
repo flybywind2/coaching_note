@@ -1,3 +1,5 @@
+"""Uploads 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -54,3 +56,5 @@ def _build_subfolder(scope: str, project_id: int | None, board_id: int | None) -
         return f"editor_images/boards/{board_id}/{scope}"
 
     return "editor_images/general"
+
+

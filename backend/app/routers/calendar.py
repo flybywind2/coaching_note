@@ -1,3 +1,5 @@
+"""Calendar 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -132,3 +134,5 @@ def get_calendar(
 
     events.sort(key=lambda e: e["start"])
     return {"events": events, "count": len(events)}
+
+

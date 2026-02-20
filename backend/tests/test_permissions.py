@@ -1,3 +1,5 @@
+"""Test Permissions 동작과 회귀 시나리오를 검증하는 자동화 테스트입니다."""
+
 from datetime import date
 
 from app.models.project import Project
@@ -104,4 +106,6 @@ def test_observer_cannot_write_public_project_notes_or_tasks(client, db, seed_us
         headers=observer_headers,
     )
     assert task_resp.status_code == 403
+
+
 

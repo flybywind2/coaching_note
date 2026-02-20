@@ -1,3 +1,5 @@
+/* Style 화면 표현과 레이아웃 규칙을 담당하는 스타일시트입니다. */
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -481,6 +483,11 @@ body::after {
   outline: none;
   border-color: rgba(79, 124, 255, 0.5);
   box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.18);
+}
+.form-hint {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 .form-error { color: #b12030; font-size: 12px; margin-top: 7px; }
 
@@ -1085,3 +1092,5 @@ body::after {
   .modal-box { padding: 22px 16px; }
   .notif-panel { width: min(92vw, 330px); right: 8px; }
 }
+
+

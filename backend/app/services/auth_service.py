@@ -1,3 +1,5 @@
+"""Auth Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
+
 from datetime import datetime, timedelta
 from jose import jwt
 from sqlalchemy.orm import Session
@@ -22,3 +24,5 @@ def mock_sso_login(db: Session, emp_id: str) -> User:
             detail=f"사번 '{emp_id}'에 해당하는 활성 사용자를 찾을 수 없습니다.",
         )
     return user
+
+

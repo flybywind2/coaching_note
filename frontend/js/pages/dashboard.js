@@ -1,3 +1,7 @@
+/**
+ * Dashboard 페이지 렌더링과 사용자 상호작용을 담당하는 SPA 페이지 모듈입니다.
+ */
+
 Pages.dashboard = {
   async render(el, params) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
@@ -68,3 +72,5 @@ Pages.dashboard = {
     }
   },
 };
+
+

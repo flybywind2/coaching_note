@@ -1,3 +1,5 @@
+"""Notifications 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
@@ -28,3 +30,5 @@ def mark_read(noti_id: int, db: Session = Depends(get_db), current_user: User = 
 def mark_all_read(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     notification_service.mark_all_read(db, current_user.user_id)
     return {"message": "모든 알림을 읽음 처리했습니다."}
+
+

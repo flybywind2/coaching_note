@@ -1,3 +1,5 @@
+"""Coaching Note 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -45,3 +47,5 @@ class CoachingComment(Base):
     __table_args__ = (
         Index("idx_comment_note", "note_id"),
     )
+
+

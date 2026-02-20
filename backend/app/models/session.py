@@ -1,3 +1,5 @@
+"""Session 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Text, Date, Time, DateTime, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -83,3 +85,5 @@ class CoachingTimeLog(Base):
 
     session = relationship("CoachingSession", back_populates="coaching_time_logs")
     coach = relationship("User", foreign_keys=[coach_user_id])
+
+

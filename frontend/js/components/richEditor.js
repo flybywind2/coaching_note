@@ -1,3 +1,7 @@
+/**
+ * RichEditor 재사용 UI 컴포넌트 모듈입니다.
+ */
+
 const RichEditor = {
   create(container, options = {}) {
     const initialHTML = options.initialHTML || '';
@@ -294,3 +298,5 @@ const RichEditor = {
     };
   },
 };
+
+

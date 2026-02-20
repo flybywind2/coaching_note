@@ -1,3 +1,5 @@
+"""Users 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -46,3 +48,5 @@ def restore_user(
     _current_user: User = Depends(require_roles("admin")),
 ):
     return user_service.restore_user(db, user_id)
+
+

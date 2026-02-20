@@ -1,3 +1,5 @@
+"""User 도메인의 SQLAlchemy 모델 정의입니다."""
+
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -47,3 +49,5 @@ class Coach(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     user = relationship("User", back_populates="coach_profile")
+
+
