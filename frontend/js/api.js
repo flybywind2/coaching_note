@@ -63,12 +63,15 @@ const API = {
   deleteProject: (id) => apiFetch(`/api/projects/${id}`, { method: 'DELETE' }),
   getMembers: (id) => apiFetch(`/api/projects/${id}/members`),
   addMember: (id, data) => apiFetch(`/api/projects/${id}/members`, { method: 'POST', body: JSON.stringify(data) }),
+  removeMember: (id, userId) => apiFetch(`/api/projects/${id}/members/${userId}`, { method: 'DELETE' }),
 
   // Documents
   getDocuments: (projectId, type) => apiFetch(`/api/projects/${projectId}/documents${type ? '?doc_type=' + type : ''}`),
   getDocument: (id) => apiFetch(`/api/documents/${id}`),
   updateDocument: (id, data) => apiFetch(`/api/documents/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDocument: (id) => apiFetch(`/api/documents/${id}`, { method: 'DELETE' }),
+  getDocumentVersions: (id) => apiFetch(`/api/documents/${id}/versions`),
+  restoreDocumentVersion: (id, versionId) => apiFetch(`/api/documents/${id}/restore/${versionId}`, { method: 'POST' }),
   createDocument: (projectId, formData) => apiFetch(`/api/projects/${projectId}/documents`, { method: 'POST', body: formData }),
   uploadDocument: (projectId, formData) => {
     const token = Auth.getToken();
@@ -88,6 +91,12 @@ const API = {
   createNote: (projectId, data) => apiFetch(`/api/projects/${projectId}/notes`, { method: 'POST', body: JSON.stringify(data) }),
   updateNote: (id, data) => apiFetch(`/api/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteNote: (id) => apiFetch(`/api/notes/${id}`, { method: 'DELETE' }),
+  getNoteVersions: (id) => apiFetch(`/api/notes/${id}/versions`),
+  restoreNoteVersion: (id, versionId) => apiFetch(`/api/notes/${id}/restore/${versionId}`, { method: 'POST' }),
+  getNoteTemplates: () => apiFetch('/api/note-templates'),
+  createNoteTemplate: (data) => apiFetch('/api/note-templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateNoteTemplate: (id, data) => apiFetch(`/api/note-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteNoteTemplate: (id) => apiFetch(`/api/note-templates/${id}`, { method: 'DELETE' }),
 
   // Comments
   getComments: (noteId) => apiFetch(`/api/notes/${noteId}/comments`),
@@ -121,6 +130,8 @@ const API = {
   createPost: (boardId, data) => apiFetch(`/api/boards/${boardId}/posts`, { method: 'POST', body: JSON.stringify(data) }),
   updatePost: (postId, data) => apiFetch(`/api/boards/posts/${postId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePost: (postId) => apiFetch(`/api/boards/posts/${postId}`, { method: 'DELETE' }),
+  getPostVersions: (postId) => apiFetch(`/api/boards/posts/${postId}/versions`),
+  restorePostVersion: (postId, versionId) => apiFetch(`/api/boards/posts/${postId}/restore/${versionId}`, { method: 'POST' }),
   getPostComments: (postId) => apiFetch(`/api/boards/posts/${postId}/comments`),
   createPostComment: (postId, data) => apiFetch(`/api/boards/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
@@ -136,6 +147,15 @@ const API = {
 
   // Dashboard
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
+  getHome: (batchId) => apiFetch(`/api/home${batchId ? '?batch_id=' + batchId : ''}`),
+  searchWorkspace: (params = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v === undefined || v === null || v === '') return;
+      qs.set(k, String(v));
+    });
+    return apiFetch(`/api/search${qs.toString() ? `?${qs.toString()}` : ''}`);
+  },
 
   // AI
   generateSummary: (projectId, force = false) => apiFetch(`/api/projects/${projectId}/summary`, { method: 'POST', body: JSON.stringify({ force_regenerate: force }) }),

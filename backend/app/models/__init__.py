@@ -12,6 +12,8 @@ from app.models.schedule import ProgramSchedule
 from app.models.board import Board, BoardPost, PostComment
 from app.models.notification import Notification
 from app.models.ai_content import AIGeneratedContent
+from app.models.content_version import ContentVersion
+from app.models.coaching_template import CoachingNoteTemplate
 
 __all__ = [
     "User", "Coach",
@@ -26,6 +28,8 @@ __all__ = [
     "Board", "BoardPost", "PostComment",
     "Notification",
     "AIGeneratedContent",
+    "ContentVersion",
+    "CoachingNoteTemplate",
 ]
 
 

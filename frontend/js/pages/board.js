@@ -41,6 +41,7 @@ Pages.board = {
           <form id="new-post-form">
             <div class="form-group"><label>제목 *</label><input name="title" required /></div>
             <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
+            <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
             ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice" /> 공지로 등록</label></div>` : ''}
             <button type="submit" class="btn btn-primary">등록</button>
             <p class="form-error" id="board-post-err" style="display:none;"></p>
@@ -99,6 +100,7 @@ Pages.board = {
             ${canManagePost ? `
               <div class="post-actions">
                 <button id="edit-post-btn" class="btn btn-sm btn-secondary">수정</button>
+                <button id="post-version-btn" class="btn btn-sm btn-secondary">이력</button>
                 <button id="delete-post-btn" class="btn btn-sm btn-danger">삭제</button>
               </div>` : ''}
             <div class="post-body rich-content">${Fmt.rich(post.content, '-')}</div>
@@ -116,6 +118,7 @@ Pages.board = {
             ${user.role !== 'observer' ? `
             <form id="post-comment-form" class="comment-form">
               <div id="board-comment-editor"></div>
+              <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
               <button type="submit" class="btn btn-primary">등록</button>
               <p class="form-error" id="board-comment-err" style="display:none;"></p>
             </form>` : '<p class="empty-state">참관자는 댓글을 작성할 수 없습니다.</p>'}
@@ -151,6 +154,7 @@ Pages.board = {
           <form id="edit-post-form">
             <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post.title)}" /></div>
             <div class="form-group"><label>내용 *</label><div id="edit-board-post-editor"></div></div>
+            <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
             ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice"${post.is_notice ? ' checked' : ''} /> 공지로 등록</label></div>` : ''}
             <button type="submit" class="btn btn-primary">저장</button>
             <p class="form-error" id="edit-board-post-err" style="display:none;"></p>
@@ -185,6 +189,12 @@ Pages.board = {
         });
       });
 
+      document.getElementById('post-version-btn')?.addEventListener('click', async () => {
+        await this.showVersionModal(+postId, async () => {
+          await this.renderPost(el, params);
+        });
+      });
+
       document.getElementById('delete-post-btn')?.addEventListener('click', async () => {
         if (!confirm('게시글을 삭제하시겠습니까?')) return;
         try {
@@ -207,6 +217,45 @@ Pages.board = {
       }));
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
+    }
+  },
+
+  async showVersionModal(postId, onRestored) {
+    try {
+      const versions = await API.getPostVersions(postId);
+      Modal.open(`<h2>게시글 변경 이력</h2>
+        <div class="version-list">
+          ${versions.length ? versions.map((v) => `
+            <div class="version-item">
+              <div class="version-meta">
+                <strong>v${v.version_no}</strong>
+                <span>${Fmt.escape(v.change_type)}</span>
+                <span>${Fmt.datetime(v.created_at)}</span>
+              </div>
+              <div class="version-preview">
+                <strong>${Fmt.escape(v.snapshot.title || '-')}</strong>
+                <p>${Fmt.escape(Fmt.excerpt(v.snapshot.content || '', 180) || '-')}</p>
+              </div>
+              <div class="version-actions">
+                <button class="btn btn-sm btn-secondary restore-post-version-btn" data-version-id="${v.version_id}">이 버전으로 복원</button>
+              </div>
+            </div>
+          `).join('') : '<p class="empty-state">저장된 이력이 없습니다.</p>'}
+        </div>`);
+
+      document.querySelectorAll('.restore-post-version-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const versionId = +btn.dataset.versionId;
+        if (!confirm('선택한 버전으로 복원하시겠습니까?')) return;
+        try {
+          await API.restorePostVersion(postId, versionId);
+          Modal.close();
+          if (onRestored) onRestored();
+        } catch (err) {
+          alert(err.message || '게시글 복원 실패');
+        }
+      }));
+    } catch (err) {
+      alert(err.message || '게시글 이력을 불러오지 못했습니다.');
     }
   },
 };

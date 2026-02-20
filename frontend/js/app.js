@@ -1,4 +1,6 @@
 // Register all routes
+Router.register('/home', (el, p) => Pages.home.render(el, p));
+Router.register('/search', (el, p) => Pages.search.render(el, p));
 Router.register('/projects', (el, p) => Pages.projectList.render(el, p));
 Router.register('/projects/:batchId', (el, p) => Pages.projectList.render(el, p));
 Router.register('/project/:id', (el, p) => Pages.projectDetail.render(el, p));

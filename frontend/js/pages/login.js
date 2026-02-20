@@ -32,7 +32,7 @@ Pages.login = {
       const errEl = document.getElementById('login-err');
       try {
         await Auth.login(emp_id);
-        Router.go('/projects');
+        Router.go('/home');
       } catch (err) {
         errEl.textContent = err.message || '로그인 실패';
         errEl.style.display = 'block';

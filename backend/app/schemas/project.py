@@ -51,6 +51,9 @@ class ProjectMemberCreate(ProjectMemberBase):
 class ProjectMemberOut(ProjectMemberBase):
     member_id: int
     project_id: int
+    user_name: Optional[str] = None
+    user_emp_id: Optional[str] = None
+    user_role: Optional[str] = None
     joined_at: datetime
 
     model_config = {"from_attributes": True}

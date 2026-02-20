@@ -72,6 +72,9 @@ def get_members(db: Session, project_id: int, current_user: User) -> List[Projec
 
 
 def add_member(db: Session, project_id: int, data: ProjectMemberCreate) -> ProjectMember:
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
     existing = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.user_id == data.user_id,
@@ -86,12 +89,20 @@ def add_member(db: Session, project_id: int, data: ProjectMemberCreate) -> Proje
 
 
 def remove_member(db: Session, project_id: int, user_id: int):
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
         ProjectMember.user_id == user_id,
     ).first()
     if not member:
         raise HTTPException(status_code=404, detail="멤버를 찾을 수 없습니다.")
+    # 팀원 제거 시 담당자로 지정된 과제 내 Task는 자동으로 미배정 처리합니다.
+    db.query(ProjectTask).filter(
+        ProjectTask.project_id == project_id,
+        ProjectTask.assigned_to == user_id,
+    ).update({"assigned_to": None})
     db.delete(member)
     db.commit()
 

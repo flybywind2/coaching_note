@@ -28,6 +28,14 @@ class ProjectTask(Base):
     assignee = relationship("User", foreign_keys=[assigned_to], back_populates="project_tasks_assigned")
     creator = relationship("User", foreign_keys=[created_by], back_populates="project_tasks_created")
 
+    @property
+    def assignee_name(self):
+        return self.assignee.name if self.assignee else None
+
+    @property
+    def assignee_emp_id(self):
+        return self.assignee.emp_id if self.assignee else None
+
     __table_args__ = (
         Index("idx_task_project", "project_id"),
         Index("idx_task_milestone", "project_id", "is_milestone", "milestone_order"),

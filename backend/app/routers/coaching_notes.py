@@ -8,6 +8,12 @@ from app.schemas.coaching_note import (
     CoachingNoteCreate, CoachingNoteUpdate, CoachingNoteOut,
     CoachingCommentCreate, CoachingCommentOut,
 )
+from app.schemas.coaching_template import (
+    CoachingNoteTemplateCreate,
+    CoachingNoteTemplateOut,
+    CoachingNoteTemplateUpdate,
+)
+from app.schemas.version import ContentVersionOut
 from app.services import coaching_service
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
@@ -70,5 +76,54 @@ def create_comment(
 def delete_comment(comment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     coaching_service.delete_comment(db, comment_id, current_user)
     return {"message": "삭제되었습니다."}
+
+
+@router.get("/api/note-templates", response_model=List[CoachingNoteTemplateOut])
+def list_note_templates(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return coaching_service.get_templates(db, current_user)
+
+
+@router.post("/api/note-templates", response_model=CoachingNoteTemplateOut)
+def create_note_template(
+    data: CoachingNoteTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return coaching_service.create_template(db, data, current_user)
+
+
+@router.put("/api/note-templates/{template_id}", response_model=CoachingNoteTemplateOut)
+def update_note_template(
+    template_id: int,
+    data: CoachingNoteTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return coaching_service.update_template(db, template_id, data, current_user)
+
+
+@router.delete("/api/note-templates/{template_id}")
+def delete_note_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    coaching_service.delete_template(db, template_id, current_user)
+    return {"message": "삭제되었습니다."}
+
+
+@router.get("/api/notes/{note_id}/versions", response_model=List[ContentVersionOut])
+def list_note_versions(note_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return coaching_service.get_note_versions(db, note_id, current_user)
+
+
+@router.post("/api/notes/{note_id}/restore/{version_id}", response_model=CoachingNoteOut)
+def restore_note_version(
+    note_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return coaching_service.restore_note_version(db, note_id, version_id, current_user)
 
 

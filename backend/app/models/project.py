@@ -48,4 +48,16 @@ class ProjectMember(Base):
     project = relationship("Project", back_populates="members")
     user = relationship("User", back_populates="project_memberships")
 
+    @property
+    def user_name(self):
+        return self.user.name if self.user else None
+
+    @property
+    def user_emp_id(self):
+        return self.user.emp_id if self.user else None
+
+    @property
+    def user_role(self):
+        return self.user.role if self.user else None
+
 

@@ -46,10 +46,20 @@ const Notifications = {
         <div class="notif-time">${Fmt.datetime(n.created_at)}</div>
       </div>
     `).join('');
-    list.querySelectorAll('.notif-item:not(.read)').forEach(el => {
+    list.querySelectorAll('.notif-item').forEach(el => {
       el.addEventListener('click', async () => {
-        await API.markRead(parseInt(el.dataset.id));
-        this.refresh();
+        const id = parseInt(el.dataset.id, 10);
+        const item = this._items.find((n) => n.noti_id === id);
+        if (!item) return;
+        if (!item.is_read) {
+          await API.markRead(id);
+        }
+        if (item.link_url && item.link_url.startsWith('#/')) {
+          document.getElementById('notif-panel').style.display = 'none';
+          Router.go(item.link_url.replace(/^#/, ''));
+        } else {
+          this.refresh();
+        }
       });
     });
   },
