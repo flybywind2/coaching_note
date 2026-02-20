@@ -1,7 +1,10 @@
 """Permissions 관련 공용 유틸리티 헬퍼입니다."""
 
+from typing import Any, Dict, Set
+
 from app.models.user import User
 from app.models.project import Project, ProjectMember
+from app.models.access_scope import UserBatchAccess, UserProjectAccess
 from sqlalchemy.orm import Session
 
 
@@ -26,6 +29,57 @@ def is_admin_or_coach(user: User) -> bool:
     return user.role in ADMIN_COACH
 
 
+def _load_scope_cache(db: Session, user: User) -> Dict[str, Any]:
+    cached = getattr(user, "_access_scope_cache", None)
+    if cached is not None:
+        return cached
+
+    batch_ids: Set[int] = {
+        int(row[0])
+        for row in db.query(UserBatchAccess.batch_id)
+        .filter(UserBatchAccess.user_id == user.user_id)
+        .all()
+    }
+    project_ids: Set[int] = {
+        int(row[0])
+        for row in db.query(UserProjectAccess.project_id)
+        .filter(UserProjectAccess.user_id == user.user_id)
+        .all()
+    }
+    project_batch_ids: Set[int] = set()
+    if project_ids:
+        project_batch_ids = {
+            int(row[0])
+            for row in db.query(Project.batch_id)
+            .filter(Project.project_id.in_(project_ids))
+            .all()
+        }
+
+    payload = {
+        "batch_ids": batch_ids,
+        "project_ids": project_ids,
+        "project_batch_ids": project_batch_ids,
+        "has_limits": bool(batch_ids or project_ids),
+    }
+    setattr(user, "_access_scope_cache", payload)
+    return payload
+
+
+def can_view_batch(db: Session, batch_id: int, user: User) -> bool:
+    if is_admin(user):
+        return True
+
+    scope = _load_scope_cache(db, user)
+    if not scope["has_limits"]:
+        return True
+
+    if batch_id in scope["batch_ids"]:
+        return True
+    if batch_id in scope["project_batch_ids"]:
+        return True
+    return False
+
+
 def is_project_member(db: Session, project_id: int, user_id: int) -> bool:
     return db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id,
@@ -34,11 +88,25 @@ def is_project_member(db: Session, project_id: int, user_id: int) -> bool:
 
 
 def can_view_project(db: Session, project: Project, user: User) -> bool:
-    if user.role in ADMIN_COACH:
+    if is_admin(user):
         return True
+
+    scope = _load_scope_cache(db, user)
+    scope_allows = (
+        project.batch_id in scope["batch_ids"]
+        or project.project_id in scope["project_ids"]
+    )
+
+    if is_admin_or_coach(user):
+        if not scope["has_limits"]:
+            return True
+        return scope_allows
+
+    if scope["has_limits"]:
+        return scope_allows
+
     if project.visibility == "public":
         return True
-    # restricted: only members
     return is_project_member(db, project.project_id, user.user_id)
 
 

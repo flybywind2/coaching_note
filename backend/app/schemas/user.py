@@ -18,6 +18,7 @@ class UserCreate(UserBase):
 
 
 class UserUpdate(BaseModel):
+    emp_id: Optional[str] = None
     name: Optional[str] = None
     department: Optional[str] = None
     role: Optional[str] = None
@@ -64,5 +65,35 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+class UserBulkItem(BaseModel):
+    emp_id: str
+    name: str
+    department: Optional[str] = None
+    role: str
+    email: Optional[str] = None
+
+
+class UserBulkUpsertRequest(BaseModel):
+    rows: list[UserBulkItem]
+    reactivate_inactive: bool = True
+
+
+class UserBulkUpsertResult(BaseModel):
+    created: int
+    updated: int
+    reactivated: int
+    failed: int
+    errors: list[str]
+
+
+class UserPermissionUpdate(BaseModel):
+    batch_ids: list[int] = []
+    project_ids: list[int] = []
+
+
+class UserPermissionOut(UserPermissionUpdate):
+    user_id: int
 
 

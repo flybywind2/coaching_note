@@ -7,7 +7,15 @@ from typing import List
 from app.database import get_db
 from app.middleware.auth_middleware import require_roles
 from app.models.user import User
-from app.schemas.user import UserCreate, UserOut
+from app.schemas.user import (
+    UserCreate,
+    UserOut,
+    UserUpdate,
+    UserBulkUpsertRequest,
+    UserBulkUpsertResult,
+    UserPermissionOut,
+    UserPermissionUpdate,
+)
 from app.services import user_service
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -29,6 +37,44 @@ def create_user(
     _current_user: User = Depends(require_roles("admin")),
 ):
     return user_service.create_user(db, data)
+
+
+@router.put("/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: int,
+    data: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.update_user(db, user_id, data, current_user)
+
+
+@router.post("/bulk-upsert", response_model=UserBulkUpsertResult)
+def bulk_upsert_users(
+    data: UserBulkUpsertRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.bulk_upsert_users(db, data)
+
+
+@router.get("/{user_id}/permissions", response_model=UserPermissionOut)
+def get_user_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.get_user_permissions(db, user_id)
+
+
+@router.put("/{user_id}/permissions", response_model=UserPermissionOut)
+def update_user_permissions(
+    user_id: int,
+    data: UserPermissionUpdate,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.update_user_permissions(db, user_id, data)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -7,10 +7,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import Base
-from app.models import (
-    user, batch, project, coaching_note, document,
-    session, task, schedule, board, notification, ai_content,
-)
+import app.models  # noqa: F401 - 모델 import로 metadata 등록
 
 config = context.config
 

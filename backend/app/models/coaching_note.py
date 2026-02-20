@@ -48,4 +48,18 @@ class CoachingComment(Base):
         Index("idx_comment_note", "note_id"),
     )
 
+    @property
+    def author_name(self):
+        return self.author.name if self.author else None
+
+    @property
+    def author_role(self):
+        return self.author.role if self.author else None
+
+    @property
+    def comment_type(self):
+        if self.author and self.author.role == "participant":
+            return "participant_memo"
+        return "coaching_feedback"
+
 

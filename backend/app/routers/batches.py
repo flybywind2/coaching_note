@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/batches", tags=["batches"])
 
 @router.get("", response_model=List[BatchOut])
 def list_batches(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return batch_service.get_batches(db)
+    return batch_service.get_batches(db, current_user)
 
 
 @router.post("", response_model=BatchOut)

@@ -13,24 +13,15 @@ from app.middleware.auth_middleware import get_current_user
 from app.models.board import Board, BoardPost
 from app.models.coaching_note import CoachingNote
 from app.models.document import ProjectDocument
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.session import CoachingSession
 from app.models.task import ProjectTask
 from app.models.user import User
-from app.utils.permissions import is_admin_or_coach
+from app.utils.permissions import can_view_batch, can_view_project
 
 router = APIRouter(prefix="/api", tags=["workspace"])
 
 ALLOWED_SEARCH_TYPES = {"project", "note", "document", "board"}
-
-
-def _member_project_ids(db: Session, user_id: int) -> List[int]:
-    return [
-        row[0]
-        for row in db.query(ProjectMember.project_id)
-        .filter(ProjectMember.user_id == user_id)
-        .all()
-    ]
 
 
 def _strip_html(text: Optional[str]) -> str:
@@ -63,24 +54,25 @@ def get_home(
     today = date.today()
     end_day = today + timedelta(days=7)
 
+    if batch_id and not can_view_batch(db, batch_id, current_user):
+        return {
+            "today": today,
+            "projects": [],
+            "today_tasks": [],
+            "upcoming_sessions": [],
+            "stats": {
+                "project_count": 0,
+                "today_task_count": 0,
+                "overdue_task_count": 0,
+                "upcoming_session_count": 0,
+            },
+        }
+
     projects_q = db.query(Project)
     if batch_id:
         projects_q = projects_q.filter(Project.batch_id == batch_id)
-
-    member_ids: List[int] = []
-    if not is_admin_or_coach(current_user):
-        member_ids = _member_project_ids(db, current_user.user_id)
-        if member_ids:
-            projects_q = projects_q.filter(
-                or_(
-                    Project.visibility == "public",
-                    Project.project_id.in_(member_ids),
-                )
-            )
-        else:
-            projects_q = projects_q.filter(Project.visibility == "public")
-
-    projects = projects_q.order_by(Project.created_at.desc()).limit(12).all()
+    visible_projects = [p for p in projects_q.order_by(Project.created_at.desc()).all() if can_view_project(db, p, current_user)]
+    projects = visible_projects[:12]
     project_ids = [p.project_id for p in projects]
     project_name_map = {p.project_id: p.project_name for p in projects}
 
@@ -218,21 +210,21 @@ def search_workspace(
     like = f"%{keyword}%"
     results: List[Dict[str, Any]] = []
 
-    member_ids: List[int] = []
-    if not is_admin_or_coach(current_user):
-        member_ids = _member_project_ids(db, current_user.user_id)
+    project_scope_q = db.query(Project)
+    if batch_id:
+        if not can_view_batch(db, batch_id, current_user):
+            return {"query": keyword, "count": 0, "results": []}
+        project_scope_q = project_scope_q.filter(Project.batch_id == batch_id)
+    visible_project_ids = [
+        p.project_id
+        for p in project_scope_q.all()
+        if can_view_project(db, p, current_user)
+    ]
 
     def apply_project_visibility(q_obj):
-        if is_admin_or_coach(current_user):
-            return q_obj
-        if member_ids:
-            return q_obj.filter(
-                or_(
-                    Project.visibility == "public",
-                    Project.project_id.in_(member_ids),
-                )
-            )
-        return q_obj.filter(Project.visibility == "public")
+        if not visible_project_ids:
+            return q_obj.filter(Project.project_id == -1)
+        return q_obj.filter(Project.project_id.in_(visible_project_ids))
 
     if "project" in search_types:
         projects_q = db.query(Project)

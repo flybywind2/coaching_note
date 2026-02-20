@@ -7,10 +7,13 @@ from app.models.project import Project
 from app.models.session import CoachingSession
 from app.models.schedule import ProgramSchedule
 from app.schemas.batch import BatchCreate, BatchUpdate
+from app.models.user import User
+from app.utils.permissions import can_view_batch
 
 
-def get_batches(db: Session):
-    return db.query(Batch).order_by(Batch.created_at.desc()).all()
+def get_batches(db: Session, current_user: User):
+    rows = db.query(Batch).order_by(Batch.created_at.desc()).all()
+    return [row for row in rows if can_view_batch(db, row.batch_id, current_user)]
 
 
 def get_batch(db: Session, batch_id: int) -> Batch:

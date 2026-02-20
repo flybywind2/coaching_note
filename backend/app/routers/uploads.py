@@ -13,7 +13,7 @@ from app.utils.helpers import save_upload
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "gif"}
-ALLOWED_SCOPES = {"document", "note", "comment", "board_post", "board_comment", "general"}
+ALLOWED_SCOPES = {"document", "note", "comment", "board_post", "board_comment", "about", "general"}
 
 
 @router.post("/images", response_model=UploadedFileOut)
@@ -54,6 +54,9 @@ def _build_subfolder(scope: str, project_id: int | None, board_id: int | None) -
         if board_id is None or board_id <= 0:
             raise HTTPException(status_code=400, detail="board_id가 필요합니다.")
         return f"editor_images/boards/{board_id}/{scope}"
+
+    if scope == "about":
+        return "editor_images/about"
 
     return "editor_images/general"
 

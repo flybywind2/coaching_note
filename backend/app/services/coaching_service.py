@@ -1,6 +1,6 @@
 """Coaching Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote, CoachingComment
 from app.models.coaching_template import CoachingNoteTemplate
@@ -53,10 +53,13 @@ def _note_snapshot(note: CoachingNote) -> dict:
 
 
 def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_user: User) -> CoachingNote:
-    _get_accessible_project(db, project_id, current_user)
+    project = _get_accessible_project(db, project_id, current_user)
     if not can_write_coaching_note(current_user):
         raise HTTPException(status_code=403, detail="코칭노트 작성은 관리자/코치만 가능합니다.")
-    note = CoachingNote(project_id=project_id, author_id=current_user.user_id, **data.model_dump())
+    payload = data.model_dump()
+    if payload.get("progress_rate") is None:
+        payload["progress_rate"] = project.progress_rate
+    note = CoachingNote(project_id=project_id, author_id=current_user.user_id, **payload)
     db.add(note)
     db.commit()
     db.refresh(note)
@@ -118,6 +121,7 @@ def get_comments(db: Session, note_id: int, current_user: User) -> List[Coaching
     get_note(db, note_id, current_user)
     comments = (
         db.query(CoachingComment)
+        .options(joinedload(CoachingComment.author))
         .filter(CoachingComment.note_id == note_id)
         .order_by(CoachingComment.created_at)
         .all()
@@ -131,9 +135,9 @@ def create_comment(db: Session, note_id: int, data: CoachingCommentCreate, curre
     if current_user.role == "observer":
         raise HTTPException(status_code=403, detail="참관자는 작성 권한이 없습니다.")
     get_note(db, note_id, current_user)
-    # is_coach_only can only be set by admin/coach
+    # `코치들에게만 공유` 옵션은 관리자/코치만 사용할 수 있다.
     if data.is_coach_only and not can_view_coach_only_comment(current_user):
-        raise HTTPException(status_code=403, detail="코치 전용 메모는 관리자/코치만 작성할 수 있습니다.")
+        raise HTTPException(status_code=403, detail="코치들에게만 공유 설정은 관리자/코치만 사용할 수 있습니다.")
     comment = CoachingComment(note_id=note_id, author_id=current_user.user_id, **data.model_dump())
     db.add(comment)
     db.commit()
@@ -141,7 +145,7 @@ def create_comment(db: Session, note_id: int, data: CoachingCommentCreate, curre
     mention_service.notify_mentions(
         db,
         actor=current_user,
-        context_title="코칭노트 댓글",
+        context_title="코칭 의견" if current_user.role in ("admin", "coach") else "참여자 메모",
         link_url=f"#/project/{comment.note.project_id}/notes/{note_id}",
         new_texts=[comment.content],
     )

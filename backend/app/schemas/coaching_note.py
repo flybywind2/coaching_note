@@ -1,7 +1,7 @@
 """Coaching Note 요청/응답 계약을 위한 Pydantic 스키마입니다."""
 
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import date, datetime
 
 
@@ -51,6 +51,9 @@ class CoachingCommentOut(CoachingCommentBase):
     comment_id: int
     note_id: int
     author_id: int
+    author_name: Optional[str] = None
+    author_role: Optional[str] = None
+    comment_type: Literal["coaching_feedback", "participant_memo"] = "coaching_feedback"
     created_at: datetime
 
     model_config = {"from_attributes": True}

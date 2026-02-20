@@ -14,8 +14,8 @@ Pages.admin = {
       <div class="page-container">
         <h1>관리자 메뉴</h1>
         <div class="admin-tabs">
-          <button class="admin-tab active" data-tab="batches">차수 관리</button>
-          <button class="admin-tab" data-tab="users">사용자 관리</button>
+          <button class="admin-tab active" data-tab="users">사용자 관리</button>
+          <button class="admin-tab" data-tab="batches">차수 관리</button>
           <button class="admin-tab" data-tab="ip-ranges">IP 대역 관리</button>
         </div>
         <div id="admin-content"></div>
@@ -30,7 +30,7 @@ Pages.admin = {
     };
 
     el.querySelectorAll('.admin-tab').forEach(btn => btn.addEventListener('click', () => renderTab(btn.dataset.tab)));
-    renderTab('batches');
+    renderTab('users');
   },
 
   async _renderBatches(el) {
@@ -175,10 +175,13 @@ Pages.admin = {
     el.innerHTML = `<div class="admin-section">
       <div class="section-header">
         <h3>사용자 목록</h3>
-        <button id="add-user-btn" class="btn btn-primary">+ 사용자 추가</button>
+        <div class="inline-actions">
+          <button id="bulk-user-btn" class="btn btn-secondary">일괄 등록</button>
+          <button id="add-user-btn" class="btn btn-primary">+ 사용자 추가</button>
+        </div>
       </div>
       <table class="data-table">
-        <thead><tr><th>ID</th><th>사번</th><th>이름</th><th>부서</th><th>역할</th><th>상태</th><th>이메일</th><th>생성일</th><th></th></tr></thead>
+        <thead><tr><th>ID</th><th>Knox ID</th><th>이름</th><th>부서</th><th>역할</th><th>상태</th><th>이메일</th><th>생성일</th><th></th></tr></thead>
         <tbody>
           ${users.map(u => `<tr>
             <td>${u.user_id}</td>
@@ -198,7 +201,7 @@ Pages.admin = {
     document.getElementById('add-user-btn').addEventListener('click', () => {
       Modal.open(`<h2>사용자 추가</h2>
         <form id="add-user-form">
-          <div class="form-group"><label>사번(emp_id) *</label><input name="emp_id" required placeholder="user003" /></div>
+          <div class="form-group"><label>Knox ID(emp_id) *</label><input name="emp_id" required placeholder="knox001" /></div>
           <div class="form-group"><label>이름 *</label><input name="name" required placeholder="홍길동" /></div>
           <div class="form-group"><label>부서</label><input name="department" placeholder="개발팀" /></div>
           <div class="form-group"><label>역할 *</label>
@@ -236,6 +239,148 @@ Pages.admin = {
       });
     });
 
+    document.getElementById('bulk-user-btn').addEventListener('click', () => {
+      Modal.open(`<h2>사용자 일괄 등록</h2>
+        <form id="bulk-user-form">
+          <div class="form-group">
+            <label>입력 포맷</label>
+            <p class="hint">한 줄에 한 명씩 입력하세요. 구분자는 탭 또는 콤마를 사용할 수 있습니다.</p>
+            <p class="hint"><code>Knox ID, 이름, 부서, 역할, 이메일(선택)</code></p>
+          </div>
+          <div class="form-group">
+            <textarea name="rows" rows="10" placeholder="knox001, 홍길동, 개발팀, participant, hong@company.com"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">일괄 반영</button>
+          <p class="form-error" id="bulk-user-err" style="display:none;"></p>
+        </form>`);
+
+      document.getElementById('bulk-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errEl = document.getElementById('bulk-user-err');
+        errEl.style.display = 'none';
+
+        const text = String(new FormData(e.target).get('rows') || '').trim();
+        if (!text) {
+          errEl.textContent = '입력된 데이터가 없습니다.';
+          errEl.style.display = 'block';
+          return;
+        }
+
+        const rows = text.split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const cells = line.includes('\t')
+              ? line.split('\t').map((v) => v.trim())
+              : line.split(',').map((v) => v.trim());
+            return {
+              emp_id: cells[0] || '',
+              name: cells[1] || '',
+              department: cells[2] || null,
+              role: this._normalizeRole(cells[3] || ''),
+              email: cells[4] || null,
+            };
+          });
+
+        try {
+          const result = await API.bulkUpsertUsers({ rows, reactivate_inactive: true });
+          const summary = `생성 ${result.created}건 / 수정 ${result.updated}건 / 재활성화 ${result.reactivated}건 / 실패 ${result.failed}건`;
+          if (result.failed > 0) {
+            errEl.textContent = `${summary}\n${(result.errors || []).slice(0, 5).join(' / ')}`;
+            errEl.style.display = 'block';
+            await this._renderUsers(el);
+            return;
+          }
+          alert(summary);
+          Modal.close();
+          await this._renderUsers(el);
+        } catch (err) {
+          errEl.textContent = err.message || '일괄 등록 실패';
+          errEl.style.display = 'block';
+        }
+      });
+    });
+
+    el.querySelectorAll('.edit-user-btn').forEach(btn => btn.addEventListener('click', async () => {
+      const userId = +btn.dataset.id;
+      const current = users.find((u) => u.user_id === userId);
+      if (!current) return;
+      const [batches, permission] = await Promise.all([
+        API.getBatches().catch(() => []),
+        API.getUserPermissions(userId).catch(() => ({ batch_ids: [], project_ids: [] })),
+      ]);
+      const batchIds = new Set((permission.batch_ids || []).map((v) => Number(v)));
+      const projectIds = new Set((permission.project_ids || []).map((v) => Number(v)));
+      const batchProjects = await Promise.all(
+        batches.map(async (b) => ({
+          batch: b,
+          projects: await API.getProjects(b.batch_id).catch(() => []),
+        }))
+      );
+      const allProjects = batchProjects.flatMap((row) => row.projects.map((p) => ({
+        ...p,
+        batch_name: row.batch.batch_name,
+      })));
+
+      Modal.open(`<h2>사용자 수정</h2>
+        <form id="edit-user-form">
+          <div class="form-group"><label>Knox ID(emp_id) *</label><input name="emp_id" required value="${Fmt.escape(current.emp_id)}" /></div>
+          <div class="form-group"><label>이름 *</label><input name="name" required value="${Fmt.escape(current.name)}" /></div>
+          <div class="form-group"><label>부서</label><input name="department" value="${Fmt.escape(current.department || '')}" /></div>
+          <div class="form-group"><label>역할 *</label>
+            <select name="role" required>
+              <option value="participant"${current.role === 'participant' ? ' selected' : ''}>참여자</option>
+              <option value="observer"${current.role === 'observer' ? ' selected' : ''}>참관자</option>
+              <option value="coach"${current.role === 'coach' ? ' selected' : ''}>코치</option>
+              <option value="admin"${current.role === 'admin' ? ' selected' : ''}>관리자</option>
+            </select>
+          </div>
+          <div class="form-group"><label>이메일</label><input type="email" name="email" value="${Fmt.escape(current.email || '')}" /></div>
+          <div class="form-group">
+            <label>차수 권한 (복수 선택)</label>
+            <p class="hint">선택하지 않으면 전체 차수 접근 허용</p>
+            <div class="cal-coach-grid">
+              ${batches.map((b) => `<label><input type="checkbox" name="batch_ids" value="${b.batch_id}"${batchIds.has(Number(b.batch_id)) ? ' checked' : ''} /> ${Fmt.escape(b.batch_name)}</label>`).join('') || '<p class="empty-state">차수가 없습니다.</p>'}
+            </div>
+          </div>
+          <div class="form-group">
+            <label>과제 권한 (복수 선택)</label>
+            <p class="hint">선택하지 않으면 차수 권한/기본 권한 규칙에 따름</p>
+            <div class="cal-coach-grid">
+              ${allProjects.map((p) => `<label><input type="checkbox" name="project_ids" value="${p.project_id}"${projectIds.has(Number(p.project_id)) ? ' checked' : ''} /> [${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</label>`).join('') || '<p class="empty-state">과제가 없습니다.</p>'}
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary">저장</button>
+          <p class="form-error" id="edit-user-err" style="display:none;"></p>
+        </form>`);
+
+      document.getElementById('edit-user-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const data = {
+          emp_id: fd.get('emp_id').trim(),
+          name: fd.get('name').trim(),
+          department: fd.get('department')?.trim() || null,
+          role: fd.get('role'),
+          email: fd.get('email')?.trim() || null,
+        };
+        const permissionPayload = {
+          batch_ids: fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v)),
+          project_ids: fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v)),
+        };
+        try {
+          await API.updateUser(userId, data);
+          await API.updateUserPermissions(userId, permissionPayload);
+          Modal.close();
+          await this._renderUsers(el);
+        } catch (err) {
+          const errEl = document.getElementById('edit-user-err');
+          errEl.textContent = err.message || '사용자 수정 실패';
+          errEl.style.display = 'block';
+        }
+      });
+    }));
+
     el.querySelectorAll('.del-user-btn').forEach(btn => btn.addEventListener('click', async () => {
       if (!confirm('사용자를 삭제(비활성화)하시겠습니까?')) return;
       try {
@@ -260,7 +405,25 @@ Pages.admin = {
   _renderUserActionButton(user, me) {
     if (user.user_id === me.user_id) return '-';
     if (!user.is_active) return `<button class="btn btn-sm btn-secondary restore-user-btn" data-id="${user.user_id}">복구</button>`;
-    return `<button class="btn btn-sm btn-danger del-user-btn" data-id="${user.user_id}">삭제</button>`;
+    return `<div class="inline-actions">
+      <button class="btn btn-sm btn-secondary edit-user-btn" data-id="${user.user_id}">수정</button>
+      <button class="btn btn-sm btn-danger del-user-btn" data-id="${user.user_id}">삭제</button>
+    </div>`;
+  },
+
+  _normalizeRole(roleText) {
+    const raw = String(roleText || '').trim().toLowerCase();
+    const roleMap = {
+      admin: 'admin',
+      관리자: 'admin',
+      coach: 'coach',
+      코치: 'coach',
+      participant: 'participant',
+      참여자: 'participant',
+      observer: 'observer',
+      참관자: 'observer',
+    };
+    return roleMap[raw] || raw;
   },
 };
 

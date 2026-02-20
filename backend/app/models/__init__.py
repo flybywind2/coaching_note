@@ -15,6 +15,9 @@ from app.models.notification import Notification
 from app.models.ai_content import AIGeneratedContent
 from app.models.content_version import ContentVersion
 from app.models.coaching_template import CoachingNoteTemplate
+from app.models.site_content import SiteContent
+from app.models.coaching_plan import CoachDailyPlan, CoachActualOverride
+from app.models.access_scope import UserBatchAccess, UserProjectAccess
 
 __all__ = [
     "User", "Coach",
@@ -32,6 +35,9 @@ __all__ = [
     "AIGeneratedContent",
     "ContentVersion",
     "CoachingNoteTemplate",
+    "SiteContent",
+    "CoachDailyPlan", "CoachActualOverride",
+    "UserBatchAccess", "UserProjectAccess",
 ]
 
 
