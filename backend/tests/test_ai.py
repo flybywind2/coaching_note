@@ -117,7 +117,9 @@ def test_dashboard_accessible_for_admin(client, seed_users, seed_batch):
     resp = client.get(f"/api/dashboard?batch_id={seed_batch.batch_id}", headers=headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert "total_projects" in data
-    assert "session_stats" in data
+    assert "projects" in data
+    assert "project_daily_attendance" in data
+    assert "project_daily_notes" in data
+    assert "coach_activity" in data
 
 

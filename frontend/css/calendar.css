@@ -107,6 +107,11 @@
   white-space: nowrap;
   cursor: pointer;
 }
+.cal-event-btn {
+  width: 100%;
+  border: none;
+  text-align: left;
+}
 
 .cal-more {
   font-size: 10px;
@@ -254,6 +259,36 @@
   text-overflow: ellipsis;
 }
 
+.cal-time-row,
+.cal-repeat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cal-repeat-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cal-coach-grid {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.cal-coach-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #304976;
+}
+
 @media (max-width: 900px) {
   .cal-month { min-width: 120px; font-size: 15px; }
   .cal-day { min-height: 84px; }
@@ -265,6 +300,8 @@
   .cal-day { min-height: 74px; }
   .cal-day-num { font-size: 11px; }
   .cal-event { font-size: 9px; }
+  .cal-time-row,
+  .cal-repeat-row { grid-template-columns: 1fr; }
 }
 
 

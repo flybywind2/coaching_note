@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.schemas.board import BoardOut, BoardPostCreate, BoardPostUpdate, BoardPostOut, PostCommentCreate, PostCommentOut
+from app.schemas.board import (
+    BoardOut,
+    BoardPostCreate,
+    BoardPostUpdate,
+    BoardPostOut,
+    PostCommentCreate,
+    PostCommentUpdate,
+    PostCommentOut,
+)
 from app.schemas.version import ContentVersionOut
 from app.services import board_service
 from app.middleware.auth_middleware import get_current_user
@@ -29,6 +37,17 @@ def list_posts(
     return board_service.get_posts(db, board_id, skip, limit)
 
 
+@router.get("/posts", response_model=List[BoardPostOut])
+def list_all_posts(
+    skip: int = 0,
+    limit: int = 40,
+    category: str = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return board_service.get_all_posts(db, skip, limit, category)
+
+
 @router.post("/{board_id}/posts", response_model=BoardPostOut)
 def create_post(
     board_id: int,
@@ -42,7 +61,7 @@ def create_post(
 @router.get("/posts/{post_id}", response_model=BoardPostOut)
 def get_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     board_service.increment_view(db, post_id)
-    return board_service.get_post(db, post_id)
+    return board_service.get_post_with_meta(db, post_id)
 
 
 @router.put("/posts/{post_id}", response_model=BoardPostOut)
@@ -74,6 +93,16 @@ def create_comment(
     current_user: User = Depends(get_current_user),
 ):
     return board_service.create_comment(db, post_id, data, current_user)
+
+
+@router.put("/comments/{comment_id}", response_model=PostCommentOut)
+def update_comment(
+    comment_id: int,
+    data: PostCommentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return board_service.update_comment(db, comment_id, data, current_user)
 
 
 @router.delete("/comments/{comment_id}")

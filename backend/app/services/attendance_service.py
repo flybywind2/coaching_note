@@ -2,6 +2,7 @@
 
 import ipaddress
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.models.session import AttendanceLog, CoachingTimeLog
@@ -41,6 +42,26 @@ def check_in(session_id: int, user_id: int, client_ip: str, db: Session) -> Atte
     db.commit()
     db.refresh(log)
     return log
+
+
+def get_attendance_log(session_id: int, user_id: int, db: Session) -> Optional[AttendanceLog]:
+    return db.query(AttendanceLog).filter(
+        AttendanceLog.session_id == session_id,
+        AttendanceLog.user_id == user_id,
+    ).first()
+
+
+def get_my_attendance_status(session_id: int, user_id: int, client_ip: str, db: Session) -> dict:
+    ip_allowed = validate_ip(client_ip, db)
+    log = get_attendance_log(session_id, user_id, db)
+    return {
+        "session_id": session_id,
+        "user_id": user_id,
+        "ip_allowed": ip_allowed,
+        "can_checkin": ip_allowed and log is None,
+        "can_checkout": ip_allowed and log is not None and log.check_out_time is None,
+        "attendance_log": log,
+    }
 
 
 def check_out(session_id: int, user_id: int, client_ip: str, db: Session) -> AttendanceLog:

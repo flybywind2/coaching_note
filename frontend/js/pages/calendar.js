@@ -30,6 +30,7 @@ Pages.calendar = {
                 <option value="tenweeks"${this.viewMode === 'tenweeks' ? ' selected' : ''}>10주 마일스톤</option>
               </select>
               ${isAdmin ? `<label class="cal-project-wise"><input id="cal-project-wise" type="checkbox"${this.projectWise ? ' checked' : ''} /> 과제별 캘린더</label>` : ''}
+              ${isAdmin ? '<button id="cal-add-event-btn" class="btn btn-sm btn-primary">+ 일정 추가</button>' : ''}
               <button id="cal-prev" class="btn btn-sm">◀</button>
               <span id="cal-month-label" class="cal-month"></span>
               <button id="cal-next" class="btn btn-sm">▶</button>
@@ -37,8 +38,8 @@ Pages.calendar = {
           </div>
           <div id="cal-grid" class="cal-grid"></div>
           <div class="cal-legend">
-            <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>프로그램</span>
-            <span class="legend-item"><span class="dot" style="background:#2196F3"></span>코칭 세션</span>
+            <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>전체 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#2196F3"></span>코칭/과제 일정</span>
             <span class="legend-item"><span class="dot" style="background:#9C27B0"></span>마일스톤</span>
           </div>
         </div>`;
@@ -64,6 +65,9 @@ Pages.calendar = {
       document.getElementById('cal-project-wise')?.addEventListener('change', async (e) => {
         this.projectWise = e.target.checked;
         await this._renderView(getBatchId(), isAdmin);
+      });
+      document.getElementById('cal-add-event-btn')?.addEventListener('click', async () => {
+        await this._openEventCreateModal(getBatchId());
       });
 
       await this._renderView(batchId, isAdmin);
@@ -107,6 +111,21 @@ Pages.calendar = {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   },
 
+  _escapeAttr(value) {
+    return String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  },
+
+  _eventChip(ev, maxLen = 18) {
+    const payload = encodeURIComponent(JSON.stringify(ev));
+    const title = Fmt.escape(ev.title || '이벤트');
+    let label = (ev.title || '').replace(/^\[[^\]]+\]\s*/, '').trim();
+    if (ev.time_label) {
+      label = `${ev.time_label} ${label}`;
+    }
+    if (!label) label = ev.title || '이벤트';
+    return `<button type="button" class="cal-event cal-event-btn" data-event="${this._escapeAttr(payload)}" style="background:${ev.color}" title="${title}">${Fmt.escape(label.slice(0, maxLen))}</button>`;
+  },
+
   async _renderView(batchId, isAdmin) {
     if (this.viewMode === 'tenweeks') {
       await this._renderTenWeeks(batchId);
@@ -136,9 +155,10 @@ Pages.calendar = {
 
       if (isAdmin && this.projectWise) {
         grid.innerHTML = this._renderProjectMonthCalendars(year, month, projects, events);
-        return;
+      } else {
+        grid.innerHTML = this._renderMonthGrid(year, month, events);
       }
-      grid.innerHTML = this._renderMonthGrid(year, month, events);
+      this._bindEventDetailButtons(batchId, isAdmin);
     } catch (e) {
       grid.innerHTML = `<div class="error-state">${Fmt.escape(e.message)}</div>`;
     }
@@ -168,7 +188,7 @@ Pages.calendar = {
 
       html += `<div class="cal-day${isToday ? ' today' : ''}">
         <span class="cal-day-num">${d}</span>
-        ${dayEvents.slice(0, 3).map((ev) => `<div class="cal-event" style="background:${ev.color}" title="${Fmt.escape(ev.title)}">${Fmt.escape(ev.title.slice(0, 18))}</div>`).join('')}
+        ${dayEvents.slice(0, 3).map((ev) => this._eventChip(ev, 22)).join('')}
         ${dayEvents.length > 3 ? `<div class="cal-more">+${dayEvents.length - 3}</div>` : ''}
       </div>`;
     }
@@ -177,13 +197,13 @@ Pages.calendar = {
   },
 
   _renderProjectMonthCalendars(year, month, projects, events) {
-    const milestones = events.filter((ev) => ev.event_type === 'milestone');
+    const projectEvents = events.filter((ev) => ev.project_id && ['milestone', 'session'].includes(ev.event_type));
     if (!projects.length) {
       return '<div class="empty-state">이 차수에 과제가 없습니다.</div>';
     }
 
     const byProjectDate = {};
-    milestones.forEach((ev) => {
+    projectEvents.forEach((ev) => {
       const key = `${ev.project_id}|${String(ev.start).slice(0, 10)}`;
       if (!byProjectDate[key]) byProjectDate[key] = [];
       byProjectDate[key].push(ev);
@@ -206,7 +226,7 @@ Pages.calendar = {
           const dayEvents = byProjectDate[`${p.project_id}|${dateStr}`] || [];
           section += `<div class="cal-day mini">
             <span class="cal-day-num">${d}</span>
-            ${dayEvents.slice(0, 2).map((ev) => `<div class="cal-event" style="background:${ev.color}" title="${Fmt.escape(ev.title)}">${Fmt.escape(ev.title.slice(0, 14))}</div>`).join('')}
+            ${dayEvents.slice(0, 2).map((ev) => this._eventChip(ev, 16)).join('')}
             ${dayEvents.length > 2 ? `<div class="cal-more">+${dayEvents.length - 2}</div>` : ''}
           </div>`;
         }
@@ -296,6 +316,275 @@ Pages.calendar = {
       grid.innerHTML = `<div class="error-state">${Fmt.escape(e.message)}</div>`;
     }
   },
+
+  _bindEventDetailButtons(batchId, isAdmin) {
+    document.querySelectorAll('.cal-event-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        try {
+          const raw = decodeURIComponent(btn.dataset.event || '');
+          const event = JSON.parse(raw);
+          this._openEventDetailModal(event, batchId, isAdmin);
+        } catch (_) {
+          // ignore malformed payload
+        }
+      });
+    });
+  },
+
+  _buildRepeatingDates(baseDateStr, repeatType, repeatCount) {
+    const count = Math.max(1, Math.min(30, Number.parseInt(repeatCount, 10) || 1));
+    const base = new Date(`${baseDateStr}T00:00:00`);
+    if (Number.isNaN(base.getTime())) return [];
+    const dayStepMap = { none: 0, daily: 1, weekly: 7, biweekly: 14, monthly: 0 };
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+      const d = new Date(base.getTime());
+      if (repeatType === 'monthly') {
+        d.setMonth(d.getMonth() + i);
+      } else {
+        d.setDate(d.getDate() + ((dayStepMap[repeatType] || 0) * i));
+      }
+      rows.push(this._toDateKey(d));
+    }
+    return rows;
+  },
+
+  _toDateTimeString(dateStr, timeStr) {
+    if (!dateStr) return null;
+    const safeTime = (timeStr || '00:00').slice(0, 5);
+    return `${dateStr}T${safeTime}:00`;
+  },
+
+  _formatDateTimeValue(value) {
+    if (!value) return '-';
+    const direct = new Date(value);
+    if (!Number.isNaN(direct.getTime())) {
+      return direct.toLocaleString('ko-KR');
+    }
+    const raw = String(value);
+    if (/^\d{4}-\d{2}-\d{2}T\d{4}$/.test(raw)) {
+      const normalized = `${raw.slice(0, 10)}T${raw.slice(11, 13)}:${raw.slice(13, 15)}:00`;
+      const normalizedDate = new Date(normalized);
+      if (!Number.isNaN(normalizedDate.getTime())) {
+        return normalizedDate.toLocaleString('ko-KR');
+      }
+      return normalized.replace('T', ' ');
+    }
+    return raw;
+  },
+
+  async _openEventCreateModal(batchId) {
+    const [projects, users] = await Promise.all([
+      API.getProjects(batchId).catch(() => []),
+      API.getUsers().catch(() => []),
+    ]);
+    const coaches = users.filter((u) => u.role === 'coach' || u.role === 'admin');
+
+    Modal.open(`<h2>일정 추가</h2>
+      <form id="calendar-event-form">
+        <div class="form-group">
+          <label>일정 유형 *</label>
+          <select name="scope" id="cal-event-scope">
+            <option value="global">전체 일정 (모든 사용자 공개)</option>
+            <option value="project">과제 특수 일정 (과제 단위 공개)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>제목 *</label>
+          <input name="title" required placeholder="예: 중간 발표 리허설" />
+        </div>
+        <div class="form-group">
+          <label>설명</label>
+          <textarea name="description" rows="3" placeholder="필요 시 일정 설명을 입력하세요"></textarea>
+        </div>
+        <div class="form-group" id="cal-project-row" style="display:none;">
+          <label>대상 과제 *</label>
+          <select name="project_id">
+            <option value="">선택</option>
+            ${projects.map((p) => `<option value="${p.project_id}">${Fmt.escape(p.project_name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" id="cal-coach-row" style="display:none;">
+          <label>참석 코치 (복수 선택)</label>
+          <div class="cal-coach-grid">
+            ${coaches.map((coach) => `<label><input type="checkbox" name="coach_ids" value="${coach.user_id}" /> ${Fmt.escape(coach.name)} (${Fmt.escape(coach.emp_id)})</label>`).join('') || '<p class="empty-state">선택 가능한 코치가 없습니다.</p>'}
+          </div>
+        </div>
+        <div class="form-group">
+          <label>일정 카테고리</label>
+          <select name="schedule_type">
+            <option value="orientation">오리엔테이션</option>
+            <option value="workshop">워크샵</option>
+            <option value="mid_presentation">중간발표</option>
+            <option value="final_presentation">최종발표</option>
+            <option value="networking">네트워킹</option>
+            <option value="other" selected>기타</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" name="is_all_day" /> 종일 일정</label>
+        </div>
+        <div class="form-group cal-time-row">
+          <div>
+            <label>날짜 *</label>
+            <input type="date" name="event_date" required />
+          </div>
+          <div>
+            <label>시작 시간 *</label>
+            <input type="time" name="start_time" value="10:00" required />
+          </div>
+          <div>
+            <label>종료 시간 *</label>
+            <input type="time" name="end_time" value="11:00" required />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>장소</label>
+          <input name="location" placeholder="예: 회의실 A / 온라인" />
+        </div>
+        <div class="form-group cal-repeat-row">
+          <div>
+            <label>반복</label>
+            <select name="repeat_type">
+              <option value="none" selected>반복 없음</option>
+              <option value="daily">매일</option>
+              <option value="weekly">매주</option>
+              <option value="biweekly">격주</option>
+              <option value="monthly">매월</option>
+            </select>
+          </div>
+          <div>
+            <label>반복 횟수</label>
+            <input type="number" min="1" max="30" name="repeat_count" value="1" />
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary">저장</button>
+        <p class="form-error" id="calendar-event-err" style="display:none;"></p>
+      </form>`, null, { className: 'modal-box-xl' });
+
+    const scopeEl = document.getElementById('cal-event-scope');
+    const projectRow = document.getElementById('cal-project-row');
+    const coachRow = document.getElementById('cal-coach-row');
+    const syncScope = () => {
+      const isProject = scopeEl.value === 'project';
+      projectRow.style.display = isProject ? '' : 'none';
+      coachRow.style.display = isProject ? '' : 'none';
+    };
+    scopeEl.addEventListener('change', syncScope);
+    syncScope();
+
+    document.getElementById('calendar-event-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const scope = (fd.get('scope') || 'global').toString();
+      const title = (fd.get('title') || '').toString().trim();
+      const description = (fd.get('description') || '').toString().trim();
+      const date = (fd.get('event_date') || '').toString();
+      const startTime = (fd.get('start_time') || '').toString() || '00:00';
+      const endTime = (fd.get('end_time') || '').toString() || startTime;
+      const location = (fd.get('location') || '').toString().trim();
+      const scheduleType = (fd.get('schedule_type') || 'other').toString();
+      const repeatType = (fd.get('repeat_type') || 'none').toString();
+      const repeatCount = (fd.get('repeat_count') || '1').toString();
+      const isAllDay = fd.has('is_all_day');
+      const projectId = Number.parseInt((fd.get('project_id') || '').toString(), 10);
+      const coachIds = fd.getAll('coach_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+
+      const errEl = document.getElementById('calendar-event-err');
+      errEl.style.display = 'none';
+
+      if (!title || !date) {
+        errEl.textContent = '제목과 날짜를 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (scope === 'project' && Number.isNaN(projectId)) {
+        errEl.textContent = '대상 과제를 선택하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      const dates = this._buildRepeatingDates(date, repeatType, repeatCount);
+      if (!dates.length) {
+        errEl.textContent = '반복 일정 계산에 실패했습니다.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      try {
+        for (const dateStr of dates) {
+          if (scope === 'global') {
+            await API.createSchedule({
+              batch_id: batchId,
+              title,
+              description: description || null,
+              schedule_type: scheduleType,
+              start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
+              end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
+              location: location || null,
+              is_all_day: isAllDay,
+            });
+          } else {
+            const createdSession = await API.createSession({
+              batch_id: batchId,
+              project_id: projectId,
+              session_date: dateStr,
+              start_time: isAllDay ? '00:00' : startTime,
+              end_time: isAllDay ? '23:59' : endTime,
+              location: location || null,
+              note: title,
+            });
+            for (const coachId of coachIds) {
+              await API.addSessionAttendee(createdSession.session_id, {
+                user_id: coachId,
+                attendee_role: 'coach',
+              });
+            }
+          }
+        }
+
+        Modal.close();
+        await this._renderView(batchId, true);
+      } catch (err) {
+        errEl.textContent = err.message || '일정 저장 실패';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  _openEventDetailModal(event, batchId, isAdmin) {
+    const coachLine = event.coach_names && event.coach_names.length
+      ? event.coach_names.join(', ')
+      : '-';
+    const canDelete = isAdmin && (event.manage_type === 'schedule' || event.manage_type === 'session');
+
+    Modal.open(`<h2>일정 상세</h2>
+      <div class="info-grid">
+        <div class="info-item full"><label>제목</label><span>${Fmt.escape(event.title || '-')}</span></div>
+        <div class="info-item"><label>유형</label><span>${Fmt.escape(event.event_type || '-')}</span></div>
+        <div class="info-item"><label>공개 범위</label><span>${Fmt.escape(event.scope || '-')}</span></div>
+        <div class="info-item"><label>시작</label><span>${Fmt.escape(this._formatDateTimeValue(event.start))}</span></div>
+        <div class="info-item"><label>종료</label><span>${Fmt.escape(this._formatDateTimeValue(event.end))}</span></div>
+        <div class="info-item"><label>장소</label><span>${Fmt.escape(event.location || '-')}</span></div>
+        <div class="info-item"><label>과제</label><span>${Fmt.escape(event.project_name || '-')}</span></div>
+        <div class="info-item"><label>코치 배정</label><span>${Fmt.escape(coachLine)}</span></div>
+        <div class="info-item full"><label>설명</label><span>${Fmt.escape(event.description || '-')}</span></div>
+      </div>
+      ${canDelete ? `<div class="page-actions"><button id="cal-delete-event-btn" class="btn btn-danger">일정 삭제</button></div>` : ''}`);
+
+    document.getElementById('cal-delete-event-btn')?.addEventListener('click', async () => {
+      if (!confirm('이 일정을 삭제하시겠습니까?')) return;
+      try {
+        if (event.manage_type === 'schedule') {
+          await API.deleteSchedule(event.id);
+        } else if (event.manage_type === 'session') {
+          await API.deleteSession(event.id);
+        }
+        Modal.close();
+        await this._renderView(batchId, isAdmin);
+      } catch (err) {
+        alert(err.message || '일정 삭제 실패');
+      }
+    });
+  },
 };
-
-

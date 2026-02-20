@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
-from app.models.board import BoardPost
+from app.models.board import Board, BoardPost
 from app.models.coaching_note import CoachingNote
 from app.models.document import ProjectDocument
 from app.models.project import Project, ProjectMember
@@ -129,6 +129,18 @@ def get_home(
         .all()
     )
 
+    notice_rows = (
+        db.query(BoardPost, Board)
+        .join(Board, Board.board_id == BoardPost.board_id)
+        .filter(
+            BoardPost.is_notice == True,
+            BoardPost.created_at >= datetime.combine(today - timedelta(days=7), datetime.min.time()),
+        )
+        .order_by(BoardPost.created_at.desc())
+        .limit(8)
+        .all()
+    )
+
     return {
         "today": today,
         "projects": [
@@ -166,6 +178,16 @@ def get_home(
                 "session_status": s.session_status,
             }
             for s in upcoming_sessions
+        ],
+        "weekly_notices": [
+            {
+                "post_id": post.post_id,
+                "board_id": post.board_id,
+                "board_name": board.board_name,
+                "title": post.title,
+                "created_at": post.created_at,
+            }
+            for post, board in notice_rows
         ],
         "stats": {
             "project_count": len(projects),

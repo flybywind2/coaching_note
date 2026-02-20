@@ -8,7 +8,7 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
 from app.models.schedule import ProgramSchedule
-from app.models.session import CoachingSession
+from app.models.session import CoachingSession, SessionAttendee
 from app.models.task import ProjectTask
 from app.models.project import Project
 from app.utils.permissions import is_admin_or_coach
@@ -58,6 +58,9 @@ def get_calendar(
             "color": EVENT_COLORS["program"],
             "location": s.location,
             "schedule_type": s.schedule_type,
+            "description": s.description,
+            "manage_type": "schedule",
+            "scope": "global",
         })
 
     # 2. Coaching sessions
@@ -79,12 +82,30 @@ def get_calendar(
         ]
         sessions_q = sessions_q.filter(CoachingSession.project_id.in_(member_project_ids))
 
-    for s in sessions_q.all():
+    sessions = sessions_q.all()
+    coach_map = {}
+    if sessions:
+        session_ids = [s.session_id for s in sessions]
+        coach_rows = (
+            db.query(SessionAttendee.session_id, User.name)
+            .join(User, SessionAttendee.user_id == User.user_id)
+            .filter(
+                SessionAttendee.session_id.in_(session_ids),
+                SessionAttendee.attendee_role == "coach",
+            )
+            .all()
+        )
+        for session_id, coach_name in coach_rows:
+            coach_map.setdefault(session_id, []).append(coach_name)
+
+    for s in sessions:
         project_name = project_map.get(s.project_id, f"프로젝트 {s.project_id}")
+        event_title = s.note.strip() if s.note else "코칭 세션"
+        coach_names = coach_map.get(s.session_id, [])
         events.append({
             "event_type": "session",
             "id": s.session_id,
-            "title": f"[{project_name}] 코칭 세션",
+            "title": f"[{project_name}] {event_title}",
             "start": f"{s.session_date}T{s.start_time}",
             "end": f"{s.session_date}T{s.end_time}",
             "color": EVENT_COLORS["session"],
@@ -92,6 +113,12 @@ def get_calendar(
             "session_status": s.session_status,
             "project_id": s.project_id,
             "project_name": project_name,
+            "description": s.note,
+            "coach_names": coach_names,
+            "coach_assigned": len(coach_names) > 0,
+            "time_label": f"{s.start_time} ~ {s.end_time}",
+            "manage_type": "session",
+            "scope": "project",
         })
 
     # 3. Milestones / tasks with due dates
@@ -130,6 +157,8 @@ def get_calendar(
             "project_id": t.project_id,
             "project_name": project_name,
             "milestone_order": t.milestone_order,
+            "manage_type": "task",
+            "scope": "project",
         })
 
     events.sort(key=lambda e: e["start"])

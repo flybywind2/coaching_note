@@ -71,6 +71,20 @@ class AttendanceLogOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MyAttendanceStatusOut(BaseModel):
+    session_id: int
+    user_id: int
+    ip_allowed: bool
+    can_checkin: bool
+    can_checkout: bool
+    attendance_log: Optional[AttendanceLogOut] = None
+
+
+class AutoCheckinResultOut(BaseModel):
+    checked_in: int
+    skipped: int
+
+
 class CoachingTimeLogCreate(BaseModel):
     note: Optional[str] = None
 

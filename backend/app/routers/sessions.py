@@ -2,17 +2,20 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
+from datetime import date
 from app.database import get_db
 from app.schemas.session import (
     CoachingSessionCreate, CoachingSessionUpdate, CoachingSessionOut,
     SessionAttendeeCreate, SessionAttendeeOut,
-    AttendanceLogOut, CoachingTimeLogOut,
+    AttendanceLogOut, CoachingTimeLogOut, MyAttendanceStatusOut, AutoCheckinResultOut,
 )
 from app.models.session import CoachingSession, SessionAttendee
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 from app.services import attendance_service
+from app.models.project import ProjectMember
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -51,6 +54,22 @@ def get_session(session_id: int, db: Session = Depends(get_db), current_user: Us
     if not s:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
     return s
+
+
+@router.delete("/{session_id}")
+def delete_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "coach"):
+        raise HTTPException(status_code=403, detail="관리자/코치만 삭제 가능합니다.")
+    session = db.query(CoachingSession).filter(CoachingSession.session_id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    db.delete(session)
+    db.commit()
+    return {"message": "삭제되었습니다."}
 
 
 @router.put("/{session_id}", response_model=CoachingSessionOut)
@@ -118,6 +137,81 @@ def checkout(
 ):
     client_ip = _get_client_ip(request)
     return attendance_service.check_out(session_id, current_user.user_id, client_ip, db)
+
+
+@router.get("/{session_id}/my-attendance-status", response_model=MyAttendanceStatusOut)
+def get_my_attendance_status(
+    session_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = db.query(CoachingSession).filter(CoachingSession.session_id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    client_ip = _get_client_ip(request)
+    return attendance_service.get_my_attendance_status(session_id, current_user.user_id, client_ip, db)
+
+
+@router.post("/auto-checkin-today", response_model=AutoCheckinResultOut)
+def auto_checkin_today(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in ("coach", "participant"):
+        return {"checked_in": 0, "skipped": 0}
+
+    today = date.today()
+    q = db.query(CoachingSession).filter(CoachingSession.session_date == today)
+    if current_user.role == "participant":
+        member_project_ids = [
+            row[0]
+            for row in db.query(ProjectMember.project_id)
+            .filter(ProjectMember.user_id == current_user.user_id)
+            .all()
+        ]
+        if not member_project_ids:
+            return {"checked_in": 0, "skipped": 0}
+        q = q.filter(CoachingSession.project_id.in_(member_project_ids))
+    else:
+        attendee_session_ids = [
+            row[0]
+            for row in db.query(SessionAttendee.session_id)
+            .filter(
+                SessionAttendee.user_id == current_user.user_id,
+                SessionAttendee.attendee_role == "coach",
+            )
+            .all()
+        ]
+        if attendee_session_ids:
+            q = q.filter(
+                or_(
+                    CoachingSession.session_id.in_(attendee_session_ids),
+                    CoachingSession.created_by == current_user.user_id,
+                )
+            )
+        else:
+            q = q.filter(CoachingSession.created_by == current_user.user_id)
+
+    sessions = q.all()
+    if not sessions:
+        return {"checked_in": 0, "skipped": 0}
+
+    client_ip = _get_client_ip(request)
+    if not attendance_service.validate_ip(client_ip, db):
+        return {"checked_in": 0, "skipped": len(sessions)}
+
+    checked_in = 0
+    skipped = 0
+    for s in sessions:
+        existing = attendance_service.get_attendance_log(s.session_id, current_user.user_id, db)
+        if existing:
+            skipped += 1
+            continue
+        attendance_service.check_in(s.session_id, current_user.user_id, client_ip, db)
+        checked_in += 1
+    return {"checked_in": checked_in, "skipped": skipped}
 
 
 @router.get("/{session_id}/attendance", response_model=List[AttendanceLogOut])

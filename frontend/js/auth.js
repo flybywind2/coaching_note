@@ -23,6 +23,9 @@ const Auth = {
     const data = await API.login(emp_id);
     localStorage.setItem(this._key, data.access_token);
     localStorage.setItem(this._userKey, JSON.stringify(data.user));
+    if (data.user?.role === 'coach' || data.user?.role === 'participant') {
+      API.autoCheckInToday().catch(() => {});
+    }
     return data.user;
   },
 
