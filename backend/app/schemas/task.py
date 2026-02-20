@@ -10,6 +10,7 @@ class ProjectTaskBase(BaseModel):
     description: Optional[str] = None
     due_date: Optional[date] = None
     priority: str = "medium"
+    status: str = "todo"
     assigned_to: Optional[int] = None
     is_milestone: bool = False
     milestone_order: Optional[int] = None
@@ -33,7 +34,8 @@ class ProjectTaskUpdate(BaseModel):
 class ProjectTaskOut(ProjectTaskBase):
     task_id: int
     project_id: int
-    status: str
+    assignee_name: Optional[str] = None
+    assignee_emp_id: Optional[str] = None
     created_by: int
     created_at: datetime
     updated_at: Optional[datetime]

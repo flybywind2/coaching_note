@@ -3,11 +3,15 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote, CoachingComment
+from app.models.coaching_template import CoachingNoteTemplate
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.coaching_note import CoachingNoteCreate, CoachingNoteUpdate, CoachingCommentCreate
+from app.schemas.coaching_template import CoachingNoteTemplateCreate, CoachingNoteTemplateUpdate
+from app.services import mention_service, version_service
 from app.utils.permissions import can_view_project, can_write_coaching_note, can_view_coach_only_comment
 from typing import List
+from datetime import date
 
 
 def _get_accessible_project(db: Session, project_id: int, current_user: User) -> Project:
@@ -37,6 +41,17 @@ def get_note(db: Session, note_id: int, current_user: User) -> CoachingNote:
     return note
 
 
+def _note_snapshot(note: CoachingNote) -> dict:
+    return {
+        "coaching_date": str(note.coaching_date) if note.coaching_date else None,
+        "week_number": note.week_number,
+        "current_status": note.current_status,
+        "progress_rate": note.progress_rate,
+        "main_issue": note.main_issue,
+        "next_action": note.next_action,
+    }
+
+
 def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_user: User) -> CoachingNote:
     _get_accessible_project(db, project_id, current_user)
     if not can_write_coaching_note(current_user):
@@ -45,6 +60,21 @@ def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_
     db.add(note)
     db.commit()
     db.refresh(note)
+    version_service.create_content_version(
+        db,
+        entity_type="coaching_note",
+        entity_id=note.note_id,
+        changed_by=current_user.user_id,
+        change_type="create",
+        snapshot=_note_snapshot(note),
+    )
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="코칭노트",
+        link_url=f"#/project/{project_id}/notes/{note.note_id}",
+        new_texts=[note.current_status, note.main_issue, note.next_action],
+    )
     return note
 
 
@@ -52,10 +82,27 @@ def update_note(db: Session, note_id: int, data: CoachingNoteUpdate, current_use
     if not can_write_coaching_note(current_user):
         raise HTTPException(status_code=403, detail="코칭노트 수정은 관리자/코치만 가능합니다.")
     note = get_note(db, note_id, current_user)
+    before_texts = [note.current_status, note.main_issue, note.next_action]
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(note, k, v)
     db.commit()
     db.refresh(note)
+    version_service.create_content_version(
+        db,
+        entity_type="coaching_note",
+        entity_id=note.note_id,
+        changed_by=current_user.user_id,
+        change_type="update",
+        snapshot=_note_snapshot(note),
+    )
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="코칭노트",
+        link_url=f"#/project/{note.project_id}/notes/{note.note_id}",
+        new_texts=[note.current_status, note.main_issue, note.next_action],
+        previous_texts=before_texts,
+    )
     return note
 
 
@@ -91,6 +138,13 @@ def create_comment(db: Session, note_id: int, data: CoachingCommentCreate, curre
     db.add(comment)
     db.commit()
     db.refresh(comment)
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="코칭노트 댓글",
+        link_url=f"#/project/{comment.note.project_id}/notes/{note_id}",
+        new_texts=[comment.content],
+    )
     return comment
 
 
@@ -105,6 +159,102 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
     if comment.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
     db.delete(comment)
+    db.commit()
+
+
+def get_note_versions(db: Session, note_id: int, current_user: User) -> List[dict]:
+    get_note(db, note_id, current_user)
+    versions = version_service.list_versions(db, entity_type="coaching_note", entity_id=note_id)
+    return [version_service.to_response(row) for row in versions]
+
+
+def restore_note_version(db: Session, note_id: int, version_id: int, current_user: User) -> CoachingNote:
+    if not can_write_coaching_note(current_user):
+        raise HTTPException(status_code=403, detail="코칭노트 복원은 관리자/코치만 가능합니다.")
+    note = get_note(db, note_id, current_user)
+    row = version_service.get_version(
+        db,
+        entity_type="coaching_note",
+        entity_id=note_id,
+        version_id=version_id,
+    )
+    snapshot = version_service.parse_snapshot(row)
+    restored_date = snapshot.get("coaching_date")
+    if restored_date:
+        try:
+            note.coaching_date = date.fromisoformat(restored_date)
+        except ValueError:
+            pass
+    note.week_number = snapshot.get("week_number")
+    note.current_status = snapshot.get("current_status")
+    note.progress_rate = snapshot.get("progress_rate")
+    note.main_issue = snapshot.get("main_issue")
+    note.next_action = snapshot.get("next_action")
+    db.commit()
+    db.refresh(note)
+    version_service.create_content_version(
+        db,
+        entity_type="coaching_note",
+        entity_id=note.note_id,
+        changed_by=current_user.user_id,
+        change_type="restore",
+        snapshot=_note_snapshot(note),
+    )
+    return note
+
+
+def get_templates(db: Session, current_user: User) -> List[CoachingNoteTemplate]:
+    if not can_write_coaching_note(current_user):
+        raise HTTPException(status_code=403, detail="코칭노트 템플릿 권한이 없습니다.")
+    return (
+        db.query(CoachingNoteTemplate)
+        .filter(
+            (CoachingNoteTemplate.owner_id == current_user.user_id)
+            | (CoachingNoteTemplate.is_shared == True)
+        )
+        .order_by(CoachingNoteTemplate.created_at.desc())
+        .all()
+    )
+
+
+def create_template(db: Session, data: CoachingNoteTemplateCreate, current_user: User) -> CoachingNoteTemplate:
+    if not can_write_coaching_note(current_user):
+        raise HTTPException(status_code=403, detail="코칭노트 템플릿 생성 권한이 없습니다.")
+    row = CoachingNoteTemplate(owner_id=current_user.user_id, **data.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _get_template(db: Session, template_id: int) -> CoachingNoteTemplate:
+    row = db.query(CoachingNoteTemplate).filter(CoachingNoteTemplate.template_id == template_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="코칭노트 템플릿을 찾을 수 없습니다.")
+    return row
+
+
+def update_template(
+    db: Session,
+    template_id: int,
+    data: CoachingNoteTemplateUpdate,
+    current_user: User,
+) -> CoachingNoteTemplate:
+    row = _get_template(db, template_id)
+    if row.owner_id != current_user.user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="본인 템플릿 또는 관리자만 수정 가능합니다.")
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_template(db: Session, template_id: int, current_user: User):
+    row = _get_template(db, template_id)
+    if row.owner_id != current_user.user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="본인 템플릿 또는 관리자만 삭제 가능합니다.")
+    db.delete(row)
     db.commit()
 
 

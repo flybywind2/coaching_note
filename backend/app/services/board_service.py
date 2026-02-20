@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.models.board import Board, BoardPost, PostComment
 from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate
+from app.services import mention_service, version_service
 from typing import List
 
 
@@ -42,6 +43,14 @@ def get_post(db: Session, post_id: int) -> BoardPost:
     return post
 
 
+def _post_snapshot(post: BoardPost) -> dict:
+    return {
+        "title": post.title,
+        "content": post.content,
+        "is_notice": bool(post.is_notice),
+    }
+
+
 def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user: User) -> BoardPost:
     _ensure_not_observer(current_user)
     if data.is_notice and current_user.role != "admin":
@@ -50,11 +59,27 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
     db.add(post)
     db.commit()
     db.refresh(post)
+    version_service.create_content_version(
+        db,
+        entity_type="board_post",
+        entity_id=post.post_id,
+        changed_by=current_user.user_id,
+        change_type="create",
+        snapshot=_post_snapshot(post),
+    )
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="게시글",
+        link_url=f"#/board/{post.board_id}/post/{post.post_id}",
+        new_texts=[post.title, post.content],
+    )
     return post
 
 
 def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: User) -> BoardPost:
     post = get_post(db, post_id)
+    before_texts = [post.title, post.content]
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 수정 가능합니다.")
     if data.is_notice and current_user.role != "admin":
@@ -63,6 +88,22 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
         setattr(post, k, v)
     db.commit()
     db.refresh(post)
+    version_service.create_content_version(
+        db,
+        entity_type="board_post",
+        entity_id=post.post_id,
+        changed_by=current_user.user_id,
+        change_type="update",
+        snapshot=_post_snapshot(post),
+    )
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="게시글",
+        link_url=f"#/board/{post.board_id}/post/{post.post_id}",
+        new_texts=[post.title, post.content],
+        previous_texts=before_texts,
+    )
     return post
 
 
@@ -96,6 +137,13 @@ def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_u
     db.add(comment)
     db.commit()
     db.refresh(comment)
+    mention_service.notify_mentions(
+        db,
+        actor=current_user,
+        context_title="게시글 댓글",
+        link_url=f"#/board/{comment.post.board_id}/post/{post_id}",
+        new_texts=[comment.content],
+    )
     return comment
 
 
@@ -107,5 +155,43 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
     db.delete(comment)
     db.commit()
+
+
+def get_post_versions(db: Session, post_id: int, current_user: User) -> List[dict]:
+    post = get_post(db, post_id)
+    if post.author_id != current_user.user_id and current_user.role not in ("admin", "coach"):
+        raise HTTPException(status_code=403, detail="게시글 이력 조회 권한이 없습니다.")
+    versions = version_service.list_versions(db, entity_type="board_post", entity_id=post_id)
+    return [version_service.to_response(row) for row in versions]
+
+
+def restore_post_version(db: Session, post_id: int, version_id: int, current_user: User) -> BoardPost:
+    post = get_post(db, post_id)
+    if post.author_id != current_user.user_id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 복원 가능합니다.")
+    row = version_service.get_version(
+        db,
+        entity_type="board_post",
+        entity_id=post_id,
+        version_id=version_id,
+    )
+    snapshot = version_service.parse_snapshot(row)
+    post.title = snapshot.get("title") or post.title
+    post.content = snapshot.get("content") or post.content
+    if "is_notice" in snapshot:
+        if snapshot.get("is_notice") and current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="공지 설정은 관리자만 가능합니다.")
+        post.is_notice = bool(snapshot.get("is_notice"))
+    db.commit()
+    db.refresh(post)
+    version_service.create_content_version(
+        db,
+        entity_type="board_post",
+        entity_id=post.post_id,
+        changed_by=current_user.user_id,
+        change_type="restore",
+        snapshot=_post_snapshot(post),
+    )
+    return post
 
 

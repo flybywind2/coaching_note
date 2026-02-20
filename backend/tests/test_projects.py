@@ -115,3 +115,122 @@ def test_update_project_status_participant_forbidden(client, seed_users, seed_ba
     assert update_resp.status_code == 403
 
 
+def test_project_member_management_admin(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member Manage", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "leader", "is_representative": True},
+        headers=admin_headers,
+    )
+    assert add_resp.status_code == 200
+
+    list_resp = client.get(f"/api/projects/{project_id}/members", headers=admin_headers)
+    assert list_resp.status_code == 200
+    rows = list_resp.json()
+    assert len(rows) == 1
+    assert rows[0]["user_name"] == "Participant"
+    assert rows[0]["user_emp_id"] == "user001"
+    assert rows[0]["is_representative"] is True
+
+    remove_resp = client.delete(
+        f"/api/projects/{project_id}/members/{seed_users['participant'].user_id}",
+        headers=admin_headers,
+    )
+    assert remove_resp.status_code == 200
+    list_resp = client.get(f"/api/projects/{project_id}/members", headers=admin_headers)
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 0
+
+
+def test_project_member_add_forbidden_for_non_admin(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    coach_headers = auth_headers(client, "coach001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member Forbidden", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=coach_headers,
+    )
+    assert add_resp.status_code == 403
+
+
+def test_task_assignee_must_be_project_member_and_unassign_on_member_remove(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+
+    create_project_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Task Assign", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_project_resp.status_code == 200
+    project_id = create_project_resp.json()["project_id"]
+
+    create_task_fail_resp = client.post(
+        f"/api/projects/{project_id}/tasks",
+        json={
+            "title": "비멤버 배정 실패",
+            "assigned_to": seed_users["participant"].user_id,
+            "priority": "medium",
+            "is_milestone": False,
+        },
+        headers=admin_headers,
+    )
+    assert create_task_fail_resp.status_code == 400
+
+    add_member_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert add_member_resp.status_code == 200
+
+    create_task_resp = client.post(
+        f"/api/projects/{project_id}/tasks",
+        json={
+            "title": "팀원 배정 성공",
+            "assigned_to": seed_users["participant"].user_id,
+            "priority": "medium",
+            "is_milestone": False,
+        },
+        headers=admin_headers,
+    )
+    assert create_task_resp.status_code == 200
+    task = create_task_resp.json()
+    assert task["assigned_to"] == seed_users["participant"].user_id
+    assert task["assignee_name"] == "Participant"
+
+    update_fail_resp = client.put(
+        f"/api/tasks/{task['task_id']}",
+        json={"assigned_to": seed_users["coach"].user_id},
+        headers=admin_headers,
+    )
+    assert update_fail_resp.status_code == 400
+
+    remove_member_resp = client.delete(
+        f"/api/projects/{project_id}/members/{seed_users['participant'].user_id}",
+        headers=admin_headers,
+    )
+    assert remove_member_resp.status_code == 200
+
+    get_task_resp = client.get(f"/api/tasks/{task['task_id']}", headers=admin_headers)
+    assert get_task_resp.status_code == 200
+    assert get_task_resp.json()["assigned_to"] is None
+
+

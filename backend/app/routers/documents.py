@@ -6,13 +6,24 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
 from app.schemas.document import ProjectDocumentCreate, ProjectDocumentUpdate, ProjectDocumentOut
+from app.schemas.version import ContentVersionOut
 from app.models.document import ProjectDocument
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
+from app.services import version_service
 from app.utils.helpers import save_upload
 from fastapi import HTTPException
 
 router = APIRouter(tags=["documents"])
+
+
+def _doc_snapshot(doc: ProjectDocument) -> dict:
+    return {
+        "doc_type": doc.doc_type,
+        "title": doc.title,
+        "content": doc.content,
+        "attachments": doc.attachments,
+    }
 
 
 @router.get("/api/projects/{project_id}/documents", response_model=List[ProjectDocumentOut])
@@ -54,6 +65,14 @@ async def create_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
+    version_service.create_content_version(
+        db,
+        entity_type="document",
+        entity_id=doc.doc_id,
+        changed_by=current_user.user_id,
+        change_type="create",
+        snapshot=_doc_snapshot(doc),
+    )
     return doc
 
 
@@ -79,6 +98,14 @@ def update_document(
         setattr(doc, k, v)
     db.commit()
     db.refresh(doc)
+    version_service.create_content_version(
+        db,
+        entity_type="document",
+        entity_id=doc.doc_id,
+        changed_by=current_user.user_id,
+        change_type="update",
+        snapshot=_doc_snapshot(doc),
+    )
     return doc
 
 
@@ -94,5 +121,52 @@ def delete_document(
     db.delete(doc)
     db.commit()
     return {"message": "삭제되었습니다."}
+
+
+@router.get("/api/documents/{doc_id}/versions", response_model=List[ContentVersionOut])
+def list_document_versions(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = db.query(ProjectDocument).filter(ProjectDocument.doc_id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    versions = version_service.list_versions(db, entity_type="document", entity_id=doc_id)
+    return [version_service.to_response(row) for row in versions]
+
+
+@router.post("/api/documents/{doc_id}/restore/{version_id}", response_model=ProjectDocumentOut)
+def restore_document_version(
+    doc_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = db.query(ProjectDocument).filter(ProjectDocument.doc_id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    row = version_service.get_version(
+        db,
+        entity_type="document",
+        entity_id=doc_id,
+        version_id=version_id,
+    )
+    snapshot = version_service.parse_snapshot(row)
+    doc.doc_type = snapshot.get("doc_type") or doc.doc_type
+    doc.title = snapshot.get("title")
+    doc.content = snapshot.get("content")
+    doc.attachments = snapshot.get("attachments")
+    db.commit()
+    db.refresh(doc)
+    version_service.create_content_version(
+        db,
+        entity_type="document",
+        entity_id=doc.doc_id,
+        changed_by=current_user.user_id,
+        change_type="restore",
+        snapshot=_doc_snapshot(doc),
+    )
+    return doc
 
 

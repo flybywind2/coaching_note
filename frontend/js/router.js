@@ -29,13 +29,17 @@ const Router = {
 
   resolve() {
     const { path, params } = this.getCurrentParams();
+    if (path === '/') {
+      this.go(Auth.isLoggedIn() ? '/home' : '/login');
+      return;
+    }
 
     if (!Auth.isLoggedIn() && path !== '/login') {
       this.go('/login');
       return;
     }
     if (Auth.isLoggedIn() && path === '/login') {
-      this.go('/projects');
+      this.go('/home');
       return;
     }
 

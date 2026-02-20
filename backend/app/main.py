@@ -5,10 +5,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
+from app.database import Base, engine
+import app.models  # noqa: F401 - 모델 import로 metadata 등록
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
-    admin_ip, users, uploads,
+    admin_ip, users, uploads, workspace,
 )
 
 app = FastAPI(
@@ -44,6 +46,13 @@ app.include_router(tasks.router)
 app.include_router(admin_ip.router)
 app.include_router(users.router)
 app.include_router(uploads.router)
+app.include_router(workspace.router)
+
+
+@app.on_event("startup")
+def ensure_schema():
+    # 신규 기능 배포 시 누락된 테이블을 자동 생성합니다.
+    Base.metadata.create_all(bind=engine)
 
 
 @app.get("/api/health")

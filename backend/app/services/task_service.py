@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime
-from app.models.project import Project
+from app.models.project import Project, ProjectMember
 from app.models.task import ProjectTask
 from app.models.user import User
 from app.schemas.task import ProjectTaskCreate, ProjectTaskUpdate
@@ -23,6 +23,17 @@ def _get_accessible_project(db: Session, project_id: int, current_user: User) ->
 def _ensure_not_observer(current_user: User):
     if current_user.role == "observer":
         raise HTTPException(status_code=403, detail="참관자는 수정 권한이 없습니다.")
+
+
+def _validate_assignee_in_project(db: Session, project_id: int, assigned_to: int | None):
+    if assigned_to is None:
+        return
+    exists = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == assigned_to,
+    ).first()
+    if not exists:
+        raise HTTPException(status_code=400, detail="담당자는 해당 과제 팀원으로 등록되어야 합니다.")
 
 
 def get_tasks(db: Session, project_id: int, current_user: User) -> List[ProjectTask]:
@@ -46,7 +57,11 @@ def get_task(db: Session, task_id: int, current_user: User) -> ProjectTask:
 def create_task(db: Session, project_id: int, data: ProjectTaskCreate, current_user: User) -> ProjectTask:
     _get_accessible_project(db, project_id, current_user)
     _ensure_not_observer(current_user)
-    task = ProjectTask(project_id=project_id, created_by=current_user.user_id, **data.model_dump())
+    _validate_assignee_in_project(db, project_id, data.assigned_to)
+    payload = data.model_dump()
+    if payload.get("status") == "completed":
+        payload["completed_at"] = datetime.utcnow()
+    task = ProjectTask(project_id=project_id, created_by=current_user.user_id, **payload)
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -62,6 +77,16 @@ def update_task(db: Session, task_id: int, data: ProjectTaskUpdate, current_user
         raise HTTPException(status_code=403, detail="마일스톤 순서 변경은 관리자/코치만 가능합니다.")
 
     updates = data.model_dump(exclude_none=True)
+    if "assigned_to" in data.model_fields_set:
+        updates["assigned_to"] = data.assigned_to
+    if "description" in data.model_fields_set:
+        updates["description"] = data.description
+    if "due_date" in data.model_fields_set:
+        updates["due_date"] = data.due_date
+
+    if "assigned_to" in updates:
+        _validate_assignee_in_project(db, task.project_id, updates["assigned_to"])
+
     if updates.get("status") == "completed" and task.status != "completed":
         updates["completed_at"] = datetime.utcnow()
     elif updates.get("status") and updates["status"] != "completed":
