@@ -4,7 +4,6 @@
 
 Pages.calendar = {
   currentDate: new Date(),
-  viewMode: 'month',
   selectedProjectByBatch: {},
   projectOptionsByBatch: {},
 
@@ -34,10 +33,6 @@ Pages.calendar = {
             <h1>캘린더</h1>
             <div class="cal-controls">
               <select id="cal-batch">${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === batchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}</select>
-              <select id="cal-view-mode">
-                <option value="month"${this.viewMode === 'month' ? ' selected' : ''}>월간</option>
-                <option value="tenweeks"${this.viewMode === 'tenweeks' ? ' selected' : ''}>10주 마일스톤</option>
-              </select>
               <select id="cal-project-filter"></select>
               ${policy.canManageProjectEvents ? '<button id="cal-add-event-btn" class="btn btn-sm btn-primary">+ 일정 추가</button>' : ''}
               <button id="cal-prev" class="btn btn-sm">◀</button>
@@ -48,8 +43,8 @@ Pages.calendar = {
           <div id="cal-grid" class="cal-grid"></div>
           <div class="cal-legend">
             <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>공통 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#00ACC1"></span>코칭 일정</span>
             <span class="legend-item"><span class="dot" style="background:#2196F3"></span>과제 일정</span>
-            <span class="legend-item"><span class="dot" style="background:#8A5CF6"></span>마일스톤</span>
           </div>
         </div>`;
 
@@ -68,10 +63,6 @@ Pages.calendar = {
         State.set('currentBatchId', changedBatch);
         await this._loadProjectFilter(changedBatch, policy);
         await this._renderView(changedBatch, policy);
-      });
-      document.getElementById('cal-view-mode').addEventListener('change', async (e) => {
-        this.viewMode = e.target.value;
-        await this._renderView(getBatchId(), policy);
       });
       document.getElementById('cal-project-filter').addEventListener('change', async (e) => {
         const value = (e.target.value || '').trim();
@@ -142,11 +133,7 @@ Pages.calendar = {
   },
 
   _shiftWindow(step) {
-    if (this.viewMode === 'month') {
-      this.currentDate.setMonth(this.currentDate.getMonth() + step);
-      return;
-    }
-    this.currentDate.setDate(this.currentDate.getDate() + (step * 70));
+    this.currentDate.setMonth(this.currentDate.getMonth() + step);
   },
 
   _toDateKey(d) {
@@ -154,26 +141,6 @@ Pages.calendar = {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
-  },
-
-  _parseDate(value) {
-    const text = String(value).slice(0, 10);
-    const [y, m, d] = text.split('-').map((v) => parseInt(v, 10));
-    if (!y || !m || !d) return null;
-    return new Date(y, m - 1, d);
-  },
-
-  _startOfWeek(dateObj) {
-    const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
-    const day = d.getDay();
-    const diff = (day + 6) % 7;
-    d.setDate(d.getDate() - diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  },
-
-  _formatRangeDate(d) {
-    return `${d.getMonth() + 1}/${d.getDate()}`;
   },
 
   _escapeAttr(value) {
@@ -190,10 +157,6 @@ Pages.calendar = {
   },
 
   async _renderView(batchId, policy) {
-    if (this.viewMode === 'tenweeks') {
-      await this._renderTenWeeks(batchId, policy);
-      return;
-    }
     await this._renderMonth(batchId, policy);
   },
 
@@ -254,98 +217,6 @@ Pages.calendar = {
     return html;
   },
 
-  async _renderTenWeeks(batchId, policy) {
-    const startDate = this._startOfWeek(this.currentDate);
-    const endDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-    endDate.setDate(endDate.getDate() + 69);
-    document.getElementById('cal-month-label').textContent = `${startDate.getFullYear()}.${String(startDate.getMonth() + 1).padStart(2, '0')}.${String(startDate.getDate()).padStart(2, '0')} ~ ${endDate.getFullYear()}.${String(endDate.getMonth() + 1).padStart(2, '0')}.${String(endDate.getDate()).padStart(2, '0')} (10주)`;
-
-    const start = this._toDateKey(startDate);
-    const end = this._toDateKey(endDate);
-    const grid = document.getElementById('cal-grid');
-    grid.innerHTML = '<div class="loading">로딩 중...</div>';
-
-    try {
-      const projectId = this._getSelectedProjectId(batchId);
-      const [calendarData, projects] = await Promise.all([
-        API.getCalendar(batchId, start, end, projectId),
-        API.getProjects(batchId).catch(() => []),
-      ]);
-      const allEvents = calendarData.events || [];
-      const milestones = allEvents.filter((ev) => ev.event_type === 'milestone');
-
-      const visibleProjects = policy.isParticipant ? projects.filter((p) => p.is_my_project) : projects;
-      const projectMap = {};
-      const orderedProjectIds = [];
-      visibleProjects.forEach((p) => {
-        projectMap[p.project_id] = p.project_name;
-      });
-
-      if (projectId) {
-        orderedProjectIds.push(projectId);
-        if (!projectMap[projectId]) {
-          const fromEvent = milestones.find((row) => row.project_id === projectId);
-          projectMap[projectId] = fromEvent?.project_name || `프로젝트 ${projectId}`;
-        }
-      } else {
-        milestones.forEach((ev) => {
-          if (!projectMap[ev.project_id]) {
-            projectMap[ev.project_id] = ev.project_name || `프로젝트 ${ev.project_id}`;
-          }
-        });
-        Object.keys(projectMap).forEach((pid) => orderedProjectIds.push(parseInt(pid, 10)));
-      }
-
-      const weekStarts = Array.from({ length: 10 }, (_, i) => {
-        const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-        d.setDate(d.getDate() + (i * 7));
-        return d;
-      });
-
-      const cellMap = {};
-      milestones.forEach((ev) => {
-        if (projectId && ev.project_id !== projectId) return;
-        const due = this._parseDate(ev.start);
-        if (!due) return;
-        const diffDays = Math.floor((due.getTime() - startDate.getTime()) / 86400000);
-        const idx = Math.floor(diffDays / 7);
-        if (idx < 0 || idx > 9) return;
-        const key = `${ev.project_id}|${idx}`;
-        if (!cellMap[key]) cellMap[key] = [];
-        cellMap[key].push(ev);
-      });
-
-      if (!orderedProjectIds.length) {
-        grid.innerHTML = '<div class="empty-state">표시할 과제가 없습니다.</div>';
-        return;
-      }
-
-      grid.innerHTML = `<div class="tenweek-wrap">
-        <table class="tenweek-table">
-          <thead>
-            <tr>
-              <th class="project-col">과제</th>
-              ${weekStarts.map((d, idx) => `<th>${idx + 1}주차<br><small>${this._formatRangeDate(d)}</small></th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${orderedProjectIds.map((pid) => `<tr>
-              <th class="project-col">${Fmt.escape(projectMap[pid] || `프로젝트 ${pid}`)}</th>
-              ${weekStarts.map((_, idx) => {
-                const items = cellMap[`${pid}|${idx}`] || [];
-                return `<td>
-                  ${items.slice(0, 3).map((ev) => `<div class="milestone-chip" title="${Fmt.escape(ev.title)}">${Fmt.escape(ev.title.replace(/^\[[^\]]+\]\s*/, '').slice(0, 24))}</div>`).join('')}
-                  ${items.length > 3 ? `<div class="cal-more">+${items.length - 3}</div>` : ''}
-                </td>`;
-              }).join('')}
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`;
-    } catch (e) {
-      grid.innerHTML = `<div class="error-state">${Fmt.escape(e.message)}</div>`;
-    }
-  },
   _bindEventDetailButtons(batchId, policy) {
     document.querySelectorAll('.cal-event-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -464,6 +335,29 @@ Pages.calendar = {
     return row.coach_name;
   },
 
+  _formatMinutes(minutes) {
+    const total = Number(minutes || 0);
+    if (!total) return '0분';
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    if (!h) return `${m}분`;
+    if (!m) return `${h}시간`;
+    return `${h}시간 ${m}분`;
+  },
+
+  _coachActualLabel(row) {
+    if (!row) return '-';
+    const source = row.actual_source === 'override' ? '수동' : '자동';
+    return `${row.coach_name} (${this._formatMinutes(row.final_minutes)} · ${source})`;
+  },
+
+  _scopeLabel(scope) {
+    if (scope === 'global') return '공통';
+    if (scope === 'coaching') return '코칭';
+    if (scope === 'project') return '과제';
+    return scope || '-';
+  },
+
   async _openEventCreateModal(batchId, options = {}) {
     const {
       presetDate = '',
@@ -491,6 +385,7 @@ Pages.calendar = {
           <label>공개 범위 *</label>
           <select name="scope" id="cal-event-scope">
             <option value="global"${scopeValue === 'global' ? ' selected' : ''}>공통 일정</option>
+            <option value="coaching"${scopeValue === 'coaching' ? ' selected' : ''}>코칭 일정</option>
             <option value="project"${scopeValue === 'project' ? ' selected' : ''}>과제 일정</option>
           </select>
         </div>
@@ -508,7 +403,7 @@ Pages.calendar = {
         </div>
         <div class="form-group" id="cal-color-row">
           <label>색상</label>
-          <input type="color" name="color" value="#4caf50" />
+          <input type="color" name="color" value="${scopeValue === 'coaching' ? '#00acc1' : '#4caf50'}" />
         </div>
         <div class="form-group">
           <label>설명</label>
@@ -570,9 +465,16 @@ Pages.calendar = {
 
     const syncScope = () => {
       const isProject = allowGlobalScope ? scopeEl.value === 'project' : true;
+      const isCoaching = allowGlobalScope ? scopeEl.value === 'coaching' : false;
       projectRow.style.display = isProject ? '' : 'none';
       colorRow.style.display = isProject ? 'none' : '';
       repeatRow.style.display = isProject ? 'none' : '';
+      if (allowGlobalScope) {
+        const colorInput = document.querySelector('#calendar-event-form input[name="color"]');
+        if (colorInput && !isProject) {
+          colorInput.value = isCoaching ? '#00acc1' : '#4caf50';
+        }
+      }
       if (isProject && !projectSelect.value && selectableProjects.length === 1) {
         projectSelect.value = String(selectableProjects[0].project_id);
       }
@@ -607,7 +509,6 @@ Pages.calendar = {
       const projectId = Number.parseInt((fd.get('project_id') || '').toString(), 10);
       const repeatType = (fd.get('repeat_type') || 'none').toString();
       const repeatEndDate = (fd.get('repeat_end_date') || '').toString() || date;
-      const color = (fd.get('color') || '#4CAF50').toString();
 
       const errEl = document.getElementById('calendar-event-err');
       errEl.style.display = 'none';
@@ -623,10 +524,10 @@ Pages.calendar = {
         return;
       }
 
-      const dates = scope === 'global'
-        ? this._buildRepeatingDates(date, repeatType, repeatEndDate, String(batch.end_date || ''))
-        : [date];
-      if (!dates.length) {
+      const dates = scope === 'project'
+        ? [date]
+        : this._buildRepeatingDates(date, repeatType, repeatEndDate, String(batch.end_date || ''));
+      if (scope !== 'project' && !dates.length) {
         errEl.textContent = '반복 종료일이 올바르지 않거나 차수 종료일을 초과했습니다.';
         errEl.style.display = 'block';
         return;
@@ -636,21 +537,7 @@ Pages.calendar = {
         const repeatGroupId = dates.length > 1 ? `schedule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : null;
         for (let i = 0; i < dates.length; i += 1) {
           const dateStr = dates[i];
-          if (scope === 'global') {
-            await API.createSchedule({
-              batch_id: batchId,
-              title,
-              description: description || null,
-              schedule_type: 'other',
-              start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
-              end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
-              location: location || null,
-              is_all_day: isAllDay,
-              color,
-              repeat_group_id: repeatGroupId,
-              repeat_sequence: i + 1,
-            });
-          } else {
+          if (scope === 'project') {
             await API.createSession({
               batch_id: batchId,
               project_id: projectId,
@@ -659,6 +546,22 @@ Pages.calendar = {
               end_time: isAllDay ? '23:59' : endTime,
               location: location || null,
               note: title,
+            });
+          } else {
+            const isCoaching = scope === 'coaching';
+            await API.createSchedule({
+              batch_id: batchId,
+              title,
+              description: description || null,
+              schedule_type: isCoaching ? 'coaching' : 'other',
+              visibility_scope: isCoaching ? 'coaching' : 'global',
+              start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
+              end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
+              location: location || null,
+              is_all_day: isAllDay,
+              color: (fd.get('color') || (isCoaching ? '#00ACC1' : '#4CAF50')).toString(),
+              repeat_group_id: repeatGroupId,
+              repeat_sequence: i + 1,
             });
           }
         }
@@ -673,9 +576,10 @@ Pages.calendar = {
   },
   _openEventDetailModal(event, batchId, policy) {
     const coachPlans = Array.isArray(event.coach_plans) ? event.coach_plans : [];
+    const coachActuals = Array.isArray(event.coach_actuals) ? event.coach_actuals : [];
     const canEdit = (
-      (policy.isAdmin && ['schedule', 'session', 'task'].includes(event.manage_type))
-      || (policy.isParticipant && event.scope === 'project' && ['session', 'task'].includes(event.manage_type))
+      (policy.isAdmin && ['schedule', 'session'].includes(event.manage_type))
+      || (policy.isParticipant && event.scope === 'project' && ['session'].includes(event.manage_type))
     );
     const canDelete = canEdit;
 
@@ -685,9 +589,12 @@ Pages.calendar = {
     lines.push(`<div class="info-item full"><label>일정</label><span>${Fmt.escape(this._formatEventPeriod(event))}</span></div>`);
     if (event.location) lines.push(`<div class="info-item"><label>장소</label><span>${Fmt.escape(event.location)}</span></div>`);
     if (event.description) lines.push(`<div class="info-item full"><label>설명</label><span>${Fmt.escape(event.description)}</span></div>`);
-    if (event.scope) lines.push(`<div class="info-item"><label>공개 범위</label><span>${Fmt.escape(event.scope === 'global' ? '공통' : '과제')}</span></div>`);
+    if (event.scope) lines.push(`<div class="info-item"><label>공개 범위</label><span>${Fmt.escape(this._scopeLabel(event.scope))}</span></div>`);
     if (coachPlans.length) {
       lines.push(`<div class="info-item full"><label>참여 코치</label><span>${Fmt.escape(coachPlans.map((row) => this._coachPlanLabel(row)).join(', '))}</span></div>`);
+    }
+    if (coachActuals.length) {
+      lines.push(`<div class="info-item full"><label>코치 실적</label><span>${Fmt.escape(coachActuals.map((row) => this._coachActualLabel(row)).join(', '))}</span></div>`);
     }
 
     Modal.open(`<h2>일정 상세</h2>
@@ -714,8 +621,6 @@ Pages.calendar = {
           else await API.deleteSchedule(event.id);
         } else if (event.manage_type === 'session') {
           await API.deleteSession(event.id);
-        } else if (event.manage_type === 'task') {
-          await API.deleteTask(event.id);
         }
         Modal.close();
         await this._renderView(batchId, policy);
@@ -732,11 +637,10 @@ Pages.calendar = {
     const initialDate = this._toDateInputValue(event.start);
     const initialStart = this._toTimeInputValue(event.start) || '10:00';
     const initialEnd = this._toTimeInputValue(event.end) || initialStart || '11:00';
-    const isTask = kind === 'task';
     const isSchedule = kind === 'schedule';
     const isSession = kind === 'session';
 
-    if (!isTask && !isSchedule && !isSession) {
+    if (!isSchedule && !isSession) {
       alert('수정할 수 없는 일정 유형입니다.');
       return;
     }
@@ -752,29 +656,20 @@ Pages.calendar = {
             <label>날짜 *</label>
             <input type="date" name="event_date" value="${Fmt.escape(initialDate)}" required />
           </div>
-          <div ${isTask ? 'style="display:none;"' : ''}>
+          <div>
             <label>시작 시간 *</label>
-            <input type="time" name="start_time" value="${Fmt.escape(initialStart)}" ${isTask ? '' : 'required'} />
+            <input type="time" name="start_time" value="${Fmt.escape(initialStart)}" required />
           </div>
-          <div ${isTask ? 'style="display:none;"' : ''}>
+          <div>
             <label>종료 시간 *</label>
-            <input type="time" name="end_time" value="${Fmt.escape(initialEnd)}" ${isTask ? '' : 'required'} />
+            <input type="time" name="end_time" value="${Fmt.escape(initialEnd)}" required />
           </div>
         </div>
         ${isSchedule ? `<div class="form-group"><label><input type="checkbox" name="is_all_day" ${event.is_all_day ? 'checked' : ''} /> 종일 일정</label></div>` : ''}
-        <div class="form-group" ${isTask ? 'style="display:none;"' : ''}>
+        <div class="form-group">
           <label>장소</label>
           <input name="location" value="${Fmt.escape(event.location || '')}" />
         </div>
-        ${isTask ? `<div class="form-group">
-          <label>상태</label>
-          <select name="status">
-            <option value="todo"${(event.status || 'todo') === 'todo' ? ' selected' : ''}>todo</option>
-            <option value="in_progress"${event.status === 'in_progress' ? ' selected' : ''}>in_progress</option>
-            <option value="completed"${event.status === 'completed' ? ' selected' : ''}>completed</option>
-            <option value="cancelled"${event.status === 'cancelled' ? ' selected' : ''}>cancelled</option>
-          </select>
-        </div>` : ''}
         ${isSchedule && event.repeat_group_id ? `<div class="form-group">
           <label>수정 범위</label>
           <select name="apply_scope">
@@ -811,7 +706,6 @@ Pages.calendar = {
       const startTime = (fd.get('start_time') || '').toString() || '10:00';
       const endTime = (fd.get('end_time') || '').toString() || startTime;
       const location = (fd.get('location') || '').toString().trim() || null;
-      const status = (fd.get('status') || 'todo').toString();
       const errEl = document.getElementById('calendar-event-edit-err');
       errEl.style.display = 'none';
 
@@ -827,6 +721,7 @@ Pages.calendar = {
             title,
             description,
             schedule_type: event.schedule_type || 'other',
+            visibility_scope: event.scope === 'coaching' ? 'coaching' : 'global',
             start_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '00:00' : startTime),
             end_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '23:59' : endTime),
             location,
@@ -846,13 +741,6 @@ Pages.calendar = {
             end_time: endTime,
             location,
             note: title,
-          });
-        } else if (kind === 'task') {
-          await API.updateTask(event.id, {
-            title,
-            description,
-            due_date: eventDate,
-            status,
           });
         }
         Modal.close();

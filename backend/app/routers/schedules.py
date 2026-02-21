@@ -1,7 +1,7 @@
 """Schedules 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from typing import Iterable, List
 from app.database import get_db
@@ -31,10 +31,18 @@ def _assert_global_one_per_day(
     db: Session,
     batch_id: int,
     target_day,
+    visibility_scope: str,
     exclude_schedule_ids: Iterable[int] | None = None,
 ):
+    if visibility_scope != "global":
+        return
     q = db.query(ProgramSchedule).filter(
         ProgramSchedule.batch_id == batch_id,
+        or_(
+            ProgramSchedule.visibility_scope == "global",
+            ProgramSchedule.visibility_scope.is_(None),
+            ProgramSchedule.visibility_scope == "",
+        ),
         func.date(ProgramSchedule.start_datetime) == str(target_day),
     )
     exclude_ids = [sid for sid in (exclude_schedule_ids or []) if sid is not None]
@@ -51,6 +59,15 @@ def _normalize_color(value: str | None) -> str:
     if text.startswith("#") and len(text) in (4, 7):
         return text
     return "#4CAF50"
+
+
+def _normalize_visibility_scope(value: str | None, schedule_type: str | None = None) -> str:
+    text = (value or "").strip().lower()
+    if text in ("global", "coaching"):
+        return text
+    if (schedule_type or "").strip().lower() == "coaching":
+        return "coaching"
+    return "global"
 
 
 def _apply_schedule_update(target: ProgramSchedule, payload: dict):
@@ -78,9 +95,10 @@ def create_schedule(
 ):
     payload = data.model_dump()
     payload["schedule_type"] = payload.get("schedule_type") or "other"
+    payload["visibility_scope"] = _normalize_visibility_scope(payload.get("visibility_scope"), payload.get("schedule_type"))
     payload["color"] = _normalize_color(payload.get("color"))
     target_day = _validate_schedule_window(db, payload["batch_id"], payload["start_datetime"], payload.get("end_datetime"))
-    _assert_global_one_per_day(db, payload["batch_id"], target_day)
+    _assert_global_one_per_day(db, payload["batch_id"], target_day, payload["visibility_scope"])
 
     schedule = ProgramSchedule(**payload, created_by=current_user.user_id)
     db.add(schedule)
@@ -110,12 +128,15 @@ def update_schedule(
     payload = data.model_dump(exclude_none=True)
     next_start = payload.get("start_datetime", s.start_datetime)
     next_end = payload.get("end_datetime", s.end_datetime)
+    next_scope = _normalize_visibility_scope(payload.get("visibility_scope"), payload.get("schedule_type", s.schedule_type))
     target_day = _validate_schedule_window(db, s.batch_id, next_start, next_end)
-    _assert_global_one_per_day(db, s.batch_id, target_day, exclude_schedule_ids=[s.schedule_id])
+    _assert_global_one_per_day(db, s.batch_id, target_day, next_scope, exclude_schedule_ids=[s.schedule_id])
     if "color" in payload:
         payload["color"] = _normalize_color(payload.get("color"))
     if "schedule_type" in payload and not payload["schedule_type"]:
         payload["schedule_type"] = "other"
+    if "visibility_scope" in payload or "schedule_type" in payload:
+        payload["visibility_scope"] = next_scope
     _apply_schedule_update(s, payload)
     db.commit()
     db.refresh(s)
@@ -154,6 +175,10 @@ def update_schedule_series(
         payload["color"] = _normalize_color(payload.get("color"))
     if "schedule_type" in payload and not payload["schedule_type"]:
         payload["schedule_type"] = "other"
+    normalized_scope = None
+    if "visibility_scope" in payload or "schedule_type" in payload:
+        normalized_scope = _normalize_visibility_scope(payload.get("visibility_scope"), payload.get("schedule_type", seed.schedule_type))
+        payload["visibility_scope"] = normalized_scope
 
     new_seed_start = payload.get("start_datetime")
     new_seed_end = payload.get("end_datetime")
@@ -175,8 +200,9 @@ def update_schedule_series(
 
         next_start = row_payload.get("start_datetime", row.start_datetime)
         next_end = row_payload.get("end_datetime", row.end_datetime)
+        row_scope = normalized_scope or _normalize_visibility_scope(row.visibility_scope, row.schedule_type)
         target_day = _validate_schedule_window(db, row.batch_id, next_start, next_end)
-        _assert_global_one_per_day(db, row.batch_id, target_day, exclude_schedule_ids=exclude_ids)
+        _assert_global_one_per_day(db, row.batch_id, target_day, row_scope, exclude_schedule_ids=exclude_ids)
         _apply_schedule_update(row, row_payload)
         updated += 1
 

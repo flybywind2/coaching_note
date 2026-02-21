@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 from app.models.project import Project, ProjectMember
+from app.models.access_scope import UserProjectAccess
 from app.models.schedule import ProgramSchedule
 from app.models.session import CoachingSession
 from app.models.task import ProjectTask
@@ -72,6 +73,40 @@ def test_participant_calendar_sees_only_own_project_events(client, db, seed_user
     session_events = [ev for ev in events if ev.get("event_type") == "session"]
     assert session_events
     assert all(ev.get("project_id") == my_project.project_id for ev in session_events)
+
+
+def test_calendar_does_not_expose_milestone_tasks(client, db, seed_users, seed_batch):
+    headers = auth_headers(client, "admin001")
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Milestone Hidden Project",
+        organization="Org",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    db.add(
+        ProjectTask(
+            project_id=project.project_id,
+            title="Hidden milestone",
+            is_milestone=True,
+            due_date=date(2026, 2, 12),
+            status="todo",
+            created_by=seed_users["admin"].user_id,
+        )
+    )
+    db.commit()
+
+    resp = client.get(
+        f"/api/calendar?batch_id={seed_batch.batch_id}&start=2026-02-01&end=2026-02-28",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    events = resp.json()["events"]
+    assert all(ev.get("event_type") != "milestone" for ev in events)
+    assert all(ev.get("manage_type") != "task" for ev in events)
 
 
 def test_participant_can_manage_only_own_project_sessions(client, db, seed_users, seed_batch):
@@ -208,3 +243,108 @@ def test_participant_cannot_edit_global_schedule(client, db, seed_users, seed_ba
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+def test_participant_calendar_hides_coaching_scope_schedule(client, db, seed_users, seed_batch):
+    headers = auth_headers(client, "user001")
+    global_schedule = ProgramSchedule(
+        batch_id=seed_batch.batch_id,
+        title="global schedule",
+        description="seed",
+        schedule_type="other",
+        visibility_scope="global",
+        start_datetime=datetime(2026, 2, 22, 10, 0, 0),
+        end_datetime=datetime(2026, 2, 22, 11, 0, 0),
+        created_by=seed_users["admin"].user_id,
+    )
+    coaching_schedule = ProgramSchedule(
+        batch_id=seed_batch.batch_id,
+        title="coaching schedule",
+        description="seed",
+        schedule_type="coaching",
+        visibility_scope="coaching",
+        start_datetime=datetime(2026, 2, 23, 10, 0, 0),
+        end_datetime=datetime(2026, 2, 23, 11, 0, 0),
+        created_by=seed_users["admin"].user_id,
+    )
+    db.add_all([global_schedule, coaching_schedule])
+    db.commit()
+
+    resp = client.get(
+        f"/api/calendar?batch_id={seed_batch.batch_id}&start=2026-02-01&end=2026-02-28",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    events = resp.json()["events"]
+    schedule_events = [ev for ev in events if ev.get("manage_type") == "schedule"]
+    assert any(ev.get("scope") == "global" for ev in schedule_events)
+    assert all(ev.get("scope") != "coaching" for ev in schedule_events)
+
+
+def test_observer_calendar_sees_allowed_project_and_coaching_schedule(client, db, seed_users, seed_batch):
+    headers = auth_headers(client, "obs001")
+    allowed_project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Allowed Project",
+        organization="Org",
+        visibility="public",
+    )
+    blocked_project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Blocked Project",
+        organization="Org",
+        visibility="public",
+    )
+    db.add_all([allowed_project, blocked_project])
+    db.commit()
+    db.refresh(allowed_project)
+    db.refresh(blocked_project)
+
+    db.add(
+        UserProjectAccess(
+            user_id=seed_users["observer"].user_id,
+            project_id=allowed_project.project_id,
+        )
+    )
+    db.add_all([
+        CoachingSession(
+            batch_id=seed_batch.batch_id,
+            project_id=allowed_project.project_id,
+            session_date=date(2026, 2, 25),
+            start_time="10:00",
+            end_time="11:00",
+            note="allowed session",
+            created_by=seed_users["admin"].user_id,
+        ),
+        CoachingSession(
+            batch_id=seed_batch.batch_id,
+            project_id=blocked_project.project_id,
+            session_date=date(2026, 2, 26),
+            start_time="10:00",
+            end_time="11:00",
+            note="blocked session",
+            created_by=seed_users["admin"].user_id,
+        ),
+        ProgramSchedule(
+            batch_id=seed_batch.batch_id,
+            title="coaching schedule",
+            description="seed",
+            schedule_type="coaching",
+            visibility_scope="coaching",
+            start_datetime=datetime(2026, 2, 27, 10, 0, 0),
+            end_datetime=datetime(2026, 2, 27, 11, 0, 0),
+            created_by=seed_users["admin"].user_id,
+        ),
+    ])
+    db.commit()
+
+    resp = client.get(
+        f"/api/calendar?batch_id={seed_batch.batch_id}&start=2026-02-01&end=2026-02-28",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    events = resp.json()["events"]
+    session_events = [ev for ev in events if ev.get("event_type") == "session"]
+    assert session_events
+    assert all(ev.get("project_id") == allowed_project.project_id for ev in session_events)
+    assert any(ev.get("manage_type") == "schedule" and ev.get("scope") == "coaching" for ev in events)

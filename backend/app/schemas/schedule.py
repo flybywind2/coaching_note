@@ -9,6 +9,7 @@ class ProgramScheduleBase(BaseModel):
     title: str
     description: Optional[str] = None
     schedule_type: str = "other"
+    visibility_scope: str = "global"
     start_datetime: datetime
     end_datetime: Optional[datetime] = None
     location: Optional[str] = None
@@ -26,6 +27,7 @@ class ProgramScheduleUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     schedule_type: Optional[str] = None
+    visibility_scope: Optional[str] = None
     start_datetime: Optional[datetime] = None
     end_datetime: Optional[datetime] = None
     location: Optional[str] = None

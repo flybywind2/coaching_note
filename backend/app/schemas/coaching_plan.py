@@ -62,4 +62,5 @@ class CoachingPlanGridOut(BaseModel):
     end: date
     dates: List[date]
     global_schedule_dates: List[date] = []
+    coaching_schedule_dates: List[date] = []
     rows: List[CoachingPlanRow]
