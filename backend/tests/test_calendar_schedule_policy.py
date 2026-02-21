@@ -150,3 +150,44 @@ def test_admin_can_create_coaching_scope_schedule(client, seed_users, seed_batch
     assert target is not None
     assert target["scope"] == "coaching"
     assert target["event_type"] == "coaching_schedule"
+
+
+def test_participant_cannot_create_global_or_coaching_schedule(client, seed_users, seed_batch):
+    participant_headers = auth_headers(client, "user001")
+    target_date = "2026-04-11"
+
+    global_resp = _create_schedule(
+        client,
+        participant_headers,
+        {
+            "batch_id": seed_batch.batch_id,
+            "title": "참여자 공통 일정 시도",
+            "description": None,
+            "schedule_type": "other",
+            "visibility_scope": "global",
+            "start_datetime": f"{target_date}T10:00:00",
+            "end_datetime": f"{target_date}T11:00:00",
+            "location": "회의실",
+            "is_all_day": False,
+            "color": "#4CAF50",
+        },
+    )
+    assert global_resp.status_code == 403
+
+    coaching_resp = _create_schedule(
+        client,
+        participant_headers,
+        {
+            "batch_id": seed_batch.batch_id,
+            "title": "참여자 코칭 일정 시도",
+            "description": None,
+            "schedule_type": "coaching",
+            "visibility_scope": "coaching",
+            "start_datetime": f"{target_date}T13:00:00",
+            "end_datetime": f"{target_date}T14:00:00",
+            "location": "코칭룸",
+            "is_all_day": False,
+            "color": "#00ACC1",
+        },
+    )
+    assert coaching_resp.status_code == 403

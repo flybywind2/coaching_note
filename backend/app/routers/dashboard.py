@@ -28,6 +28,15 @@ def _build_date_axis(batch_start: date, batch_end: date, pre_schedule_dates: lis
     return sorted(axis)
 
 
+def _resolve_schedule_scope(schedule_type: str | None, visibility_scope: str | None) -> str:
+    raw_scope = str(visibility_scope or "").strip().lower()
+    if raw_scope in ("global", "coaching"):
+        return raw_scope
+    if str(schedule_type or "").strip().lower() == "coaching":
+        return "coaching"
+    return "global"
+
+
 @router.get("")
 def get_dashboard(
     batch_id: int | None = None,
@@ -53,6 +62,7 @@ def get_dashboard(
             "project_daily_attendance": [],
             "project_daily_notes": [],
             "coach_activity": [],
+            "coaching_schedule_dates": [],
         }
 
     projects = (
@@ -65,11 +75,16 @@ def get_dashboard(
     project_ids = [row.project_id for row in projects]
 
     schedule_rows = (
-        db.query(ProgramSchedule.start_datetime)
+        db.query(ProgramSchedule.start_datetime, ProgramSchedule.schedule_type, ProgramSchedule.visibility_scope)
         .filter(ProgramSchedule.batch_id == target_batch.batch_id)
         .all()
     )
     pre_schedule_dates = sorted({row.start_datetime.date() - timedelta(days=1) for row in schedule_rows})
+    coaching_schedule_dates = sorted({
+        row.start_datetime.date()
+        for row in schedule_rows
+        if _resolve_schedule_scope(row.schedule_type, row.visibility_scope) == "coaching"
+    })
     axis_dates = _build_date_axis(target_batch.start_date, target_batch.end_date, pre_schedule_dates)
     axis_set = set(axis_dates)
 
@@ -89,6 +104,7 @@ def get_dashboard(
             "project_daily_attendance": [],
             "project_daily_notes": [],
             "coach_activity": [],
+            "coaching_schedule_dates": [d.isoformat() for d in coaching_schedule_dates if d in axis_set],
         }
 
     axis_start = axis_dates[0]
@@ -326,4 +342,5 @@ def get_dashboard(
         "project_daily_attendance": flat_attendance,
         "project_daily_notes": flat_notes,
         "coach_activity": coach_activity,
+        "coaching_schedule_dates": [d.isoformat() for d in coaching_schedule_dates if d in axis_set],
     }

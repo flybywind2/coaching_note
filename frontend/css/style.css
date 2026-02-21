@@ -959,6 +959,11 @@ body::after {
   align-items: center;
   gap: 8px;
 }
+.cp-date-filter {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
 .cp-grid-wrap {
   padding: 14px;
   min-width: 0;

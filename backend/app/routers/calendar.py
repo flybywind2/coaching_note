@@ -10,9 +10,8 @@ from app.models.user import User
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession, SessionAttendee
-from app.models.task import ProjectTask
 from app.models.project import Project
-from app.utils.permissions import is_admin_or_coach
+from app.utils.permissions import can_view_project, is_admin_or_coach
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
@@ -20,8 +19,6 @@ EVENT_COLORS = {
     "program": "#4CAF50",
     "coaching_schedule": "#00ACC1",
     "session": "#2196F3",
-    "milestone": "#8A5CF6",
-    "task": "#8A5CF6",
 }
 
 
@@ -65,10 +62,15 @@ def get_calendar(
     current_user: User = Depends(get_current_user),
 ):
     events = []
-    project_map = {
-        p.project_id: p.project_name
-        for p in db.query(Project).filter(Project.batch_id == batch_id).all()
-    }
+    project_rows = db.query(Project).filter(Project.batch_id == batch_id).all()
+    project_map = {p.project_id: p.project_name for p in project_rows}
+    observer_visible_project_ids: set[int] = set()
+    if current_user.role == "observer":
+        observer_visible_project_ids = {
+            int(p.project_id)
+            for p in project_rows
+            if can_view_project(db, p, current_user)
+        }
 
     # 1. Program schedules
     raw_schedules = (
@@ -84,7 +86,7 @@ def get_calendar(
     schedules = []
     for row in raw_schedules:
         scope = _normalize_schedule_scope(row)
-        if scope == "coaching" and not is_admin_or_coach(current_user):
+        if scope == "coaching" and current_user.role == "participant":
             continue
         schedules.append(row)
 
@@ -227,7 +229,7 @@ def get_calendar(
         sessions_q = sessions_q.filter(CoachingSession.project_id == project_id)
 
     # participant: only their project's sessions
-    if not is_admin_or_coach(current_user):
+    if current_user.role == "participant":
         from app.models.project import ProjectMember
         member_project_ids = [
             m.project_id for m in db.query(ProjectMember).filter(
@@ -235,6 +237,11 @@ def get_calendar(
             ).all()
         ]
         sessions_q = sessions_q.filter(CoachingSession.project_id.in_(member_project_ids))
+    elif current_user.role == "observer":
+        if observer_visible_project_ids:
+            sessions_q = sessions_q.filter(CoachingSession.project_id.in_(observer_visible_project_ids))
+        else:
+            sessions_q = sessions_q.filter(CoachingSession.project_id.in_([-1]))
 
     sessions = sessions_q.all()
     coach_map = {}
@@ -273,48 +280,6 @@ def get_calendar(
             "coach_assigned": len(coach_names) > 0,
             "time_label": f"{s.start_time} ~ {s.end_time}",
             "manage_type": "session",
-            "scope": "project",
-        })
-
-    # 3. Milestones / tasks with due dates
-    tasks_q = (
-        db.query(ProjectTask)
-        .join(ProjectTask.project)
-        .filter(
-            ProjectTask.project.has(batch_id=batch_id),
-            ProjectTask.due_date >= start,
-            ProjectTask.due_date <= end,
-            ProjectTask.is_milestone == True,
-        )
-    )
-    if project_id:
-        tasks_q = tasks_q.filter(ProjectTask.project_id == project_id)
-
-    if not is_admin_or_coach(current_user):
-        from app.models.project import ProjectMember
-        member_project_ids = [
-            m.project_id for m in db.query(ProjectMember).filter(
-                ProjectMember.user_id == current_user.user_id
-            ).all()
-        ]
-        tasks_q = tasks_q.filter(ProjectTask.project_id.in_(member_project_ids))
-
-    for t in tasks_q.all():
-        project_name = project_map.get(t.project_id, f"프로젝트 {t.project_id}")
-        events.append({
-            "event_type": "milestone",
-            "id": t.task_id,
-            "title": f"[{project_name}] {t.title}",
-            "start": t.due_date.isoformat(),
-            "end": t.due_date.isoformat(),
-            "color": EVENT_COLORS["milestone"],
-            "is_all_day": True,
-            "status": t.status,
-            "project_id": t.project_id,
-            "project_name": project_name,
-            "description": t.description,
-            "milestone_order": t.milestone_order,
-            "manage_type": "task",
             "scope": "project",
         })
 

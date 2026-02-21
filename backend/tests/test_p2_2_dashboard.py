@@ -28,10 +28,23 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
             batch_id=seed_batch.batch_id,
             title="개시 일정",
             schedule_type="orientation",
+            visibility_scope="global",
             start_datetime=datetime(2026, 1, 1, 10, 0, 0),
             end_datetime=datetime(2026, 1, 1, 12, 0, 0),
             created_by=seed_users["admin"].user_id,
             color="#4CAF50",
+        )
+    )
+    db.add(
+        ProgramSchedule(
+            batch_id=seed_batch.batch_id,
+            title="코칭 일정",
+            schedule_type="coaching",
+            visibility_scope="coaching",
+            start_datetime=datetime(2026, 1, 2, 10, 0, 0),
+            end_datetime=datetime(2026, 1, 2, 12, 0, 0),
+            created_by=seed_users["admin"].user_id,
+            color="#00ACC1",
         )
     )
     db.add(
@@ -71,6 +84,7 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
 
     assert "2025-12-31" in body["dates"]
     assert "2025-12-31" in body["pre_schedule_dates"]
+    assert "2026-01-02" in body["coaching_schedule_dates"]
     assert len(body["attendance_rows"]) == 1
     assert len(body["note_rows"]) == 1
 
@@ -83,4 +97,3 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
     jan1_note = next(cell for cell in note_row["cells"] if cell["date"] == "2026-01-01")
     assert jan1_note["note_count"] == 1
     assert jan1_note["coach_commenter_count"] == 1
-
