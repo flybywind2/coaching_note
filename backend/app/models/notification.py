@@ -26,3 +26,18 @@ class Notification(Base):
     )
 
 
+class NotificationPreference(Base):
+    __tablename__ = "notification_preference"
+
+    pref_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False, unique=True)
+    mention_enabled = Column(Boolean, nullable=False, default=True)
+    board_enabled = Column(Boolean, nullable=False, default=True)
+    deadline_enabled = Column(Boolean, nullable=False, default=True)
+    frequency = Column(String(20), nullable=False, default="realtime")  # realtime/daily
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="notification_preference")
+
+

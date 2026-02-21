@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote, CoachingComment
 from app.models.coaching_template import CoachingNoteTemplate
 from app.models.project import Project
+from app.models.batch import Batch
 from app.models.user import User
 from app.schemas.coaching_note import CoachingNoteCreate, CoachingNoteUpdate, CoachingCommentCreate
 from app.schemas.coaching_template import CoachingNoteTemplateCreate, CoachingNoteTemplateUpdate
@@ -52,6 +53,24 @@ def _note_snapshot(note: CoachingNote) -> dict:
     }
 
 
+def _calculate_week_number(db: Session, project_id: int, coaching_date: date | None) -> int | None:
+    if not coaching_date:
+        return None
+    row = (
+        db.query(Batch.coaching_start_date, Batch.start_date)
+        .join(Project, Project.batch_id == Batch.batch_id)
+        .filter(Project.project_id == project_id)
+        .first()
+    )
+    if not row:
+        return None
+    baseline = row[0] or row[1]
+    if not baseline:
+        return None
+    delta_days = (coaching_date - baseline).days
+    return (delta_days // 7) + 1 if delta_days >= 0 else 1
+
+
 def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_user: User) -> CoachingNote:
     project = _get_accessible_project(db, project_id, current_user)
     if not can_write_coaching_note(current_user):
@@ -59,6 +78,9 @@ def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_
     payload = data.model_dump()
     if payload.get("progress_rate") is None:
         payload["progress_rate"] = project.progress_rate
+    else:
+        project.progress_rate = payload["progress_rate"]
+    payload["week_number"] = _calculate_week_number(db, project_id, payload.get("coaching_date"))
     note = CoachingNote(project_id=project_id, author_id=current_user.user_id, **payload)
     db.add(note)
     db.commit()
@@ -86,7 +108,12 @@ def update_note(db: Session, note_id: int, data: CoachingNoteUpdate, current_use
         raise HTTPException(status_code=403, detail="코칭노트 수정은 관리자/코치만 가능합니다.")
     note = get_note(db, note_id, current_user)
     before_texts = [note.current_status, note.main_issue, note.next_action]
-    for k, v in data.model_dump(exclude_none=True).items():
+    payload = data.model_dump(exclude_none=True)
+    effective_date = payload.get("coaching_date", note.coaching_date)
+    payload["week_number"] = _calculate_week_number(db, note.project_id, effective_date)
+    if "progress_rate" in payload:
+        db.query(Project).filter(Project.project_id == note.project_id).update({"progress_rate": payload["progress_rate"]})
+    for k, v in payload.items():
         setattr(note, k, v)
     db.commit()
     db.refresh(note)

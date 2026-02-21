@@ -8,11 +8,14 @@ from datetime import datetime
 class ProgramScheduleBase(BaseModel):
     title: str
     description: Optional[str] = None
-    schedule_type: str
+    schedule_type: str = "other"
     start_datetime: datetime
     end_datetime: Optional[datetime] = None
     location: Optional[str] = None
     is_all_day: bool = False
+    color: str = "#4CAF50"
+    repeat_group_id: Optional[str] = None
+    repeat_sequence: Optional[int] = None
 
 
 class ProgramScheduleCreate(ProgramScheduleBase):
@@ -27,6 +30,7 @@ class ProgramScheduleUpdate(BaseModel):
     end_datetime: Optional[datetime] = None
     location: Optional[str] = None
     is_all_day: Optional[bool] = None
+    color: Optional[str] = None
 
 
 class ProgramScheduleOut(ProgramScheduleBase):

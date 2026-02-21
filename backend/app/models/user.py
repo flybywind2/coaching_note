@@ -29,6 +29,7 @@ class User(Base):
     board_posts = relationship("BoardPost", back_populates="author")
     post_comments = relationship("PostComment", back_populates="author")
     notifications = relationship("Notification", back_populates="user")
+    notification_preference = relationship("NotificationPreference", back_populates="user", uselist=False)
     ai_contents = relationship("AIGeneratedContent", back_populates="generator")
     coach_profile = relationship("Coach", back_populates="user", uselist=False)
 
@@ -38,6 +39,7 @@ class Coach(Base):
 
     coach_id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=True)
+    batch_id = Column(Integer, ForeignKey("batch.batch_id"), nullable=True)
     name = Column(String(50), nullable=False)
     photo_url = Column(String(500))
     coach_type = Column(String(20), nullable=False)  # internal/external
@@ -45,6 +47,8 @@ class Coach(Base):
     affiliation = Column(String(100))
     specialty = Column(String(200))
     career = Column(Text)
+    is_visible = Column(Boolean, default=True)
+    display_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
 

@@ -8,11 +8,15 @@ from app.database import get_db
 from app.middleware.auth_middleware import require_roles
 from app.models.user import User
 from app.schemas.user import (
+    UserBulkDeleteRequest,
+    UserBulkDeleteResult,
     UserCreate,
     UserOut,
     UserUpdate,
     UserBulkUpsertRequest,
     UserBulkUpsertResult,
+    UserBulkUpdateRequest,
+    UserBulkUpdateResult,
     UserPermissionOut,
     UserPermissionUpdate,
 )
@@ -56,6 +60,24 @@ def bulk_upsert_users(
     _current_user: User = Depends(require_roles("admin")),
 ):
     return user_service.bulk_upsert_users(db, data)
+
+
+@router.post("/bulk-delete", response_model=UserBulkDeleteResult)
+def bulk_delete_users(
+    data: UserBulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.bulk_delete_users(db, data, current_user)
+
+
+@router.post("/bulk-update", response_model=UserBulkUpdateResult)
+def bulk_update_users(
+    data: UserBulkUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    return user_service.bulk_update_users(db, data, current_user)
 
 
 @router.get("/{user_id}/permissions", response_model=UserPermissionOut)

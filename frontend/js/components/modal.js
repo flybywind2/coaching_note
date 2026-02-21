@@ -17,7 +17,12 @@ const Modal = {
     document.getElementById('modal-overlay').style.display = 'flex';
     this._onClose = onClose;
   },
+  isOpen() {
+    const overlay = document.getElementById('modal-overlay');
+    return overlay.style.display !== 'none';
+  },
   close() {
+    if (!this.isOpen()) return;
     document.getElementById('modal-overlay').style.display = 'none';
     document.getElementById('modal-body').innerHTML = '';
     document.getElementById('modal-box').className = 'modal-box';
@@ -28,6 +33,11 @@ const Modal = {
 document.getElementById('modal-close').addEventListener('click', () => Modal.close());
 document.getElementById('modal-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'modal-overlay') Modal.close();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!Modal.isOpen()) return;
+  Modal.close();
 });
 
 

@@ -39,6 +39,8 @@ const API = {
   createUser: (data) => apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id, data) => apiFetch(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   bulkUpsertUsers: (data) => apiFetch('/api/users/bulk-upsert', { method: 'POST', body: JSON.stringify(data) }),
+  bulkDeleteUsers: (data) => apiFetch('/api/users/bulk-delete', { method: 'POST', body: JSON.stringify(data) }),
+  bulkUpdateUsers: (data) => apiFetch('/api/users/bulk-update', { method: 'POST', body: JSON.stringify(data) }),
   getUserPermissions: (id) => apiFetch(`/api/users/${id}/permissions`),
   updateUserPermissions: (id, data) => apiFetch(`/api/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteUser: (id) => apiFetch(`/api/users/${id}`, { method: 'DELETE' }),
@@ -50,6 +52,14 @@ const API = {
     if (options.projectId) fd.append('project_id', String(options.projectId));
     if (options.boardId) fd.append('board_id', String(options.boardId));
     return apiFetch('/api/uploads/images', { method: 'POST', body: fd });
+  },
+  uploadEditorFile: (file, options = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('scope', options.scope || 'general');
+    if (options.projectId) fd.append('project_id', String(options.projectId));
+    if (options.boardId) fd.append('board_id', String(options.boardId));
+    return apiFetch('/api/uploads/files', { method: 'POST', body: fd });
   },
 
   // Batches
@@ -122,7 +132,9 @@ const API = {
   getSchedules: (batchId) => apiFetch(`/api/schedules?batch_id=${batchId}`),
   createSchedule: (data) => apiFetch('/api/schedules', { method: 'POST', body: JSON.stringify(data) }),
   updateSchedule: (id, data) => apiFetch(`/api/schedules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateScheduleSeries: (id, data) => apiFetch(`/api/schedules/${id}/series`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteSchedule: (id) => apiFetch(`/api/schedules/${id}`, { method: 'DELETE' }),
+  deleteScheduleSeries: (id) => apiFetch(`/api/schedules/${id}/series`, { method: 'DELETE' }),
 
   // Tasks
   getTasks: (projectId) => apiFetch(`/api/projects/${projectId}/tasks`),
@@ -138,6 +150,7 @@ const API = {
     if (params.skip != null) q.set('skip', String(params.skip));
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.category) q.set('category', String(params.category));
+    if (params.q) q.set('q', String(params.q));
     return apiFetch(`/api/boards/posts${q.toString() ? `?${q.toString()}` : ''}`);
   },
   getPost: (boardId, postId) => apiFetch(`/api/boards/posts/${postId}`),
@@ -155,6 +168,8 @@ const API = {
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),
   markRead: (id) => apiFetch(`/api/notifications/${id}/read`, { method: 'PATCH' }),
   markAllRead: () => apiFetch('/api/notifications/read-all', { method: 'POST' }),
+  getNotificationPreferences: () => apiFetch('/api/notifications/preferences'),
+  updateNotificationPreferences: (data) => apiFetch('/api/notifications/preferences', { method: 'PUT', body: JSON.stringify(data) }),
 
   // Calendar
   getCalendar: (batchId, start, end, projectId = null) =>
@@ -164,9 +179,15 @@ const API = {
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
   getAboutContent: (key) => apiFetch(`/api/about/content?key=${encodeURIComponent(key)}`),
   updateAboutContent: (key, data) => apiFetch(`/api/about/content/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(data) }),
-  getCoachProfiles: () => apiFetch('/api/about/coaches'),
+  getCoachProfiles: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/about/coaches${q.toString() ? `?${q.toString()}` : ''}`);
+  },
   createCoachProfile: (data) => apiFetch('/api/about/coaches', { method: 'POST', body: JSON.stringify(data) }),
   updateCoachProfile: (coachId, data) => apiFetch(`/api/about/coaches/${coachId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  reorderCoachProfiles: (data) => apiFetch('/api/about/coaches/reorder', { method: 'PUT', body: JSON.stringify(data) }),
   deleteCoachProfile: (coachId) => apiFetch(`/api/about/coaches/${coachId}`, { method: 'DELETE' }),
   getCoachingPlanGrid: (params = {}) => {
     const q = new URLSearchParams();
@@ -218,7 +239,14 @@ const API = {
   checkIn: (sessionId) => apiFetch(`/api/sessions/${sessionId}/checkin`, { method: 'POST' }),
   checkOut: (sessionId) => apiFetch(`/api/sessions/${sessionId}/checkout`, { method: 'POST' }),
   getMyAttendanceStatus: (sessionId) => apiFetch(`/api/sessions/${sessionId}/my-attendance-status`),
-  autoCheckInToday: () => apiFetch('/api/sessions/auto-checkin-today', { method: 'POST' }),
+  autoCheckInToday: () => apiFetch('/api/attendance/auto-checkin-today', { method: 'POST' }),
+  getMyDailyAttendanceStatus: (workDate = null) =>
+    apiFetch(`/api/attendance/my-status${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`),
+  checkInToday: (workDate = null) =>
+    apiFetch(`/api/attendance/checkin${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`, { method: 'POST' }),
+  checkOutToday: (workDate = null) =>
+    apiFetch(`/api/attendance/checkout${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`, { method: 'POST' }),
+  getDailyAttendance: (workDate) => apiFetch(`/api/attendance?work_date=${encodeURIComponent(workDate)}`),
   getAttendance: (sessionId) => apiFetch(`/api/sessions/${sessionId}/attendance`),
   coachingStart: (sessionId) => apiFetch(`/api/sessions/${sessionId}/coaching-start`, { method: 'POST' }),
   coachingEnd: (sessionId) => apiFetch(`/api/sessions/${sessionId}/coaching-end`, { method: 'POST' }),

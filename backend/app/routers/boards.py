@@ -1,6 +1,6 @@
 """Boards 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -42,10 +42,11 @@ def list_all_posts(
     skip: int = 0,
     limit: int = 40,
     category: str = None,
+    q: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return board_service.get_all_posts(db, skip, limit, category)
+    return board_service.get_all_posts(db, skip, limit, category, search_q=q)
 
 
 @router.post("/{board_id}/posts", response_model=BoardPostOut)

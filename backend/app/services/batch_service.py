@@ -24,7 +24,10 @@ def get_batch(db: Session, batch_id: int) -> Batch:
 
 
 def create_batch(db: Session, data: BatchCreate) -> Batch:
-    batch = Batch(**data.model_dump())
+    payload = data.model_dump()
+    if not payload.get("coaching_start_date"):
+        payload["coaching_start_date"] = payload.get("start_date")
+    batch = Batch(**payload)
     db.add(batch)
     db.commit()
     db.refresh(batch)
@@ -33,7 +36,10 @@ def create_batch(db: Session, data: BatchCreate) -> Batch:
 
 def update_batch(db: Session, batch_id: int, data: BatchUpdate) -> Batch:
     batch = get_batch(db, batch_id)
-    for k, v in data.model_dump(exclude_none=True).items():
+    payload = data.model_dump(exclude_none=True)
+    if "start_date" in payload and "coaching_start_date" not in payload and not batch.coaching_start_date:
+        payload["coaching_start_date"] = payload["start_date"]
+    for k, v in payload.items():
         setattr(batch, k, v)
     db.commit()
     db.refresh(batch)

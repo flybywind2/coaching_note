@@ -5,28 +5,28 @@
 Pages.calendar = {
   currentDate: new Date(),
   viewMode: 'month',
-  projectWise: false,
+  selectedProjectByBatch: {},
+  projectOptionsByBatch: {},
 
-  async render(el, params) {
+  async render(el) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
       const role = user.role;
-      const isAdmin = role === 'admin';
-      const isParticipant = role === 'participant';
-      const canManageProjectEvents = isAdmin || isParticipant;
-      const calendarPolicy = {
+      const policy = {
         role,
-        isAdmin,
-        isParticipant,
-        canManageProjectEvents,
+        isAdmin: role === 'admin',
+        isParticipant: role === 'participant',
+        canManageProjectEvents: role === 'admin' || role === 'participant',
       };
+
       const batches = await API.getBatches();
       if (!batches.length) {
         el.innerHTML = '<div class="empty-state">차수가 없습니다.</div>';
         return;
       }
       const batchId = State.get('currentBatchId') || batches[0].batch_id;
+      State.set('currentBatchId', batchId);
 
       el.innerHTML = `
         <div class="page-container">
@@ -38,8 +38,8 @@ Pages.calendar = {
                 <option value="month"${this.viewMode === 'month' ? ' selected' : ''}>월간</option>
                 <option value="tenweeks"${this.viewMode === 'tenweeks' ? ' selected' : ''}>10주 마일스톤</option>
               </select>
-              ${isAdmin ? `<label class="cal-project-wise"><input id="cal-project-wise" type="checkbox"${this.projectWise ? ' checked' : ''} /> 과제별 캘린더</label>` : ''}
-              ${canManageProjectEvents ? '<button id="cal-add-event-btn" class="btn btn-sm btn-primary">+ 일정 추가</button>' : ''}
+              <select id="cal-project-filter"></select>
+              ${policy.canManageProjectEvents ? '<button id="cal-add-event-btn" class="btn btn-sm btn-primary">+ 일정 추가</button>' : ''}
               <button id="cal-prev" class="btn btn-sm">◀</button>
               <span id="cal-month-label" class="cal-month"></span>
               <button id="cal-next" class="btn btn-sm">▶</button>
@@ -47,9 +47,9 @@ Pages.calendar = {
           </div>
           <div id="cal-grid" class="cal-grid"></div>
           <div class="cal-legend">
-            <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>전체 일정</span>
-            <span class="legend-item"><span class="dot" style="background:#2196F3"></span>코칭/과제 일정</span>
-            <span class="legend-item"><span class="dot" style="background:#9C27B0"></span>마일스톤</span>
+            <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>공통 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#2196F3"></span>과제 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#8A5CF6"></span>마일스톤</span>
           </div>
         </div>`;
 
@@ -57,32 +57,88 @@ Pages.calendar = {
 
       document.getElementById('cal-prev').addEventListener('click', async () => {
         this._shiftWindow(-1);
-        await this._renderView(getBatchId(), calendarPolicy);
+        await this._renderView(getBatchId(), policy);
       });
       document.getElementById('cal-next').addEventListener('click', async () => {
         this._shiftWindow(1);
-        await this._renderView(getBatchId(), calendarPolicy);
+        await this._renderView(getBatchId(), policy);
       });
       document.getElementById('cal-batch').addEventListener('change', async (e) => {
-        State.set('currentBatchId', parseInt(e.target.value, 10));
-        await this._renderView(getBatchId(), calendarPolicy);
+        const changedBatch = parseInt(e.target.value, 10);
+        State.set('currentBatchId', changedBatch);
+        await this._loadProjectFilter(changedBatch, policy);
+        await this._renderView(changedBatch, policy);
       });
       document.getElementById('cal-view-mode').addEventListener('change', async (e) => {
         this.viewMode = e.target.value;
-        await this._renderView(getBatchId(), calendarPolicy);
+        await this._renderView(getBatchId(), policy);
       });
-      document.getElementById('cal-project-wise')?.addEventListener('change', async (e) => {
-        this.projectWise = e.target.checked;
-        await this._renderView(getBatchId(), calendarPolicy);
+      document.getElementById('cal-project-filter').addEventListener('change', async (e) => {
+        const value = (e.target.value || '').trim();
+        this.selectedProjectByBatch[getBatchId()] = value ? parseInt(value, 10) : null;
+        await this._renderView(getBatchId(), policy);
       });
       document.getElementById('cal-add-event-btn')?.addEventListener('click', async () => {
-        await this._openEventCreateModal(getBatchId(), { policy: calendarPolicy });
+        const selectedProjectId = this._getSelectedProjectId(getBatchId());
+        await this._openEventCreateModal(getBatchId(), {
+          policy,
+          presetScope: policy.isParticipant ? 'project' : (selectedProjectId ? 'project' : 'global'),
+          presetProjectId: selectedProjectId,
+        });
       });
 
-      await this._renderView(batchId, calendarPolicy);
+      await this._loadProjectFilter(batchId, policy);
+      await this._renderView(batchId, policy);
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
+  },
+
+  async _loadProjectFilter(batchId, policy) {
+    const selectEl = document.getElementById('cal-project-filter');
+    if (!selectEl) return;
+
+    const projects = await API.getProjects(batchId).catch(() => []);
+    const visibleProjects = policy.isParticipant ? projects.filter((p) => p.is_my_project) : projects;
+    this.projectOptionsByBatch[batchId] = visibleProjects;
+
+    const options = [];
+    if (!policy.isParticipant) {
+      options.push('<option value="">공통 캘린더</option>');
+    }
+    options.push(...visibleProjects.map((p) => `<option value="${p.project_id}">${Fmt.escape(p.project_name)}</option>`));
+
+    if (!options.length) {
+      selectEl.innerHTML = '<option value="">선택 가능한 과제가 없습니다</option>';
+      selectEl.disabled = true;
+      this.selectedProjectByBatch[batchId] = null;
+      return;
+    }
+
+    selectEl.innerHTML = options.join('');
+    selectEl.disabled = false;
+
+    const selected = this.selectedProjectByBatch[batchId];
+    const availableIds = visibleProjects.map((p) => p.project_id);
+    if (selected && availableIds.includes(selected)) {
+      selectEl.value = String(selected);
+      return;
+    }
+
+    if (policy.isParticipant) {
+      const fallback = visibleProjects[0]?.project_id || null;
+      this.selectedProjectByBatch[batchId] = fallback;
+      selectEl.value = fallback ? String(fallback) : '';
+      return;
+    }
+
+    this.selectedProjectByBatch[batchId] = null;
+    selectEl.value = '';
+  },
+
+  _getSelectedProjectId(batchId) {
+    const value = this.selectedProjectByBatch[batchId];
+    return Number.isInteger(value) ? value : null;
   },
 
   _shiftWindow(step) {
@@ -110,7 +166,7 @@ Pages.calendar = {
   _startOfWeek(dateObj) {
     const d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
     const day = d.getDay();
-    const diff = (day + 6) % 7; // Monday start
+    const diff = (day + 6) % 7;
     d.setDate(d.getDate() - diff);
     d.setHours(0, 0, 0, 0);
     return d;
@@ -124,15 +180,13 @@ Pages.calendar = {
     return String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   },
 
-  _eventChip(ev, maxLen = 18) {
+  _eventChip(ev, maxLen = 20) {
     const payload = encodeURIComponent(JSON.stringify(ev));
     const title = Fmt.escape(ev.title || '이벤트');
     let label = (ev.title || '').replace(/^\[[^\]]+\]\s*/, '').trim();
-    if (ev.time_label) {
-      label = `${ev.time_label} ${label}`;
-    }
     if (!label) label = ev.title || '이벤트';
-    return `<button type="button" class="cal-event cal-event-btn" data-event="${this._escapeAttr(payload)}" style="background:${ev.color}" title="${title}">${Fmt.escape(label.slice(0, maxLen))}</button>`;
+    const color = ev.color || '#4CAF50';
+    return `<button type="button" class="cal-event cal-event-btn" data-event="${this._escapeAttr(payload)}" style="background:${Fmt.escape(color)}" title="${title}">${Fmt.escape(label.slice(0, maxLen))}</button>`;
   },
 
   async _renderView(batchId, policy) {
@@ -156,23 +210,11 @@ Pages.calendar = {
     grid.innerHTML = '<div class="loading">로딩 중...</div>';
 
     try {
-      const [calendarData, projects] = await Promise.all([
-        API.getCalendar(batchId, start, end),
-        API.getProjects(batchId).catch(() => []),
-      ]);
+      const projectId = this._getSelectedProjectId(batchId);
+      const calendarData = await API.getCalendar(batchId, start, end, projectId);
       const events = calendarData.events || [];
-      const visibleProjects = policy.isParticipant
-        ? projects.filter((p) => p.is_my_project)
-        : projects;
 
-      const useProjectWise = policy.isAdmin
-        ? this.projectWise
-        : policy.isParticipant;
-      if (useProjectWise) {
-        grid.innerHTML = this._renderProjectMonthCalendars(year, month, visibleProjects, events);
-      } else {
-        grid.innerHTML = this._renderMonthGrid(year, month, events);
-      }
+      grid.innerHTML = this._renderMonthGrid(year, month, events);
       this._bindEventDetailButtons(batchId, policy);
       this._bindDayCreateButtons(batchId, policy);
     } catch (e) {
@@ -199,67 +241,17 @@ Pages.calendar = {
 
     for (let d = 1; d <= lastDay; d++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const dayEvents = eventsByDate[dateStr] || [];
+      const dayEvents = (eventsByDate[dateStr] || []).sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
       const isToday = dateStr === todayKey;
 
       html += `<div class="cal-day cal-day-clickable${isToday ? ' today' : ''}" data-date="${dateStr}">
         <span class="cal-day-num">${d}</span>
-        ${dayEvents.slice(0, 3).map((ev) => this._eventChip(ev, 22)).join('')}
+        ${dayEvents.slice(0, 3).map((ev) => this._eventChip(ev, 20)).join('')}
         ${dayEvents.length > 3 ? `<div class="cal-more">+${dayEvents.length - 3}</div>` : ''}
       </div>`;
     }
     html += '</div>';
     return html;
-  },
-
-  _renderProjectMonthCalendars(year, month, projects, events) {
-    const projectEvents = events.filter((ev) => ev.project_id && ['milestone', 'session'].includes(ev.event_type));
-    const globalEvents = events.filter((ev) => ev.event_type === 'program' || ev.scope === 'global');
-    if (!projects.length) {
-      return '<div class="empty-state">이 차수에 과제가 없습니다.</div>';
-    }
-
-    const byProjectDate = {};
-    projectEvents.forEach((ev) => {
-      const key = `${ev.project_id}|${String(ev.start).slice(0, 10)}`;
-      if (!byProjectDate[key]) byProjectDate[key] = [];
-      byProjectDate[key].push(ev);
-    });
-    const globalByDate = {};
-    globalEvents.forEach((ev) => {
-      const key = String(ev.start).slice(0, 10);
-      if (!globalByDate[key]) globalByDate[key] = [];
-      globalByDate[key].push(ev);
-    });
-
-    const firstDay = new Date(year, month, 1).getDay();
-    const lastDay = new Date(year, month + 1, 0).getDate();
-    const days = ['일', '월', '화', '수', '목', '금', '토'];
-
-    return `<div class="project-cal-list">
-      ${projects.map((p) => {
-        let section = `<section class="project-cal-card">
-          <header class="project-cal-header"><h3>${Fmt.escape(p.project_name)}</h3><span class="tag">${Fmt.escape(p.status || '-')}</span></header>
-          <div class="cal-week-header mini">${days.map((d) => `<div>${d}</div>`).join('')}</div>
-          <div class="cal-days mini">`;
-
-        for (let i = 0; i < firstDay; i++) section += '<div class="cal-day mini empty"></div>';
-        for (let d = 1; d <= lastDay; d++) {
-          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-          const dayEvents = [
-            ...(globalByDate[dateStr] || []),
-            ...(byProjectDate[`${p.project_id}|${dateStr}`] || []),
-          ].sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
-          section += `<div class="cal-day mini cal-day-clickable" data-date="${dateStr}" data-project-id="${p.project_id}">
-            <span class="cal-day-num">${d}</span>
-            ${dayEvents.slice(0, 3).map((ev) => this._eventChip(ev, 16)).join('')}
-            ${dayEvents.length > 3 ? `<div class="cal-more">+${dayEvents.length - 3}</div>` : ''}
-          </div>`;
-        }
-        section += '</div></section>';
-        return section;
-      }).join('')}
-    </div>`;
   },
 
   async _renderTenWeeks(batchId, policy) {
@@ -274,28 +266,35 @@ Pages.calendar = {
     grid.innerHTML = '<div class="loading">로딩 중...</div>';
 
     try {
+      const projectId = this._getSelectedProjectId(batchId);
       const [calendarData, projects] = await Promise.all([
-        API.getCalendar(batchId, start, end),
+        API.getCalendar(batchId, start, end, projectId),
         API.getProjects(batchId).catch(() => []),
       ]);
       const allEvents = calendarData.events || [];
       const milestones = allEvents.filter((ev) => ev.event_type === 'milestone');
-      const visibleProjects = policy.isParticipant
-        ? projects.filter((p) => p.is_my_project)
-        : projects;
 
+      const visibleProjects = policy.isParticipant ? projects.filter((p) => p.is_my_project) : projects;
       const projectMap = {};
       const orderedProjectIds = [];
       visibleProjects.forEach((p) => {
         projectMap[p.project_id] = p.project_name;
-        orderedProjectIds.push(p.project_id);
       });
-      milestones.forEach((ev) => {
-        if (!projectMap[ev.project_id]) {
-          projectMap[ev.project_id] = ev.project_name || `프로젝트 ${ev.project_id}`;
-          orderedProjectIds.push(ev.project_id);
+
+      if (projectId) {
+        orderedProjectIds.push(projectId);
+        if (!projectMap[projectId]) {
+          const fromEvent = milestones.find((row) => row.project_id === projectId);
+          projectMap[projectId] = fromEvent?.project_name || `프로젝트 ${projectId}`;
         }
-      });
+      } else {
+        milestones.forEach((ev) => {
+          if (!projectMap[ev.project_id]) {
+            projectMap[ev.project_id] = ev.project_name || `프로젝트 ${ev.project_id}`;
+          }
+        });
+        Object.keys(projectMap).forEach((pid) => orderedProjectIds.push(parseInt(pid, 10)));
+      }
 
       const weekStarts = Array.from({ length: 10 }, (_, i) => {
         const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
@@ -305,6 +304,7 @@ Pages.calendar = {
 
       const cellMap = {};
       milestones.forEach((ev) => {
+        if (projectId && ev.project_id !== projectId) return;
         const due = this._parseDate(ev.start);
         if (!due) return;
         const diffDays = Math.floor((due.getTime() - startDate.getTime()) / 86400000);
@@ -346,7 +346,6 @@ Pages.calendar = {
       grid.innerHTML = `<div class="error-state">${Fmt.escape(e.message)}</div>`;
     }
   },
-
   _bindEventDetailButtons(batchId, policy) {
     document.querySelectorAll('.cal-event-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -355,7 +354,7 @@ Pages.calendar = {
           const event = JSON.parse(raw);
           this._openEventDetailModal(event, batchId, policy);
         } catch (_) {
-          // ignore malformed payload
+          // malformed payload ignore
         }
       });
     });
@@ -368,33 +367,52 @@ Pages.calendar = {
         if (e.target instanceof Element && e.target.closest('.cal-event-btn')) return;
         const presetDate = (cell.dataset.date || '').slice(0, 10);
         if (!presetDate) return;
-        const projectId = Number.parseInt(cell.dataset.projectId || '', 10);
-        const hasProject = !Number.isNaN(projectId);
-        const defaultScope = policy.isParticipant ? 'project' : (hasProject ? 'project' : 'global');
+
+        const selectedProjectId = this._getSelectedProjectId(batchId);
+        const presetScope = policy.isParticipant ? 'project' : (selectedProjectId ? 'project' : 'global');
         await this._openEventCreateModal(batchId, {
           presetDate,
-          presetScope: defaultScope,
-          presetProjectId: hasProject ? projectId : null,
+          presetScope,
+          presetProjectId: selectedProjectId,
           policy,
         });
       });
     });
   },
 
-  _buildRepeatingDates(baseDateStr, repeatType, repeatCount) {
-    const count = Math.max(1, Math.min(30, Number.parseInt(repeatCount, 10) || 1));
+  _buildRepeatingDates(baseDateStr, repeatType, repeatEndDate, maxEndDate) {
     const base = new Date(`${baseDateStr}T00:00:00`);
     if (Number.isNaN(base.getTime())) return [];
-    const dayStepMap = { none: 0, daily: 1, weekly: 7, biweekly: 14, monthly: 0 };
+
+    const hardEnd = repeatEndDate ? new Date(`${repeatEndDate}T00:00:00`) : base;
+    if (Number.isNaN(hardEnd.getTime())) return [];
+    if (hardEnd < base) return [];
+
+    const batchEnd = maxEndDate ? new Date(`${maxEndDate}T00:00:00`) : null;
+    if (batchEnd && !Number.isNaN(batchEnd.getTime()) && hardEnd > batchEnd) {
+      return [];
+    }
+
+    if (repeatType === 'none') return [baseDateStr];
+
     const rows = [];
-    for (let i = 0; i < count; i++) {
-      const d = new Date(base.getTime());
-      if (repeatType === 'monthly') {
-        d.setMonth(d.getMonth() + i);
+    const endLimit = hardEnd;
+    let cursor = new Date(base.getTime());
+    let guard = 0;
+    while (cursor <= endLimit && guard < 260) {
+      rows.push(this._toDateKey(cursor));
+      if (repeatType === 'daily') {
+        cursor.setDate(cursor.getDate() + 1);
+      } else if (repeatType === 'weekly') {
+        cursor.setDate(cursor.getDate() + 7);
+      } else if (repeatType === 'biweekly') {
+        cursor.setDate(cursor.getDate() + 14);
+      } else if (repeatType === 'monthly') {
+        cursor.setMonth(cursor.getMonth() + 1);
       } else {
-        d.setDate(d.getDate() + ((dayStepMap[repeatType] || 0) * i));
+        break;
       }
-      rows.push(this._toDateKey(d));
+      guard += 1;
     }
     return rows;
   },
@@ -413,9 +431,7 @@ Pages.calendar = {
   _toTimeInputValue(value) {
     if (!value) return '';
     const text = String(value);
-    if (text.includes('T')) {
-      return text.slice(11, 16);
-    }
+    if (text.includes('T')) return text.slice(11, 16);
     return text.slice(0, 5);
   },
 
@@ -426,19 +442,26 @@ Pages.calendar = {
   _formatDateTimeValue(value) {
     if (!value) return '-';
     const direct = new Date(value);
-    if (!Number.isNaN(direct.getTime())) {
-      return direct.toLocaleString('ko-KR');
+    if (!Number.isNaN(direct.getTime())) return direct.toLocaleString('ko-KR');
+    return String(value);
+  },
+
+  _formatEventPeriod(event) {
+    if (event.is_all_day) {
+      const dateText = this._toDateInputValue(event.start || event.end);
+      return `${dateText || '-'} (종일 일정)`;
     }
-    const raw = String(value);
-    if (/^\d{4}-\d{2}-\d{2}T\d{4}$/.test(raw)) {
-      const normalized = `${raw.slice(0, 10)}T${raw.slice(11, 13)}:${raw.slice(13, 15)}:00`;
-      const normalizedDate = new Date(normalized);
-      if (!Number.isNaN(normalizedDate.getTime())) {
-        return normalizedDate.toLocaleString('ko-KR');
-      }
-      return normalized.replace('T', ' ');
-    }
-    return raw;
+    const startText = this._formatDateTimeValue(event.start);
+    const endText = this._formatDateTimeValue(event.end);
+    if (!event.end) return startText;
+    return `${startText} ~ ${endText}`;
+  },
+
+  _coachPlanLabel(row) {
+    if (!row) return '-';
+    if (row.is_all_day) return `${row.coach_name} (종일)`;
+    if (row.start_time && row.end_time) return `${row.coach_name} (${row.start_time}~${row.end_time})`;
+    return row.coach_name;
   },
 
   async _openEventCreateModal(batchId, options = {}) {
@@ -446,77 +469,55 @@ Pages.calendar = {
       presetDate = '',
       presetScope = 'global',
       presetProjectId = null,
-      presetProjectKind = 'session',
       policy = { isAdmin: false, isParticipant: false, canManageProjectEvents: false },
     } = options;
+
     const allowGlobalScope = policy.isAdmin;
     const scopeValue = policy.isParticipant ? 'project' : presetScope;
-    const [projects, users] = await Promise.all([
+    const [projects, batch] = await Promise.all([
       API.getProjects(batchId).catch(() => []),
-      API.getUsers().catch(() => []),
+      API.getBatch(batchId),
     ]);
-    const selectableProjects = policy.isParticipant
-      ? projects.filter((p) => p.is_my_project)
-      : projects;
-    if (policy.canManageProjectEvents && !selectableProjects.length) {
-      alert('일정을 관리할 수 있는 본인 과제가 없습니다.');
+
+    const selectableProjects = policy.isParticipant ? projects.filter((p) => p.is_my_project) : projects;
+    if (policy.canManageProjectEvents && scopeValue === 'project' && !selectableProjects.length) {
+      alert('일정을 관리할 수 있는 과제가 없습니다.');
       return;
     }
-    const coaches = users.filter((u) => u.role === 'coach' || u.role === 'admin');
 
     Modal.open(`<h2>일정 추가</h2>
       <form id="calendar-event-form">
         <div class="form-group"${allowGlobalScope ? '' : ' style="display:none;"'}>
           <label>공개 범위 *</label>
           <select name="scope" id="cal-event-scope">
-            <option value="global"${scopeValue === 'global' ? ' selected' : ''}>전체 일정 (모든 사용자 공개)</option>
-            <option value="project"${scopeValue === 'project' ? ' selected' : ''}>과제 특수 일정 (과제 단위 공개)</option>
+            <option value="global"${scopeValue === 'global' ? ' selected' : ''}>공통 일정</option>
+            <option value="project"${scopeValue === 'project' ? ' selected' : ''}>과제 일정</option>
           </select>
         </div>
         ${allowGlobalScope ? '' : '<input type="hidden" name="scope" value="project" />'}
-        <div class="form-group" id="cal-project-kind-row" style="display:none;">
-          <label>과제 일정 유형 *</label>
-          <select name="project_event_kind" id="cal-project-kind">
-            <option value="session"${presetProjectKind === 'session' ? ' selected' : ''}>코칭 일정</option>
-            <option value="milestone"${presetProjectKind === 'milestone' ? ' selected' : ''}>마일스톤</option>
+        <div class="form-group" id="cal-project-row" style="display:none;">
+          <label>대상 과제 *</label>
+          <select name="project_id" id="cal-project-select">
+            <option value="">선택</option>
+            ${selectableProjects.map((p) => `<option value="${p.project_id}"${Number(presetProjectId) === p.project_id ? ' selected' : ''}>${Fmt.escape(p.project_name)}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
           <label>제목 *</label>
-          <input name="title" required placeholder="예: 중간 발표 리허설" />
+          <input name="title" required placeholder="예: 코칭 점검" />
+        </div>
+        <div class="form-group" id="cal-color-row">
+          <label>색상</label>
+          <input type="color" name="color" value="#4caf50" />
         </div>
         <div class="form-group">
           <label>설명</label>
           <textarea name="description" rows="3" placeholder="필요 시 일정 설명을 입력하세요"></textarea>
         </div>
-        <div class="form-group" id="cal-project-row" style="display:none;">
-          <label>대상 과제 *</label>
-          <select name="project_id">
-            <option value="">선택</option>
-            ${selectableProjects.map((p) => `<option value="${p.project_id}"${Number(presetProjectId) === p.project_id ? ' selected' : ''}>${Fmt.escape(p.project_name)}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-group" id="cal-coach-row" style="display:none;">
-          <label>참석 코치 (복수 선택)</label>
-          <div class="cal-coach-grid">
-            ${coaches.map((coach) => `<label><input type="checkbox" name="coach_ids" value="${coach.user_id}" /> ${Fmt.escape(coach.name)} (${Fmt.escape(coach.emp_id)})</label>`).join('') || '<p class="empty-state">선택 가능한 코치가 없습니다.</p>'}
-          </div>
-        </div>
-        <div class="form-group" id="cal-schedule-type-row">
-          <label>일정 카테고리</label>
-          <select name="schedule_type">
-            <option value="orientation">오리엔테이션</option>
-            <option value="workshop">워크샵</option>
-            <option value="mid_presentation">중간발표</option>
-            <option value="final_presentation">최종발표</option>
-            <option value="networking">네트워킹</option>
-            <option value="other" selected>기타</option>
-          </select>
-        </div>
         <div class="form-group" id="cal-all-day-row">
           <label><input type="checkbox" name="is_all_day" /> 종일 일정</label>
         </div>
-        <div class="form-group cal-time-row" id="cal-time-row-wrap">
+        <div class="form-group cal-time-row">
           <div>
             <label>날짜 *</label>
             <input type="date" name="event_date" value="${Fmt.escape(presetDate)}" required />
@@ -530,11 +531,11 @@ Pages.calendar = {
             <input type="time" name="end_time" value="11:00" required />
           </div>
         </div>
-        <div class="form-group" id="cal-location-row">
+        <div class="form-group">
           <label>장소</label>
           <input name="location" placeholder="예: 회의실 A / 온라인" />
         </div>
-        <div class="form-group cal-repeat-row">
+        <div class="form-group cal-repeat-row" id="cal-repeat-row">
           <div>
             <label>반복</label>
             <select name="repeat_type">
@@ -546,8 +547,8 @@ Pages.calendar = {
             </select>
           </div>
           <div>
-            <label>반복 횟수</label>
-            <input type="number" min="1" max="30" name="repeat_count" value="1" />
+            <label>반복 종료일</label>
+            <input type="date" name="repeat_end_date" max="${Fmt.escape(String(batch.end_date || ''))}" />
           </div>
         </div>
         <button type="submit" class="btn btn-primary">저장</button>
@@ -555,64 +556,58 @@ Pages.calendar = {
       </form>`, null, { className: 'modal-box-xl' });
 
     const scopeEl = document.getElementById('cal-event-scope');
-    const projectKindEl = document.getElementById('cal-project-kind');
-    const projectKindRow = document.getElementById('cal-project-kind-row');
     const projectRow = document.getElementById('cal-project-row');
-    const coachRow = document.getElementById('cal-coach-row');
-    const scheduleTypeRow = document.getElementById('cal-schedule-type-row');
-    const allDayRow = document.getElementById('cal-all-day-row');
-    const timeRowWrap = document.getElementById('cal-time-row-wrap');
-    const locationRow = document.getElementById('cal-location-row');
+    const colorRow = document.getElementById('cal-color-row');
+    const repeatRow = document.getElementById('cal-repeat-row');
+    const projectSelect = document.getElementById('cal-project-select');
+    const allDayInput = document.querySelector('input[name="is_all_day"]');
     const startTimeInput = document.querySelector('input[name="start_time"]');
     const endTimeInput = document.querySelector('input[name="end_time"]');
+
     if (!allowGlobalScope && presetProjectId == null && selectableProjects.length === 1) {
-      document.querySelector('select[name="project_id"]').value = String(selectableProjects[0].project_id);
+      projectSelect.value = String(selectableProjects[0].project_id);
     }
+
     const syncScope = () => {
       const isProject = allowGlobalScope ? scopeEl.value === 'project' : true;
-      const isMilestone = isProject && projectKindEl.value === 'milestone';
       projectRow.style.display = isProject ? '' : 'none';
-      projectKindRow.style.display = isProject ? '' : 'none';
-      coachRow.style.display = allowGlobalScope && isProject && !isMilestone ? '' : 'none';
-      scheduleTypeRow.style.display = isProject ? 'none' : '';
-      allDayRow.style.display = isMilestone ? 'none' : '';
-      timeRowWrap.style.display = '';
-      locationRow.style.display = isMilestone ? 'none' : '';
-      if (startTimeInput && endTimeInput) {
-        startTimeInput.disabled = isMilestone;
-        endTimeInput.disabled = isMilestone;
-        if (isMilestone) {
-          startTimeInput.value = '00:00';
-          endTimeInput.value = '00:00';
-        } else if (!startTimeInput.value || !endTimeInput.value) {
-          startTimeInput.value = startTimeInput.value || '10:00';
-          endTimeInput.value = endTimeInput.value || '11:00';
-        }
+      colorRow.style.display = isProject ? 'none' : '';
+      repeatRow.style.display = isProject ? 'none' : '';
+      if (isProject && !projectSelect.value && selectableProjects.length === 1) {
+        projectSelect.value = String(selectableProjects[0].project_id);
       }
     };
-    if (allowGlobalScope) {
-      scopeEl.addEventListener('change', syncScope);
-    }
-    projectKindEl.addEventListener('change', syncScope);
+
+    const syncAllDay = () => {
+      const isAllDay = !!allDayInput.checked;
+      startTimeInput.disabled = isAllDay;
+      endTimeInput.disabled = isAllDay;
+      if (isAllDay) {
+        startTimeInput.value = '00:00';
+        endTimeInput.value = '23:59';
+      }
+    };
+
+    if (allowGlobalScope) scopeEl.addEventListener('change', syncScope);
+    allDayInput.addEventListener('change', syncAllDay);
     syncScope();
+    syncAllDay();
 
     document.getElementById('calendar-event-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       const scope = allowGlobalScope ? (fd.get('scope') || 'global').toString() : 'project';
-      const projectEventKind = (fd.get('project_event_kind') || 'session').toString();
       const title = (fd.get('title') || '').toString().trim();
       const description = (fd.get('description') || '').toString().trim();
       const date = (fd.get('event_date') || '').toString();
       const startTime = (fd.get('start_time') || '').toString() || '00:00';
       const endTime = (fd.get('end_time') || '').toString() || startTime;
       const location = (fd.get('location') || '').toString().trim();
-      const scheduleType = (fd.get('schedule_type') || 'other').toString();
-      const repeatType = (fd.get('repeat_type') || 'none').toString();
-      const repeatCount = (fd.get('repeat_count') || '1').toString();
       const isAllDay = fd.has('is_all_day');
       const projectId = Number.parseInt((fd.get('project_id') || '').toString(), 10);
-      const coachIds = fd.getAll('coach_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+      const repeatType = (fd.get('repeat_type') || 'none').toString();
+      const repeatEndDate = (fd.get('repeat_end_date') || '').toString() || date;
+      const color = (fd.get('color') || '#4CAF50').toString();
 
       const errEl = document.getElementById('calendar-event-err');
       errEl.style.display = 'none';
@@ -628,37 +623,35 @@ Pages.calendar = {
         return;
       }
 
-      const dates = this._buildRepeatingDates(date, repeatType, repeatCount);
+      const dates = scope === 'global'
+        ? this._buildRepeatingDates(date, repeatType, repeatEndDate, String(batch.end_date || ''))
+        : [date];
       if (!dates.length) {
-        errEl.textContent = '반복 일정 계산에 실패했습니다.';
+        errEl.textContent = '반복 종료일이 올바르지 않거나 차수 종료일을 초과했습니다.';
         errEl.style.display = 'block';
         return;
       }
 
       try {
-        for (const dateStr of dates) {
+        const repeatGroupId = dates.length > 1 ? `schedule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : null;
+        for (let i = 0; i < dates.length; i += 1) {
+          const dateStr = dates[i];
           if (scope === 'global') {
             await API.createSchedule({
               batch_id: batchId,
               title,
               description: description || null,
-              schedule_type: scheduleType,
+              schedule_type: 'other',
               start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
               end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
               location: location || null,
               is_all_day: isAllDay,
-            });
-          } else if (projectEventKind === 'milestone') {
-            await API.createTask(projectId, {
-              title,
-              description: description || null,
-              due_date: dateStr,
-              priority: 'medium',
-              status: 'todo',
-              is_milestone: true,
+              color,
+              repeat_group_id: repeatGroupId,
+              repeat_sequence: i + 1,
             });
           } else {
-            const createdSession = await API.createSession({
+            await API.createSession({
               batch_id: batchId,
               project_id: projectId,
               session_date: dateStr,
@@ -667,14 +660,6 @@ Pages.calendar = {
               location: location || null,
               note: title,
             });
-            if (allowGlobalScope) {
-              for (const coachId of coachIds) {
-                await API.addSessionAttendee(createdSession.session_id, {
-                  user_id: coachId,
-                  attendee_role: 'coach',
-                });
-              }
-            }
           }
         }
 
@@ -686,32 +671,27 @@ Pages.calendar = {
       }
     });
   },
-
   _openEventDetailModal(event, batchId, policy) {
-    const coachLine = event.coach_names && event.coach_names.length
-      ? event.coach_names.join(', ')
-      : '-';
+    const coachPlans = Array.isArray(event.coach_plans) ? event.coach_plans : [];
     const canEdit = (
-      (policy.isAdmin && (event.manage_type === 'schedule' || event.manage_type === 'session' || event.manage_type === 'task'))
-      || (policy.isParticipant && event.scope === 'project' && (event.manage_type === 'session' || event.manage_type === 'task'))
+      (policy.isAdmin && ['schedule', 'session', 'task'].includes(event.manage_type))
+      || (policy.isParticipant && event.scope === 'project' && ['session', 'task'].includes(event.manage_type))
     );
-    const canDelete = (
-      (policy.isAdmin && (event.manage_type === 'schedule' || event.manage_type === 'session' || event.manage_type === 'task'))
-      || (policy.isParticipant && event.scope === 'project' && (event.manage_type === 'session' || event.manage_type === 'task'))
-    );
+    const canDelete = canEdit;
+
+    const lines = [];
+    lines.push(`<div class="info-item full"><label>제목</label><span>${Fmt.escape(event.title || '-')}</span></div>`);
+    if (event.project_name) lines.push(`<div class="info-item full"><label>과제</label><span>${Fmt.escape(event.project_name)}</span></div>`);
+    lines.push(`<div class="info-item full"><label>일정</label><span>${Fmt.escape(this._formatEventPeriod(event))}</span></div>`);
+    if (event.location) lines.push(`<div class="info-item"><label>장소</label><span>${Fmt.escape(event.location)}</span></div>`);
+    if (event.description) lines.push(`<div class="info-item full"><label>설명</label><span>${Fmt.escape(event.description)}</span></div>`);
+    if (event.scope) lines.push(`<div class="info-item"><label>공개 범위</label><span>${Fmt.escape(event.scope === 'global' ? '공통' : '과제')}</span></div>`);
+    if (coachPlans.length) {
+      lines.push(`<div class="info-item full"><label>참여 코치</label><span>${Fmt.escape(coachPlans.map((row) => this._coachPlanLabel(row)).join(', '))}</span></div>`);
+    }
 
     Modal.open(`<h2>일정 상세</h2>
-      <div class="info-grid">
-        <div class="info-item full"><label>제목</label><span>${Fmt.escape(event.title || '-')}</span></div>
-        <div class="info-item"><label>유형</label><span>${Fmt.escape(event.event_type || '-')}</span></div>
-        <div class="info-item"><label>공개 범위</label><span>${Fmt.escape(event.scope || '-')}</span></div>
-        <div class="info-item"><label>시작</label><span>${Fmt.escape(this._formatDateTimeValue(event.start))}</span></div>
-        <div class="info-item"><label>종료</label><span>${Fmt.escape(this._formatDateTimeValue(event.end))}</span></div>
-        <div class="info-item"><label>장소</label><span>${Fmt.escape(event.location || '-')}</span></div>
-        <div class="info-item"><label>과제</label><span>${Fmt.escape(event.project_name || '-')}</span></div>
-        <div class="info-item"><label>코치 배정</label><span>${Fmt.escape(coachLine)}</span></div>
-        <div class="info-item full"><label>설명</label><span>${Fmt.escape(event.description || '-')}</span></div>
-      </div>
+      <div class="info-grid">${lines.join('')}</div>
       ${(canEdit || canDelete) ? `<div class="page-actions">
         ${canEdit ? '<button id="cal-edit-event-btn" class="btn btn-secondary">일정 수정</button>' : ''}
         ${canDelete ? '<button id="cal-delete-event-btn" class="btn btn-danger">일정 삭제</button>' : ''}
@@ -722,10 +702,16 @@ Pages.calendar = {
     });
 
     document.getElementById('cal-delete-event-btn')?.addEventListener('click', async () => {
-      if (!confirm('이 일정을 삭제하시겠습니까?')) return;
+      let deleteSeries = false;
+      if (event.manage_type === 'schedule' && event.repeat_group_id) {
+        deleteSeries = confirm('반복 일정 전체를 삭제하려면 확인을 누르세요.\n취소를 누르면 이번 일정만 삭제합니다.');
+      }
+      if (!confirm(deleteSeries ? '반복 일정 전체를 삭제하시겠습니까?' : '이 일정을 삭제하시겠습니까?')) return;
+
       try {
         if (event.manage_type === 'schedule') {
-          await API.deleteSchedule(event.id);
+          if (deleteSeries) await API.deleteScheduleSeries(event.id);
+          else await API.deleteSchedule(event.id);
         } else if (event.manage_type === 'session') {
           await API.deleteSession(event.id);
         } else if (event.manage_type === 'task') {
@@ -758,6 +744,8 @@ Pages.calendar = {
     Modal.open(`<h2>일정 수정</h2>
       <form id="calendar-event-edit-form">
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(initialTitle)}" /></div>
+        ${event.project_name ? `<div class="form-group"><label>과제</label><input disabled value="${Fmt.escape(event.project_name)}" /></div>` : ''}
+        ${isSchedule ? `<div class="form-group"><label>색상</label><input type="color" name="color" value="${Fmt.escape((event.color || '#4CAF50').toLowerCase())}" /></div>` : ''}
         <div class="form-group"><label>설명</label><textarea name="description" rows="3">${Fmt.escape(initialDesc)}</textarea></div>
         <div class="form-group cal-time-row">
           <div>
@@ -773,11 +761,12 @@ Pages.calendar = {
             <input type="time" name="end_time" value="${Fmt.escape(initialEnd)}" ${isTask ? '' : 'required'} />
           </div>
         </div>
+        ${isSchedule ? `<div class="form-group"><label><input type="checkbox" name="is_all_day" ${event.is_all_day ? 'checked' : ''} /> 종일 일정</label></div>` : ''}
         <div class="form-group" ${isTask ? 'style="display:none;"' : ''}>
           <label>장소</label>
           <input name="location" value="${Fmt.escape(event.location || '')}" />
         </div>
-        <div class="form-group" ${isTask ? '' : 'style="display:none;"'}>
+        ${isTask ? `<div class="form-group">
           <label>상태</label>
           <select name="status">
             <option value="todo"${(event.status || 'todo') === 'todo' ? ' selected' : ''}>todo</option>
@@ -785,10 +774,33 @@ Pages.calendar = {
             <option value="completed"${event.status === 'completed' ? ' selected' : ''}>completed</option>
             <option value="cancelled"${event.status === 'cancelled' ? ' selected' : ''}>cancelled</option>
           </select>
-        </div>
+        </div>` : ''}
+        ${isSchedule && event.repeat_group_id ? `<div class="form-group">
+          <label>수정 범위</label>
+          <select name="apply_scope">
+            <option value="single">이번 일정만</option>
+            <option value="series">반복 일정 전체</option>
+          </select>
+        </div>` : ''}
         <div class="page-actions"><button type="submit" class="btn btn-primary">저장</button></div>
         <p class="form-error" id="calendar-event-edit-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
+
+    const allDayToggle = document.querySelector('#calendar-event-edit-form input[name="is_all_day"]');
+    const startInput = document.querySelector('#calendar-event-edit-form input[name="start_time"]');
+    const endInput = document.querySelector('#calendar-event-edit-form input[name="end_time"]');
+    const syncAllDay = () => {
+      if (!allDayToggle || !startInput || !endInput) return;
+      const checked = allDayToggle.checked;
+      startInput.disabled = checked;
+      endInput.disabled = checked;
+      if (checked) {
+        startInput.value = '00:00';
+        endInput.value = '23:59';
+      }
+    };
+    allDayToggle?.addEventListener('change', syncAllDay);
+    syncAllDay();
 
     document.getElementById('calendar-event-edit-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -811,15 +823,22 @@ Pages.calendar = {
 
       try {
         if (kind === 'schedule') {
-          await API.updateSchedule(event.id, {
+          const schedulePayload = {
             title,
             description,
             schedule_type: event.schedule_type || 'other',
-            start_datetime: this._toDateTimeString(eventDate, startTime),
-            end_datetime: this._toDateTimeString(eventDate, endTime),
+            start_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '00:00' : startTime),
+            end_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '23:59' : endTime),
             location,
-            is_all_day: !!event.is_all_day,
-          });
+            is_all_day: !!allDayToggle?.checked,
+            color: (fd.get('color') || event.color || '#4CAF50').toString(),
+          };
+          const applyScope = (fd.get('apply_scope') || 'single').toString();
+          if (event.repeat_group_id && applyScope === 'series') {
+            await API.updateScheduleSeries(event.id, schedulePayload);
+          } else {
+            await API.updateSchedule(event.id, schedulePayload);
+          }
         } else if (kind === 'session') {
           await API.updateSession(event.id, {
             session_date: eventDate,

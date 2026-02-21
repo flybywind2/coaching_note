@@ -7,6 +7,7 @@ from datetime import date, datetime
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
+from app.models.coaching_plan import CoachDailyPlan
 from app.models.schedule import ProgramSchedule
 from app.models.session import CoachingSession, SessionAttendee
 from app.models.task import ProjectTask
@@ -18,8 +19,8 @@ router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 EVENT_COLORS = {
     "program": "#4CAF50",
     "session": "#2196F3",
-    "milestone": "#9C27B0",
-    "task": "#9C27B0",
+    "milestone": "#8A5CF6",
+    "task": "#8A5CF6",
 }
 
 
@@ -46,19 +47,56 @@ def get_calendar(
             ProgramSchedule.start_datetime >= datetime.combine(start, datetime.min.time()),
             ProgramSchedule.start_datetime <= datetime.combine(end, datetime.max.time()),
         )
+        .order_by(ProgramSchedule.start_datetime.asc())
         .all()
     )
+    schedule_date_set = {row.start_datetime.date() for row in schedules}
+    coach_plan_map = {}
+    if schedule_date_set:
+        coach_plan_rows = (
+            db.query(
+                CoachDailyPlan.plan_date,
+                CoachDailyPlan.start_time,
+                CoachDailyPlan.end_time,
+                CoachDailyPlan.is_all_day,
+                User.user_id,
+                User.name,
+            )
+            .join(User, CoachDailyPlan.coach_user_id == User.user_id)
+            .filter(
+                CoachDailyPlan.batch_id == batch_id,
+                CoachDailyPlan.plan_date.in_(schedule_date_set),
+                User.is_active == True,  # noqa: E712
+                User.role.in_(["admin", "coach"]),
+            )
+            .order_by(CoachDailyPlan.plan_date.asc(), User.name.asc())
+            .all()
+        )
+        for row in coach_plan_rows:
+            coach_plan_map.setdefault(row.plan_date, []).append({
+                "coach_user_id": row.user_id,
+                "coach_name": row.name,
+                "is_all_day": bool(row.is_all_day),
+                "start_time": row.start_time,
+                "end_time": row.end_time,
+            })
+
     for s in schedules:
+        coach_plans = coach_plan_map.get(s.start_datetime.date(), [])
         events.append({
             "event_type": "program",
             "id": s.schedule_id,
             "title": s.title,
             "start": s.start_datetime.isoformat(),
             "end": s.end_datetime.isoformat() if s.end_datetime else None,
-            "color": EVENT_COLORS["program"],
+            "color": s.color or EVENT_COLORS["program"],
             "location": s.location,
             "schedule_type": s.schedule_type,
             "description": s.description,
+            "is_all_day": bool(s.is_all_day),
+            "repeat_group_id": s.repeat_group_id,
+            "repeat_sequence": s.repeat_sequence,
+            "coach_plans": coach_plans,
             "manage_type": "schedule",
             "scope": "global",
         })
@@ -109,6 +147,7 @@ def get_calendar(
             "start": f"{s.session_date}T{s.start_time}",
             "end": f"{s.session_date}T{s.end_time}",
             "color": EVENT_COLORS["session"],
+            "is_all_day": str(s.start_time)[:5] == "00:00" and str(s.end_time)[:5] in ("23:59", "24:00"),
             "location": s.location,
             "session_status": s.session_status,
             "project_id": s.project_id,
@@ -153,9 +192,11 @@ def get_calendar(
             "start": t.due_date.isoformat(),
             "end": t.due_date.isoformat(),
             "color": EVENT_COLORS["milestone"],
+            "is_all_day": True,
             "status": t.status,
             "project_id": t.project_id,
             "project_name": project_name,
+            "description": t.description,
             "milestone_order": t.milestone_order,
             "manage_type": "task",
             "scope": "project",

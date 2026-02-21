@@ -9,6 +9,7 @@ class BatchBase(BaseModel):
     batch_name: str
     start_date: date
     end_date: date
+    coaching_start_date: Optional[date] = None
     status: str = "planned"
 
 
@@ -20,6 +21,7 @@ class BatchUpdate(BaseModel):
     batch_name: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    coaching_start_date: Optional[date] = None
     status: Optional[str] = None
 
 

@@ -1,6 +1,6 @@
 """코치 계획/실적 집계를 위한 SQLAlchemy 모델 정의입니다."""
 
-from sqlalchemy import Column, Integer, String, Text, Date, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, Date, DateTime, ForeignKey, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -14,6 +14,7 @@ class CoachDailyPlan(Base):
     coach_user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     plan_date = Column(Date, nullable=False)
     planned_project_id = Column(Integer, ForeignKey("projects.project_id"), nullable=True)
+    is_all_day = Column(Boolean, nullable=False, default=True)
     start_time = Column(String(5), nullable=True)  # HH:MM
     end_time = Column(String(5), nullable=True)  # HH:MM
     plan_note = Column(Text, nullable=True)
@@ -42,4 +43,3 @@ class CoachActualOverride(Base):
     __table_args__ = (
         UniqueConstraint("batch_id", "coach_user_id", "work_date", name="uq_coach_actual_override"),
     )
-

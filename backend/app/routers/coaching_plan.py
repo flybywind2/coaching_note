@@ -1,7 +1,7 @@
 """코칭 계획/실적 집계 API 라우터입니다."""
 
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.batch import Batch
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.project import Project
+from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession
 from app.models.user import User
 from app.schemas.coaching_plan import (
@@ -51,31 +52,41 @@ def _validate_hhmm(text: str | None, field_name: str) -> None:
         raise HTTPException(status_code=400, detail=f"{field_name} 값이 유효하지 않습니다.")
 
 
+def _normalize_dt(value: datetime | None, work_date: date) -> datetime | None:
+    if value is None:
+        if work_date != date.today():
+            return None
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def _duration_minutes(check_in_time: datetime | None, check_out_time: datetime | None, work_date: date) -> int:
     if not check_in_time:
         return 0
 
-    start_at = check_in_time
-    if start_at.tzinfo is None:
-        start_at = start_at.replace(tzinfo=timezone.utc)
-
-    end_at = check_out_time
-    if end_at is None:
-        if work_date != date.today():
-            return 0
-        end_at = datetime.now(timezone.utc)
-    elif end_at.tzinfo is None:
-        end_at = end_at.replace(tzinfo=timezone.utc)
+    start_at = _normalize_dt(check_in_time, work_date)
+    end_at = _normalize_dt(check_out_time, work_date)
+    if start_at is None or end_at is None:
+        return 0
 
     minutes = int((end_at - start_at).total_seconds() // 60)
     return max(minutes, 0)
 
 
+def _to_hhmm(value: datetime | None) -> Optional[str]:
+    if value is None:
+        return None
+    local = value.astimezone()
+    return f"{local.hour:02d}:{local.minute:02d}"
+
+
 @router.get("/grid", response_model=CoachingPlanGridOut)
 def get_coaching_plan_grid(
     batch_id: int = Query(...),
-    start: date = Query(...),
-    end: date = Query(...),
+    start: date | None = Query(None),
+    end: date | None = Query(None),
     coach_user_id: int | None = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -83,14 +94,16 @@ def get_coaching_plan_grid(
     _ensure_admin_or_coach(current_user)
     target_coach_user_id = _resolve_coach_id(current_user, coach_user_id)
 
-    if end < start:
-        raise HTTPException(status_code=400, detail="기간이 올바르지 않습니다.")
-    if (end - start).days > 31:
-        raise HTTPException(status_code=400, detail="조회 기간은 최대 32일입니다.")
-
     batch = db.query(Batch).filter(Batch.batch_id == batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="차수를 찾을 수 없습니다.")
+
+    query_start = start or batch.start_date
+    query_end = end or batch.end_date
+    if query_end < query_start:
+        raise HTTPException(status_code=400, detail="기간이 올바르지 않습니다.")
+    if (query_end - query_start).days > 550:
+        raise HTTPException(status_code=400, detail="조회 기간이 너무 깁니다.")
 
     coach_q = db.query(User).filter(User.is_active == True, User.role.in_(["admin", "coach"]))  # noqa: E712
     if target_coach_user_id:
@@ -99,13 +112,20 @@ def get_coaching_plan_grid(
     coach_ids = [c.user_id for c in coaches]
 
     dates: List[date] = []
-    current_day = start
-    while current_day <= end:
+    current_day = query_start
+    while current_day <= query_end:
         dates.append(current_day)
         current_day += timedelta(days=1)
 
     if not coaches:
-        return CoachingPlanGridOut(batch_id=batch_id, start=start, end=end, dates=dates, rows=[])
+        return CoachingPlanGridOut(
+            batch_id=batch_id,
+            start=query_start,
+            end=query_end,
+            dates=dates,
+            global_schedule_dates=[],
+            rows=[],
+        )
 
     project_map = {
         row.project_id: row.project_name
@@ -117,8 +137,8 @@ def get_coaching_plan_grid(
         .filter(
             CoachDailyPlan.batch_id == batch_id,
             CoachDailyPlan.coach_user_id.in_(coach_ids),
-            CoachDailyPlan.plan_date >= start,
-            CoachDailyPlan.plan_date <= end,
+            CoachDailyPlan.plan_date >= query_start,
+            CoachDailyPlan.plan_date <= query_end,
         )
         .all()
     )
@@ -132,8 +152,8 @@ def get_coaching_plan_grid(
         .filter(
             CoachActualOverride.batch_id == batch_id,
             CoachActualOverride.coach_user_id.in_(coach_ids),
-            CoachActualOverride.work_date >= start,
-            CoachActualOverride.work_date <= end,
+            CoachActualOverride.work_date >= query_start,
+            CoachActualOverride.work_date <= query_end,
         )
         .all()
     )
@@ -152,20 +172,36 @@ def get_coaching_plan_grid(
         .join(CoachingSession, AttendanceLog.session_id == CoachingSession.session_id)
         .filter(
             CoachingSession.batch_id == batch_id,
-            CoachingSession.session_date >= start,
-            CoachingSession.session_date <= end,
+            CoachingSession.session_date >= query_start,
+            CoachingSession.session_date <= query_end,
             AttendanceLog.user_id.in_(coach_ids),
         )
         .all()
     )
 
-    auto_map: Dict[Tuple[int, date], Dict[str, int]] = {}
+    auto_map: Dict[Tuple[int, date], Dict[str, datetime | int | None]] = {}
     for row in attendance_rows:
         key = (row.user_id, row.session_date)
         if key not in auto_map:
-            auto_map[key] = {"minutes": 0, "log_count": 0}
+            auto_map[key] = {"minutes": 0, "actual_start": None, "actual_end": None}
+        start_at = _normalize_dt(row.check_in_time, row.session_date)
+        end_at = _normalize_dt(row.check_out_time, row.session_date)
+        if start_at and (auto_map[key]["actual_start"] is None or start_at < auto_map[key]["actual_start"]):
+            auto_map[key]["actual_start"] = start_at
+        if end_at and (auto_map[key]["actual_end"] is None or end_at > auto_map[key]["actual_end"]):
+            auto_map[key]["actual_end"] = end_at
         auto_map[key]["minutes"] += _duration_minutes(row.check_in_time, row.check_out_time, row.session_date)
-        auto_map[key]["log_count"] += 1
+
+    global_schedule_dates = sorted({
+        row.start_datetime.date()
+        for row in db.query(ProgramSchedule)
+        .filter(
+            ProgramSchedule.batch_id == batch_id,
+            ProgramSchedule.start_datetime >= datetime.combine(query_start, datetime.min.time()),
+            ProgramSchedule.start_datetime <= datetime.combine(query_end, datetime.max.time()),
+        )
+        .all()
+    })
 
     result_rows: List[CoachingPlanRow] = []
     for coach in coaches:
@@ -173,9 +209,10 @@ def get_coaching_plan_grid(
         for day in dates:
             plan = plan_map.get((coach.user_id, day))
             override = override_map.get((coach.user_id, day))
-            auto = auto_map.get((coach.user_id, day), {"minutes": 0, "log_count": 0})
+            auto = auto_map.get((coach.user_id, day), {"minutes": 0, "actual_start": None, "actual_end": None})
             auto_minutes = int(auto["minutes"])
-            log_count = int(auto["log_count"])
+            actual_start = auto.get("actual_start")
+            actual_end = auto.get("actual_end")
 
             if override:
                 final_minutes = int(override.actual_minutes or 0)
@@ -201,6 +238,7 @@ def get_coaching_plan_grid(
                     plan_id=plan.plan_id if plan else None,
                     planned_project_id=plan.planned_project_id if plan else None,
                     project_name=project_map.get(plan.planned_project_id) if plan and plan.planned_project_id else None,
+                    is_all_day=bool(plan.is_all_day) if plan else True,
                     start_time=plan.start_time if plan else None,
                     end_time=plan.end_time if plan else None,
                     plan_note=plan.plan_note if plan else None,
@@ -209,9 +247,10 @@ def get_coaching_plan_grid(
                     auto_minutes=auto_minutes,
                     override_minutes=override.actual_minutes if override else None,
                     final_minutes=final_minutes,
-                    log_count=log_count,
                     actual_source=source,
                     override_reason=override.reason if override else None,
+                    actual_start_time=_to_hhmm(actual_start),
+                    actual_end_time=_to_hhmm(actual_end),
                 )
             )
 
@@ -227,9 +266,10 @@ def get_coaching_plan_grid(
 
     return CoachingPlanGridOut(
         batch_id=batch_id,
-        start=start,
-        end=end,
+        start=query_start,
+        end=query_end,
         dates=dates,
+        global_schedule_dates=global_schedule_dates,
         rows=result_rows,
     )
 
@@ -251,6 +291,8 @@ def upsert_coaching_plan(
 
     _validate_hhmm(data.start_time, "start_time")
     _validate_hhmm(data.end_time, "end_time")
+    if not data.is_all_day and (not data.start_time or not data.end_time):
+        raise HTTPException(status_code=400, detail="종일이 아닌 경우 시작/종료 시간을 입력하세요.")
     if data.start_time and data.end_time and data.start_time > data.end_time:
         raise HTTPException(status_code=400, detail="종료 시간은 시작 시간보다 빠를 수 없습니다.")
 
@@ -273,8 +315,9 @@ def upsert_coaching_plan(
         db.add(row)
 
     row.planned_project_id = data.planned_project_id
-    row.start_time = data.start_time
-    row.end_time = data.end_time
+    row.is_all_day = data.is_all_day
+    row.start_time = None if data.is_all_day else data.start_time
+    row.end_time = None if data.is_all_day else data.end_time
     row.plan_note = data.plan_note
     row.updated_by = current_user.user_id
 
@@ -371,4 +414,3 @@ def delete_actual_override(
     db.delete(row)
     db.commit()
     return {"message": "실적 보정이 삭제되었습니다."}
-

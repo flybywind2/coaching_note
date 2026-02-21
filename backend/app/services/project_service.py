@@ -14,6 +14,16 @@ from app.utils.permissions import can_view_project, can_view_batch
 from typing import List, Optional
 
 
+ALLOWED_PROJECT_TYPES = {"primary", "associate"}
+
+
+def _normalize_project_type(value: str | None) -> str:
+    text = (value or "primary").strip().lower()
+    if text not in ALLOWED_PROJECT_TYPES:
+        return "primary"
+    return text
+
+
 def get_projects(db: Session, batch_id: int, current_user: User) -> List[Project]:
     if not can_view_batch(db, batch_id, current_user):
         return []
@@ -46,7 +56,9 @@ def get_project(db: Session, project_id: int, current_user: User) -> Project:
 
 
 def create_project(db: Session, batch_id: int, data: ProjectCreate) -> Project:
-    project = Project(batch_id=batch_id, **data.model_dump())
+    payload = data.model_dump()
+    payload["project_type"] = _normalize_project_type(payload.get("project_type"))
+    project = Project(batch_id=batch_id, **payload)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -66,6 +78,8 @@ def _get_or_create_profile(db: Session, project_id: int) -> ProjectProfile:
 def update_project(db: Session, project_id: int, data: ProjectUpdate, current_user: User) -> Project:
     project = get_project(db, project_id, current_user)
     payload = data.model_dump(exclude_none=True)
+    if "project_type" in payload:
+        payload["project_type"] = _normalize_project_type(payload.get("project_type"))
     profile_keys = {"ai_tech_category", "ai_tech_used", "project_summary", "github_repos"}
     profile_payload = {k: payload.pop(k) for k in list(payload.keys()) if k in profile_keys}
 

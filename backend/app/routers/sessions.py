@@ -15,9 +15,36 @@ from app.models.session import CoachingSession, SessionAttendee
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 from app.services import attendance_service
-from app.models.project import ProjectMember
+from app.models.project import Project, ProjectMember
+from app.utils.permissions import can_view_project
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+def _ensure_project_session_manage_permission(db: Session, project_id: int, current_user: User) -> Project:
+    project = db.query(Project).filter(Project.project_id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
+    if current_user.role == "admin":
+        return project
+    if current_user.role == "coach":
+        if not can_view_project(db, project, current_user):
+            raise HTTPException(status_code=403, detail="해당 과제 일정을 관리할 권한이 없습니다.")
+        return project
+    if current_user.role == "participant":
+        is_member = (
+            db.query(ProjectMember)
+            .filter(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == current_user.user_id,
+            )
+            .first()
+            is not None
+        )
+        if not is_member:
+            raise HTTPException(status_code=403, detail="참여자는 본인 과제 일정만 관리할 수 있습니다.")
+        return project
+    raise HTTPException(status_code=403, detail="일정 관리 권한이 없습니다.")
 
 
 @router.get("", response_model=List[CoachingSessionOut])
@@ -39,8 +66,11 @@ def list_sessions(
 def create_session(
     data: CoachingSessionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
+    project = _ensure_project_session_manage_permission(db, data.project_id, current_user)
+    if project.batch_id != data.batch_id:
+        raise HTTPException(status_code=400, detail="과제와 차수가 일치하지 않습니다.")
     session = CoachingSession(**data.model_dump(), created_by=current_user.user_id)
     db.add(session)
     db.commit()
@@ -62,11 +92,10 @@ def delete_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
-        raise HTTPException(status_code=403, detail="관리자/코치만 삭제 가능합니다.")
     session = db.query(CoachingSession).filter(CoachingSession.session_id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    _ensure_project_session_manage_permission(db, session.project_id, current_user)
     db.delete(session)
     db.commit()
     return {"message": "삭제되었습니다."}
@@ -79,11 +108,10 @@ def update_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
-        raise HTTPException(status_code=403, detail="관리자/코치만 수정 가능합니다.")
     s = db.query(CoachingSession).filter(CoachingSession.session_id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    _ensure_project_session_manage_permission(db, s.project_id, current_user)
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(s, k, v)
     db.commit()

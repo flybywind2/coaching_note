@@ -7,10 +7,7 @@ Pages.board = {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
-      const [boards, allPosts] = await Promise.all([
-        API.getBoards(),
-        API.getAllPosts({ limit: 300 }),
-      ]);
+      const boards = await API.getBoards();
 
       if (!boards.length) {
         el.innerHTML = '<div class="empty-state">게시판 설정이 없습니다.</div>';
@@ -23,10 +20,20 @@ Pages.board = {
         : boards.find((b) => b.board_id === boardIdFromPath) || null;
       const initialCategory = boardFromPath?.board_type || 'all';
       const selectedCategory = params.category || initialCategory;
+      const searchQuery = (params.q || '').trim();
 
-      const filtered = selectedCategory === 'all'
-        ? allPosts
-        : allPosts.filter((post) => (post.board_type || '') === selectedCategory);
+      const posts = await API.getAllPosts({
+        limit: 300,
+        category: selectedCategory === 'all' ? null : selectedCategory,
+        q: searchQuery || null,
+      });
+
+      const buildListUrl = (category, q) => {
+        const query = new URLSearchParams();
+        if (category && category !== 'all') query.set('category', category);
+        if (q) query.set('q', q);
+        return `/board${query.toString() ? `?${query.toString()}` : ''}`;
+      };
 
       el.innerHTML = `
         <div class="page-container">
@@ -38,12 +45,25 @@ Pages.board = {
                 <option value="all"${selectedCategory === 'all' ? ' selected' : ''}>전체</option>
                 ${boards.map((b) => `<option value="${Fmt.escape(b.board_type)}"${selectedCategory === b.board_type ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
               </select>
+              <form id="board-search-form" class="board-search-form">
+                <input
+                  id="board-search-input"
+                  type="search"
+                  maxlength="100"
+                  placeholder="제목/내용/작성자 검색"
+                  value="${Fmt.escape(searchQuery)}"
+                />
+                <button type="submit" class="btn btn-secondary btn-sm">검색</button>
+                ${searchQuery ? '<button type="button" id="board-search-clear-btn" class="btn btn-secondary btn-sm">초기화</button>' : ''}
+              </form>
               ${user.role !== 'observer' ? '<button id="new-post-btn" class="btn btn-primary">+ 글쓰기</button>' : ''}
             </div>
           </div>
 
           <div class="post-list board-table-wrap">
-            ${filtered.length === 0 ? '<p class="empty-state" style="padding:16px;">게시글이 없습니다.</p>' : `
+            ${posts.length === 0
+              ? `<p class="empty-state" style="padding:16px;">${searchQuery ? '검색 결과가 없습니다.' : '게시글이 없습니다.'}</p>`
+              : `
               <table class="data-table board-table">
                 <thead>
                   <tr>
@@ -57,10 +77,10 @@ Pages.board = {
                   </tr>
                 </thead>
                 <tbody>
-                  ${filtered.map((p, idx) => `
+                  ${posts.map((p, idx) => `
                     <tr class="board-row ${p.is_notice ? 'notice' : ''}" data-post-id="${p.post_id}">
-                      <td>${filtered.length - idx}</td>
-                      <td>${p.is_notice ? '<span class="tag tag-notice">공지</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
+                      <td>${posts.length - idx}</td>
+                      <td>${p.is_notice ? '<span class="tag tag-notice">상단고정</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
                       <td><a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a></td>
                       <td>${Fmt.escape(p.author_name || `#${p.author_id}`)}</td>
                       <td>${Fmt.date(p.created_at)}</td>
@@ -76,7 +96,17 @@ Pages.board = {
 
       document.getElementById('board-category-filter')?.addEventListener('change', (e) => {
         const next = e.target.value || 'all';
-        Router.go(next === 'all' ? '/board' : `/board?category=${encodeURIComponent(next)}`);
+        Router.go(buildListUrl(next, searchQuery));
+      });
+
+      document.getElementById('board-search-form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const keyword = (document.getElementById('board-search-input')?.value || '').trim();
+        Router.go(buildListUrl(selectedCategory, keyword));
+      });
+
+      document.getElementById('board-search-clear-btn')?.addEventListener('click', () => {
+        Router.go(buildListUrl(selectedCategory, ''));
       });
 
       document.getElementById('new-post-btn')?.addEventListener('click', () => {
@@ -96,19 +126,26 @@ Pages.board = {
 
   _openPostModal({ boards, user, post = null, initialBoardId = null, onSaved }) {
     const isEdit = !!post;
-    const defaultBoardId = post?.board_id || initialBoardId || boards[0]?.board_id;
+    const selectableBoards = user.role === 'admin'
+      ? boards
+      : boards.filter((b) => b.board_type !== 'notice');
+    if (!selectableBoards.length) {
+      alert('작성 가능한 게시판이 없습니다.');
+      return;
+    }
+    const fallbackBoardId = selectableBoards[0]?.board_id || boards[0]?.board_id;
+    const defaultBoardId = post?.board_id || initialBoardId || fallbackBoardId;
     Modal.open(`<h2>${isEdit ? '게시글 수정' : '글쓰기'}</h2>
       <form id="board-post-form">
         <div class="form-group">
           <label>분류 *</label>
           <select name="board_id" required>
-            ${boards.map((b) => `<option value="${b.board_id}"${b.board_id === defaultBoardId ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
+            ${selectableBoards.map((b) => `<option value="${b.board_id}"${b.board_id === defaultBoardId ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
           </select>
         </div>
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
         <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
         <p class="form-hint">멘션은 @사번 또는 @이름 형태로 작성하세요.</p>
-        ${user.role === 'admin' ? `<div class="form-group"><label><input type="checkbox" name="is_notice"${post?.is_notice ? ' checked' : ''} /> 공지로 등록</label></div>` : ''}
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
         <p class="form-error" id="board-post-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
@@ -117,6 +154,7 @@ Pages.board = {
       initialHTML: post?.content || '',
       placeholder: '게시글 본문을 입력하세요. 이미지/표 삽입이 가능합니다.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_post', boardId: post?.board_id || defaultBoardId }),
+      onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'board_post', boardId: post?.board_id || defaultBoardId }),
     });
 
     document.getElementById('board-post-form')?.addEventListener('submit', async (e) => {
@@ -136,7 +174,6 @@ Pages.board = {
           const payload = {
             title,
             content: postEditor.getSanitizedHTML(),
-            is_notice: fd.has('is_notice'),
           };
           if (boardId !== post.board_id) {
             await API.createPost(boardId, payload);
@@ -148,7 +185,6 @@ Pages.board = {
           await API.createPost(boardId, {
             title,
             content: postEditor.getSanitizedHTML(),
-            is_notice: fd.has('is_notice'),
           });
         }
         Modal.close();
@@ -176,6 +212,7 @@ Pages.board = {
       initialHTML: comment?.content || '',
       placeholder: '댓글을 입력하세요. 이미지/표 삽입이 가능합니다.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_comment', boardId }),
+      onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'board_comment', boardId }),
     });
 
     document.getElementById('board-comment-form')?.addEventListener('submit', async (e) => {
@@ -219,18 +256,20 @@ Pages.board = {
       ]);
       const user = Auth.getUser();
       const canManagePost = user.role === 'admin' || post.author_id === user.user_id;
+      const canPinPost = user.role === 'admin';
 
       el.innerHTML = `
         <div class="page-container">
           <a href="#/board" class="back-link">← 게시판으로</a>
           <div class="post-detail">
             <div class="inline-actions">
-              ${post.is_notice ? '<span class="tag tag-notice">공지</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
+              ${post.is_notice ? '<span class="tag tag-notice">상단고정</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
             </div>
             <h2>${Fmt.escape(post.title)}</h2>
             <div class="post-meta">${Fmt.datetime(post.created_at)} · 작성자 ${Fmt.escape(post.author_name || `#${post.author_id}`)} · 조회 ${post.view_count}</div>
             ${canManagePost ? `
               <div class="post-actions">
+                ${canPinPost ? `<button id="toggle-pin-post-btn" class="btn btn-sm ${post.is_notice ? 'btn-secondary' : 'btn-primary'}">${post.is_notice ? '상단 고정 해제' : '상단 고정'}</button>` : ''}
                 <button id="edit-post-btn" class="btn btn-sm btn-secondary">수정</button>
                 <button id="delete-post-btn" class="btn btn-sm btn-danger">삭제</button>
               </div>` : ''}
@@ -278,6 +317,15 @@ Pages.board = {
           Router.go('/board');
         } catch (err) {
           alert(err.message || '게시글 삭제 실패');
+        }
+      });
+
+      document.getElementById('toggle-pin-post-btn')?.addEventListener('click', async () => {
+        try {
+          await API.updatePost(postId, { is_notice: !post.is_notice });
+          await this.renderPost(el, params);
+        } catch (err) {
+          alert(err.message || '상단 고정 상태 변경 실패');
         }
       });
 

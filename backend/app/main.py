@@ -4,13 +4,14 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from app.config import settings
 from app.database import Base, engine
 import app.models  # noqa: F401 - 모델 import로 metadata 등록
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
-    admin_ip, users, uploads, workspace, about, coaching_plan,
+    admin_ip, users, uploads, workspace, about, coaching_plan, attendance,
 )
 
 app = FastAPI(
@@ -49,12 +50,50 @@ app.include_router(uploads.router)
 app.include_router(workspace.router)
 app.include_router(about.router)
 app.include_router(coaching_plan.router)
+app.include_router(attendance.router)
 
 
 @app.on_event("startup")
 def ensure_schema():
     # 신규 기능 배포 시 누락된 테이블을 자동 생성합니다.
     Base.metadata.create_all(bind=engine)
+    if "sqlite" not in settings.DATABASE_URL:
+        return
+    with engine.begin() as conn:
+        rows = conn.execute(text("PRAGMA table_info(batch)")).fetchall()
+        columns = {str(row[1]) for row in rows}
+        if "coaching_start_date" not in columns:
+            conn.execute(text("ALTER TABLE batch ADD COLUMN coaching_start_date DATE"))
+            conn.execute(text("UPDATE batch SET coaching_start_date = start_date WHERE coaching_start_date IS NULL"))
+        project_rows = conn.execute(text("PRAGMA table_info(projects)")).fetchall()
+        project_columns = {str(row[1]) for row in project_rows}
+        if "project_type" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN project_type VARCHAR(20)"))
+            conn.execute(text("UPDATE projects SET project_type = 'primary' WHERE project_type IS NULL OR project_type = ''"))
+        coach_rows = conn.execute(text("PRAGMA table_info(coach)")).fetchall()
+        coach_columns = {str(row[1]) for row in coach_rows}
+        if "batch_id" not in coach_columns:
+            conn.execute(text("ALTER TABLE coach ADD COLUMN batch_id INTEGER"))
+        if "is_visible" not in coach_columns:
+            conn.execute(text("ALTER TABLE coach ADD COLUMN is_visible BOOLEAN"))
+            conn.execute(text("UPDATE coach SET is_visible = 1 WHERE is_visible IS NULL"))
+        if "display_order" not in coach_columns:
+            conn.execute(text("ALTER TABLE coach ADD COLUMN display_order INTEGER"))
+            conn.execute(text("UPDATE coach SET display_order = coach_id WHERE display_order IS NULL"))
+        schedule_rows = conn.execute(text("PRAGMA table_info(program_schedule)")).fetchall()
+        schedule_columns = {str(row[1]) for row in schedule_rows}
+        if "color" not in schedule_columns:
+            conn.execute(text("ALTER TABLE program_schedule ADD COLUMN color VARCHAR(20)"))
+            conn.execute(text("UPDATE program_schedule SET color = '#4CAF50' WHERE color IS NULL OR color = ''"))
+        if "repeat_group_id" not in schedule_columns:
+            conn.execute(text("ALTER TABLE program_schedule ADD COLUMN repeat_group_id VARCHAR(64)"))
+        if "repeat_sequence" not in schedule_columns:
+            conn.execute(text("ALTER TABLE program_schedule ADD COLUMN repeat_sequence INTEGER"))
+        coaching_plan_rows = conn.execute(text("PRAGMA table_info(coach_daily_plan)")).fetchall()
+        coaching_plan_columns = {str(row[1]) for row in coaching_plan_rows}
+        if "is_all_day" not in coaching_plan_columns:
+            conn.execute(text("ALTER TABLE coach_daily_plan ADD COLUMN is_all_day BOOLEAN"))
+            conn.execute(text("UPDATE coach_daily_plan SET is_all_day = 1 WHERE is_all_day IS NULL"))
 
 
 @app.get("/api/health")

@@ -1,11 +1,14 @@
 """SSP+ 소개 페이지 콘텐츠 API 라우터입니다."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user, require_roles
+from app.models.access_scope import UserBatchAccess
+from app.models.batch import Batch
 from app.models.site_content import SiteContent
 from app.models.user import User, Coach
 from app.schemas.about import (
@@ -14,6 +17,7 @@ from app.schemas.about import (
     CoachProfileOut,
     CoachProfileCreate,
     CoachProfileUpdate,
+    CoachReorderRequest,
 )
 
 router = APIRouter(prefix="/api/about", tags=["about"])
@@ -45,10 +49,18 @@ def _validate_key(key: str) -> str:
     return key
 
 
+def _validate_batch(db: Session, batch_id: int) -> Batch:
+    row = db.query(Batch).filter(Batch.batch_id == batch_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="차수를 찾을 수 없습니다.")
+    return row
+
+
 def _coach_to_out(coach: Coach) -> CoachProfileOut:
     return CoachProfileOut(
         coach_id=coach.coach_id,
         user_id=coach.user_id,
+        batch_id=coach.batch_id,
         name=coach.name,
         coach_type=coach.coach_type,
         department=coach.department,
@@ -56,6 +68,8 @@ def _coach_to_out(coach: Coach) -> CoachProfileOut:
         specialty=coach.specialty,
         career=coach.career,
         photo_url=coach.photo_url,
+        is_visible=bool(coach.is_visible),
+        display_order=int(coach.display_order or 0),
     )
 
 
@@ -63,8 +77,8 @@ def _validate_coach_user(db: Session, user_id: int) -> User:
     user = db.query(User).filter(User.user_id == user_id, User.is_active == True).first()  # noqa: E712
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-    if user.role != "coach":
-        raise HTTPException(status_code=400, detail="코치 역할 사용자만 연결할 수 있습니다.")
+    if user.role not in ("coach", "admin"):
+        raise HTTPException(status_code=400, detail="코치/관리자 역할 사용자만 연결할 수 있습니다.")
     return user
 
 
@@ -87,12 +101,22 @@ def _get_or_default_content(db: Session, key: str) -> SiteContentOut:
     )
 
 
+def _next_display_order(db: Session, batch_id: int | None) -> int:
+    max_order = (
+        db.query(func.max(Coach.display_order))
+        .filter(Coach.is_active == True, Coach.batch_id == batch_id)  # noqa: E712
+        .scalar()
+    )
+    return int(max_order or 0) + 1
+
+
 @router.get("/content", response_model=SiteContentOut)
 def get_content(
     key: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _ = current_user
     content_key = _validate_key(key)
     return _get_or_default_content(db, content_key)
 
@@ -130,40 +154,59 @@ def update_content(
 
 @router.get("/coaches", response_model=List[CoachProfileOut])
 def list_coaches(
+    batch_id: int | None = Query(None),
+    include_hidden: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    coaches = (
-        db.query(Coach)
-        .filter(Coach.is_active == True)  # noqa: E712
-        .order_by(Coach.name.asc())
-        .all()
-    )
-    coach_user_ids = {coach.user_id for coach in coaches if coach.user_id}
+    if include_hidden and current_user.role != "admin":
+        include_hidden = False
+    if batch_id is not None:
+        _validate_batch(db, batch_id)
 
-    fallback_users = (
-        db.query(User)
-        .filter(User.is_active == True, User.role == "coach")  # noqa: E712
-        .order_by(User.name.asc())
-        .all()
-    )
-    fallback_rows = [
-        CoachProfileOut(
-            coach_id=None,
-            user_id=user.user_id,
-            name=user.name,
-            coach_type="internal",
-            department=user.department,
-            affiliation=user.department,
-            specialty=None,
-            career=None,
-            photo_url=None,
+    all_rows_q = db.query(Coach).filter(Coach.is_active == True)  # noqa: E712
+    if batch_id is not None:
+        all_rows_q = all_rows_q.filter(Coach.batch_id == batch_id)
+    all_rows = all_rows_q.order_by(Coach.display_order.asc(), Coach.name.asc()).all()
+
+    existing_by_user = {row.user_id: row for row in all_rows if row.user_id}
+    rows = all_rows if include_hidden else [row for row in all_rows if row.is_visible]
+    merged: list[CoachProfileOut] = [_coach_to_out(row) for row in rows]
+
+    if batch_id is not None:
+        coach_users = (
+            db.query(User)
+            .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
+            .filter(
+                UserBatchAccess.batch_id == batch_id,
+                User.is_active == True,  # noqa: E712
+                User.role.in_(["coach", "admin"]),
+            )
+            .order_by(User.name.asc())
+            .all()
         )
-        for user in fallback_users
-        if user.user_id not in coach_user_ids
-    ]
-    merged = [_coach_to_out(coach) for coach in coaches] + fallback_rows
-    merged.sort(key=lambda row: (row.name or "").lower())
+        for user in coach_users:
+            existing = existing_by_user.get(user.user_id)
+            if existing:
+                continue
+            merged.append(
+                CoachProfileOut(
+                    coach_id=None,
+                    user_id=user.user_id,
+                    batch_id=batch_id,
+                    name=user.name,
+                    coach_type="internal",
+                    department=user.department,
+                    affiliation=user.department,
+                    specialty=None,
+                    career=None,
+                    photo_url=None,
+                    is_visible=True,
+                    display_order=9999,
+                )
+            )
+
+    merged.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
     return merged
 
 
@@ -173,6 +216,11 @@ def create_coach(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("admin")),
 ):
+    _ = current_user
+    if data.batch_id is None:
+        raise HTTPException(status_code=400, detail="차수를 선택하세요.")
+    _validate_batch(db, data.batch_id)
+
     linked_user = None
     if data.user_id is not None:
         linked_user = _validate_coach_user(db, data.user_id)
@@ -180,12 +228,13 @@ def create_coach(
             db.query(Coach)
             .filter(
                 Coach.user_id == data.user_id,
+                Coach.batch_id == data.batch_id,
                 Coach.is_active == True,  # noqa: E712
             )
             .first()
         )
         if exists:
-            raise HTTPException(status_code=409, detail="이미 코치 프로필이 연결된 사용자입니다.")
+            raise HTTPException(status_code=409, detail="이미 해당 차수에 코치 프로필이 연결된 사용자입니다.")
 
     coach_name = (data.name or "").strip()
     if not coach_name and linked_user:
@@ -195,6 +244,7 @@ def create_coach(
 
     row = Coach(
         user_id=data.user_id,
+        batch_id=data.batch_id,
         name=coach_name,
         coach_type=data.coach_type or "internal",
         department=(data.department or (linked_user.department if linked_user else None)),
@@ -202,6 +252,8 @@ def create_coach(
         specialty=data.specialty,
         career=data.career,
         photo_url=data.photo_url,
+        is_visible=True if data.is_visible is None else bool(data.is_visible),
+        display_order=data.display_order if data.display_order is not None else _next_display_order(db, data.batch_id),
         is_active=True,
     )
     db.add(row)
@@ -217,6 +269,7 @@ def update_coach(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("admin")),
 ):
+    _ = current_user
     row = (
         db.query(Coach)
         .filter(Coach.coach_id == coach_id, Coach.is_active == True)  # noqa: E712
@@ -225,6 +278,10 @@ def update_coach(
     if not row:
         raise HTTPException(status_code=404, detail="코치 프로필을 찾을 수 없습니다.")
 
+    next_batch_id = data.batch_id if data.batch_id is not None else row.batch_id
+    if next_batch_id is not None:
+        _validate_batch(db, next_batch_id)
+
     if data.user_id is not None:
         _validate_coach_user(db, data.user_id)
         duplicate = (
@@ -232,17 +289,21 @@ def update_coach(
             .filter(
                 Coach.coach_id != coach_id,
                 Coach.user_id == data.user_id,
+                Coach.batch_id == next_batch_id,
                 Coach.is_active == True,  # noqa: E712
             )
             .first()
         )
         if duplicate:
-            raise HTTPException(status_code=409, detail="이미 다른 코치 프로필에 연결된 사용자입니다.")
+            raise HTTPException(status_code=409, detail="이미 해당 차수의 다른 코치 프로필에 연결된 사용자입니다.")
         row.user_id = data.user_id
 
     payload = data.model_dump(exclude_none=True, exclude={"user_id"})
     for key, value in payload.items():
         setattr(row, key, value)
+
+    if row.display_order is None:
+        row.display_order = _next_display_order(db, row.batch_id)
 
     if not (row.name or "").strip():
         raise HTTPException(status_code=400, detail="코치 이름을 입력하세요.")
@@ -252,12 +313,52 @@ def update_coach(
     return _coach_to_out(row)
 
 
+@router.put("/coaches/reorder", response_model=List[CoachProfileOut])
+def reorder_coaches(
+    data: CoachReorderRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    _validate_batch(db, data.batch_id)
+    rows = (
+        db.query(Coach)
+        .filter(Coach.batch_id == data.batch_id, Coach.is_active == True)  # noqa: E712
+        .all()
+    )
+    id_map = {row.coach_id: row for row in rows}
+
+    ordered_ids: list[int] = []
+    for coach_id in data.coach_ids:
+        if coach_id in id_map and coach_id not in ordered_ids:
+            ordered_ids.append(coach_id)
+
+    next_order = 1
+    for coach_id in ordered_ids:
+        id_map[coach_id].display_order = next_order
+        next_order += 1
+
+    remaining = [row for row in rows if row.coach_id not in ordered_ids]
+    remaining.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
+    for row in remaining:
+        row.display_order = next_order
+        next_order += 1
+
+    db.commit()
+    return list_coaches(
+        batch_id=data.batch_id,
+        include_hidden=True,
+        db=db,
+        current_user=current_user,
+    )
+
+
 @router.delete("/coaches/{coach_id}")
 def delete_coach(
     coach_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("admin")),
 ):
+    _ = current_user
     row = (
         db.query(Coach)
         .filter(Coach.coach_id == coach_id, Coach.is_active == True)  # noqa: E712

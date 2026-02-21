@@ -34,6 +34,49 @@ def test_observer_cannot_write_board_post_or_comment(client, db, seed_users, see
     assert create_comment_resp.status_code == 403
 
 
+def test_notice_board_write_admin_only(client, seed_users, seed_boards):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+    notice_board_id = seed_boards[0].board_id
+    free_board_id = seed_boards[2].board_id
+
+    blocked_resp = client.post(
+        f"/api/boards/{notice_board_id}/posts",
+        json={"title": "공지 작성 시도", "content": "participant", "is_notice": False},
+        headers=participant_headers,
+    )
+    assert blocked_resp.status_code == 403
+
+    allowed_resp = client.post(
+        f"/api/boards/{free_board_id}/posts",
+        json={"title": "자유게시판 글", "content": "participant", "is_notice": False},
+        headers=participant_headers,
+    )
+    assert allowed_resp.status_code == 200
+    free_post_id = allowed_resp.json()["post_id"]
+
+    pin_blocked_resp = client.put(
+        f"/api/boards/posts/{free_post_id}",
+        json={"is_notice": True},
+        headers=participant_headers,
+    )
+    assert pin_blocked_resp.status_code == 403
+
+    pin_admin_resp = client.put(
+        f"/api/boards/posts/{free_post_id}",
+        json={"is_notice": True},
+        headers=admin_headers,
+    )
+    assert pin_admin_resp.status_code == 200
+
+    admin_resp = client.post(
+        f"/api/boards/{notice_board_id}/posts",
+        json={"title": "관리자 공지", "content": "admin", "is_notice": True},
+        headers=admin_headers,
+    )
+    assert admin_resp.status_code == 200
+
+
 def test_restricted_project_notes_and_tasks_not_exposed_to_observer(client, db, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     observer_headers = auth_headers(client, "obs001")

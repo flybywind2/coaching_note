@@ -15,6 +15,11 @@ def _ensure_not_observer(current_user: User):
         raise HTTPException(status_code=403, detail="참관자는 작성 권한이 없습니다.")
 
 
+def _ensure_notice_board_admin(board: Board, current_user: User):
+    if board.board_type == "notice" and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="공지사항 게시판 작성은 관리자만 가능합니다.")
+
+
 def get_boards(db: Session) -> List[Board]:
     return db.query(Board).all()
 
@@ -72,12 +77,28 @@ def get_posts(db: Session, board_id: int, skip: int = 0, limit: int = 20) -> Lis
     return [_serialize_post(post, board_name, board_type, author_name, comment_count) for post, board_name, board_type, author_name, comment_count in rows]
 
 
-def get_all_posts(db: Session, skip: int = 0, limit: int = 20, category: str | None = None) -> List[BoardPost]:
-    q = _posts_query(db)
+def get_all_posts(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    category: str | None = None,
+    search_q: str | None = None,
+) -> List[BoardPost]:
+    query = _posts_query(db)
     if category:
-        q = q.filter(or_(Board.board_type == category, Board.board_name == category))
+        query = query.filter(or_(Board.board_type == category, Board.board_name == category))
+    if search_q and search_q.strip():
+        keyword = f"%{search_q.strip()}%"
+        query = query.filter(
+            or_(
+                BoardPost.title.ilike(keyword),
+                BoardPost.content.ilike(keyword),
+                User.name.ilike(keyword),
+                Board.board_name.ilike(keyword),
+            )
+        )
     rows = (
-        q.order_by(BoardPost.is_notice.desc(), BoardPost.created_at.desc())
+        query.order_by(BoardPost.is_notice.desc(), BoardPost.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -114,6 +135,8 @@ def _post_snapshot(post: BoardPost) -> dict:
 
 def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user: User) -> BoardPost:
     _ensure_not_observer(current_user)
+    board = get_board(db, board_id)
+    _ensure_notice_board_admin(board, current_user)
     if data.is_notice and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="공지 등록은 관리자만 가능합니다.")
     post = BoardPost(board_id=board_id, author_id=current_user.user_id, **data.model_dump())
@@ -140,6 +163,7 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
 
 def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: User) -> BoardPost:
     post = get_post(db, post_id)
+    _ensure_notice_board_admin(post.board, current_user)
     before_texts = [post.title, post.content]
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 수정 가능합니다.")
@@ -250,6 +274,7 @@ def get_post_versions(db: Session, post_id: int, current_user: User) -> List[dic
 
 def restore_post_version(db: Session, post_id: int, version_id: int, current_user: User) -> BoardPost:
     post = get_post(db, post_id)
+    _ensure_notice_board_admin(post.board, current_user)
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 복원 가능합니다.")
     row = version_service.get_version(

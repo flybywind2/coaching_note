@@ -28,6 +28,7 @@ document.getElementById('notif-read-all').addEventListener('click', async () => 
   await API.markAllRead();
   Notifications.refresh();
 });
+document.getElementById('notif-settings-btn').addEventListener('click', () => Notifications.openSettingsModal());
 
 // Start routing
 Router.init();

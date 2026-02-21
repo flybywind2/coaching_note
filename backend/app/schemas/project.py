@@ -11,6 +11,7 @@ class ProjectBase(BaseModel):
     representative: Optional[str] = None
     category: Optional[str] = None
     visibility: str = "public"
+    project_type: str = "primary"
     status: str = "preparing"
 
 
@@ -24,6 +25,7 @@ class ProjectUpdate(BaseModel):
     representative: Optional[str] = None
     category: Optional[str] = None
     visibility: Optional[str] = None
+    project_type: Optional[str] = None
     status: Optional[str] = None
     progress_rate: Optional[int] = None
     ai_tech_category: Optional[str] = None

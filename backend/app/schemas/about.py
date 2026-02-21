@@ -21,6 +21,7 @@ class SiteContentUpdate(BaseModel):
 class CoachProfileOut(BaseModel):
     coach_id: Optional[int] = None
     user_id: Optional[int] = None
+    batch_id: Optional[int] = None
     name: str
     coach_type: str = "internal"
     department: Optional[str] = None
@@ -28,10 +29,13 @@ class CoachProfileOut(BaseModel):
     specialty: Optional[str] = None
     career: Optional[str] = None
     photo_url: Optional[str] = None
+    is_visible: bool = True
+    display_order: int = 0
 
 
 class CoachProfileCreate(BaseModel):
     user_id: Optional[int] = None
+    batch_id: Optional[int] = None
     name: Optional[str] = None
     coach_type: str = "internal"
     department: Optional[str] = None
@@ -39,10 +43,13 @@ class CoachProfileCreate(BaseModel):
     specialty: Optional[str] = None
     career: Optional[str] = None
     photo_url: Optional[str] = None
+    is_visible: Optional[bool] = None
+    display_order: Optional[int] = None
 
 
 class CoachProfileUpdate(BaseModel):
     user_id: Optional[int] = None
+    batch_id: Optional[int] = None
     name: Optional[str] = None
     coach_type: Optional[str] = None
     department: Optional[str] = None
@@ -50,3 +57,10 @@ class CoachProfileUpdate(BaseModel):
     specialty: Optional[str] = None
     career: Optional[str] = None
     photo_url: Optional[str] = None
+    is_visible: Optional[bool] = None
+    display_order: Optional[int] = None
+
+
+class CoachReorderRequest(BaseModel):
+    batch_id: int
+    coach_ids: list[int]
