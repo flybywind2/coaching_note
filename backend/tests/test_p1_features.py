@@ -53,7 +53,7 @@ def test_auto_checkin_today_for_participant(client, db, seed_users, seed_batch):
 
 def test_board_all_posts_and_comment_update(client, seed_users, seed_boards):
     coach_headers = auth_headers(client, "coach001")
-    board_id = seed_boards[0].board_id
+    board_id = seed_boards[2].board_id
 
     post_resp = client.post(
         f"/api/boards/{board_id}/posts",
@@ -86,6 +86,42 @@ def test_board_all_posts_and_comment_update(client, seed_users, seed_boards):
     assert "board_name" in rows[0]
     assert "author_name" in rows[0]
     assert "comment_count" in rows[0]
+
+
+def test_board_search_and_notice_order(client, seed_users, seed_boards):
+    admin_headers = auth_headers(client, "admin001")
+    coach_headers = auth_headers(client, "coach001")
+
+    notice_board_id = seed_boards[0].board_id
+    free_board_id = seed_boards[2].board_id
+
+    notice_resp = client.post(
+        f"/api/boards/{notice_board_id}/posts",
+        json={"title": "키워드 공지", "content": "검색 테스트", "is_notice": True},
+        headers=admin_headers,
+    )
+    assert notice_resp.status_code == 200
+
+    free_resp = client.post(
+        f"/api/boards/{free_board_id}/posts",
+        json={"title": "키워드 일반글", "content": "일반 본문", "is_notice": False},
+        headers=coach_headers,
+    )
+    assert free_resp.status_code == 200
+
+    q_resp = client.get("/api/boards/posts?q=키워드&limit=20", headers=coach_headers)
+    assert q_resp.status_code == 200
+    rows = q_resp.json()
+    assert len(rows) >= 2
+    assert rows[0]["is_notice"] is True
+    assert "키워드" in rows[0]["title"]
+
+    category_q_resp = client.get("/api/boards/posts?category=free&q=일반글", headers=coach_headers)
+    assert category_q_resp.status_code == 200
+    filtered = category_q_resp.json()
+    assert len(filtered) == 1
+    assert filtered[0]["board_type"] == "free"
+    assert filtered[0]["title"] == "키워드 일반글"
 
 
 def test_session_delete_by_coach(client, db, seed_users, seed_batch):

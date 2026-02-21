@@ -12,15 +12,18 @@ Pages.projectDetail = {
         API.getNotes(projectId),
         API.getMembers(projectId),
       ]);
+      const batch = await API.getBatch(project.batch_id).catch(() => null);
       const sortedNotes = [...notes].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date));
       const latestNote = sortedNotes[0] || null;
       const latestComments = latestNote ? await API.getComments(latestNote.note_id).catch(() => []) : [];
-      const latestComment = latestComments.length ? latestComments[latestComments.length - 1] : null;
       const user = Auth.getUser();
       const canWrite = user.role === 'admin' || user.role === 'coach';
       const isAdmin = user.role === 'admin';
       const noteCount = sortedNotes.length;
       const initialTab = ['info', 'records', 'notes'].includes(params.tab) ? params.tab : 'info';
+      const refreshView = async (tab = 'info') => {
+        await this.render(el, { ...params, tab });
+      };
 
       el.innerHTML = `
         <div class="page-container project-detail-page">
@@ -45,19 +48,25 @@ Pages.projectDetail = {
               isAdmin,
               members,
               projectId,
+              batchId: project.batch_id,
               latestNote,
-              latestComment,
+              latestComments,
               onSave: async (payload) => {
                 await API.updateProject(projectId, payload);
-                await this.render(el, params);
+                await refreshView('info');
               },
               onMemberChanged: async () => {
-                await this.render(el, params);
+                await refreshView('info');
               },
             });
             break;
           case 'records': this._renderDocs(tabContent, projectId, canWrite); break;
-          case 'notes': this._renderNotes(tabContent, sortedNotes, projectId, canWrite, user, project); break;
+          case 'notes':
+            this._renderNotes(tabContent, sortedNotes, projectId, canWrite, user, project, {
+              batch,
+              onChanged: async () => refreshView('notes'),
+            });
+            break;
         }
       };
       el.querySelectorAll('.tab-btn').forEach(btn => {
@@ -70,41 +79,69 @@ Pages.projectDetail = {
   },
 
   _renderInfo(el, p, options) {
-    const { canWrite, isAdmin, members, projectId, latestNote, latestComment, onSave, onMemberChanged } = options;
+    const {
+      canWrite,
+      isAdmin,
+      members,
+      projectId,
+      latestNote,
+      latestComments,
+      onSave,
+      onMemberChanged,
+    } = options;
     const repos = Array.isArray(p.github_repos) ? p.github_repos : [];
     const progressValue = Math.max(0, Math.min(100, Number(p.progress_rate) || 0));
-    el.innerHTML = `<div class="project-info-layout">
+    const noteLink = latestNote ? `#/project/${projectId}/notes/${latestNote.note_id}` : `#/project/${projectId}?tab=notes`;
+    const resolveCommentType = (comment) => {
+      if (comment.comment_type) return comment.comment_type;
+      return comment.author_role === 'participant' ? 'participant_memo' : 'coaching_feedback';
+    };
+    const coachingFeedbacks = (latestComments || []).filter((c) => resolveCommentType(c) === 'coaching_feedback');
+    const participantMemos = (latestComments || []).filter((c) => resolveCommentType(c) === 'participant_memo');
+    const projectTypeLabel = (p.project_type || 'primary') === 'associate' ? '준참여과제' : '정식과제';
+    const hasText = (value) => Fmt.excerpt(value || '', 1).length > 0;
+
+    const renderInfoItem = ({ label, value, field, full = false }) => `
+      <div class="info-item${full ? ' full' : ''}">
+        <div class="info-item-label-row">
+          <label>${label}</label>
+          ${canWrite && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
+        </div>
+        ${value}
+      </div>
+    `;
+
+    el.innerHTML = `<div class="project-info-layout project-info-layout-wide">
       <div class="project-info-main">
+        <div class="project-title-hero">
+          <h2>${Fmt.escape(p.project_name)}</h2>
+          <span class="tag">${projectTypeLabel}</span>
+        </div>
         <div class="project-info-panel">
-          <div class="project-info-panel-head">
-            <h3>기본 정보</h3>
-            <p>과제 운영 핵심 정보를 확인합니다.</p>
-          </div>
           <div class="info-grid project-info-grid">
-            <div class="info-item"><label>과제명</label><span>${Fmt.escape(p.project_name)}</span></div>
-            <div class="info-item"><label>부서명</label><span>${Fmt.escape(p.organization)}</span></div>
-            <div class="info-item"><label>과제 대표자</label><span>${Fmt.escape(p.representative || '-')}</span></div>
-            <div class="info-item"><label>AI기술 분류</label><span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span></div>
-            <div class="info-item"><label>사용된 AI기술</label><span>${Fmt.escape(p.ai_tech_used || '-')}</span></div>
-            <div class="info-item">
-              <label>전체 진행률</label>
-              <span>${progressValue}%</span>
-              ${Fmt.progress(progressValue)}
-            </div>
-            <div class="info-item full">
-              <label>과제 요약</label>
-              <div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>
-            </div>
-            <div class="info-item full">
-              <label>Github Repository</label>
-              ${repos.length ? `
+            ${renderInfoItem({
+              label: 'Github Repository',
+              field: 'github_repos',
+              full: true,
+              value: repos.length ? `
                 <div class="repo-list">
                   ${repos.map((url) => `<a href="${Fmt.escape(url)}" target="_blank" rel="noopener noreferrer">${Fmt.escape(url)}</a>`).join('')}
                 </div>
-              ` : '<span>-</span>'}
-            </div>
+              ` : '<span>-</span>',
+            })}
+            ${renderInfoItem({ label: '과제 요약', field: 'project_summary', full: true, value: `<div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>` })}
+            ${renderInfoItem({ label: '과제명', field: 'project_name', value: `<span>${Fmt.escape(p.project_name)}</span>` })}
+            ${renderInfoItem({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
+            ${renderInfoItem({ label: '과제 대표자', field: 'representative', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
+            ${renderInfoItem({ label: 'AI기술 분류', field: 'ai_tech_category', value: `<span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span>` })}
+            ${renderInfoItem({ label: '사용된 AI기술', field: 'ai_tech_used', value: `<span>${Fmt.escape(p.ai_tech_used || '-')}</span>` })}
+            ${renderInfoItem({ label: '과제 구분', field: 'project_type', value: `<span>${projectTypeLabel}</span>` })}
+            ${renderInfoItem({
+              label: '전체 진행률',
+              field: 'progress_rate',
+              value: `<span>${progressValue}%</span>${Fmt.progress(progressValue)}`,
+            })}
           </div>
-          ${canWrite ? `<div class="page-actions"><button id="edit-project-info-btn" class="btn btn-secondary">기본정보 편집</button></div>` : ''}
         </div>
 
         <div class="project-info-panel">
@@ -132,77 +169,115 @@ Pages.projectDetail = {
         <div class="project-info-panel">
           <div class="project-info-panel-head">
             <h3>최근 코칭노트</h3>
-            <p>가장 최근 코칭 내용을 빠르게 확인합니다.</p>
+            <p>최신 코칭노트 전체 내용과 코칭 의견/메모를 확인합니다.</p>
           </div>
           ${latestNote ? `
-            <a href="#/project/${projectId}?tab=notes" class="recent-note-card">
-              <strong>${Fmt.date(latestNote.coaching_date)}</strong>
-              <p>${Fmt.escape(Fmt.excerpt(latestNote.current_status || '', 140) || '-')}</p>
+            <a href="${noteLink}" class="recent-note-card">
+              <strong>${Fmt.date(latestNote.coaching_date)}${latestNote.week_number ? ` · ${latestNote.week_number}주차` : ''}</strong>
+              ${hasText(latestNote.current_status) ? `<div class="note-field compact"><label>현재 상태</label><div class="field-val rich-content">${Fmt.rich(latestNote.current_status)}</div></div>` : ''}
+              ${hasText(latestNote.main_issue) ? `<div class="note-field compact"><label>주요 문제</label><div class="field-val rich-content">${Fmt.rich(latestNote.main_issue)}</div></div>` : ''}
+              ${hasText(latestNote.next_action) ? `<div class="note-field compact"><label>다음 작업</label><div class="field-val rich-content">${Fmt.rich(latestNote.next_action)}</div></div>` : ''}
+              ${(!hasText(latestNote.current_status) && !hasText(latestNote.main_issue) && !hasText(latestNote.next_action)) ? '<p class="hint">입력된 본문이 없습니다.</p>' : ''}
             </a>
+            <div class="recent-comment-wrap">
+              <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
+              <div class="comment-list compact">
+                ${coachingFeedbacks.length ? coachingFeedbacks.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('') : '<p class="hint">등록된 코칭 의견이 없습니다.</p>'}
+              </div>
+              <h4>참여자 메모 (${participantMemos.length})</h4>
+              <div class="comment-list compact">
+                ${participantMemos.length ? participantMemos.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('') : '<p class="hint">등록된 참여자 메모가 없습니다.</p>'}
+              </div>
+            </div>
           ` : '<p class="empty-state">코칭노트가 없습니다.</p>'}
-        </div>
-        <div class="project-info-panel">
-          <div class="project-info-panel-head">
-            <h3>최근 코칭 의견</h3>
-            <p>직전 코칭의견을 확인하고 코칭노트로 이동합니다.</p>
-          </div>
-          ${latestComment ? `
-            <a href="#/project/${projectId}?tab=notes" class="recent-note-card">
-              <strong>${Fmt.datetime(latestComment.created_at)}</strong>
-              <p>${Fmt.escape(Fmt.excerpt(latestComment.content || '', 140) || '-')}</p>
-            </a>
-          ` : '<p class="empty-state">코칭 의견이 없습니다.</p>'}
         </div>
       </div>
     </div>`;
 
-    if (canWrite) {
-      document.getElementById('edit-project-info-btn')?.addEventListener('click', () => {
-        Modal.open(`<h2>기본정보 편집</h2>
-          <form id="edit-project-info-form">
-            <div class="form-group"><label>과제명 *</label><input name="project_name" required value="${Fmt.escape(p.project_name)}" /></div>
-            <div class="form-group"><label>부서명 *</label><input name="organization" required value="${Fmt.escape(p.organization)}" /></div>
-            <div class="form-group"><label>대표자</label><input name="representative" value="${Fmt.escape(p.representative || '')}" /></div>
-            <div class="form-group"><label>AI기술 분류</label><input name="ai_tech_category" value="${Fmt.escape(p.ai_tech_category || p.category || '')}" /></div>
-            <div class="form-group"><label>사용된 AI기술</label><input name="ai_tech_used" value="${Fmt.escape(p.ai_tech_used || '')}" /></div>
-            <div class="form-group"><label>과제 요약</label><textarea name="project_summary" rows="4">${Fmt.escape(p.project_summary || '')}</textarea></div>
-            <div class="form-group"><label>Github Repository (줄바꿈으로 복수 입력)</label><textarea name="github_repos" rows="4">${Fmt.escape(repos.join('\n'))}</textarea></div>
-            <div class="form-group"><label>전체 진행률 (%)</label><input type="number" name="progress_rate" min="0" max="100" value="${progressValue}" /></div>
+    const openFieldEditor = (field) => {
+      const openSimpleEditor = ({ title, inputHtml, parsePayload, className = '' }) => {
+        Modal.open(`<h2>${title}</h2>
+          <form id="edit-project-field-form">
+            ${inputHtml}
             <button type="submit" class="btn btn-primary">저장</button>
-            <p class="form-error" id="edit-project-info-err" style="display:none;"></p>
-          </form>`, null, { className: 'modal-box-xl' });
-
-        document.getElementById('edit-project-info-form')?.addEventListener('submit', async (e) => {
+            <p class="form-error" id="edit-project-field-err" style="display:none;"></p>
+          </form>`, null, { className: className || undefined });
+        document.getElementById('edit-project-field-form')?.addEventListener('submit', async (e) => {
           e.preventDefault();
-          const fd = new FormData(e.target);
-          const repoLines = (fd.get('github_repos') || '').toString().split('\n').map((v) => v.trim()).filter(Boolean);
-          const payload = {
-            project_name: (fd.get('project_name') || '').toString().trim(),
-            organization: (fd.get('organization') || '').toString().trim(),
-            representative: ((fd.get('representative') || '').toString().trim() || null),
-            progress_rate: (() => {
-              const v = parseInt((fd.get('progress_rate') || '').toString(), 10);
-              if (Number.isNaN(v)) return null;
-              return Math.max(0, Math.min(100, v));
-            })(),
-            ai_tech_category: ((fd.get('ai_tech_category') || '').toString().trim() || null),
-            ai_tech_used: ((fd.get('ai_tech_used') || '').toString().trim() || null),
-            project_summary: ((fd.get('project_summary') || '').toString().trim() || null),
-            github_repos: repoLines,
-          };
-
           try {
-            await onSave(payload);
+            await onSave(parsePayload(new FormData(e.target)));
             Modal.close();
           } catch (err) {
-            const errEl = document.getElementById('edit-project-info-err');
+            const errEl = document.getElementById('edit-project-field-err');
             if (!errEl) return;
-            errEl.textContent = err.message || '기본정보 저장 실패';
+            errEl.textContent = err.message || '저장 실패';
             errEl.style.display = 'block';
           }
         });
+      };
+
+      if (field === 'github_repos') {
+        openSimpleEditor({
+          title: 'Github Repository 편집',
+          className: 'modal-box-xl',
+          inputHtml: `<div class="form-group"><label>Repository URL (줄바꿈으로 복수 입력)</label><textarea name="github_repos" rows="8">${Fmt.escape(repos.join('\n'))}</textarea></div>`,
+          parsePayload: (fd) => ({
+            github_repos: (fd.get('github_repos') || '').toString().split('\n').map((v) => v.trim()).filter(Boolean),
+          }),
+        });
+        return;
+      }
+      if (field === 'project_summary') {
+        openSimpleEditor({
+          title: '과제 요약 편집',
+          className: 'modal-box-xl',
+          inputHtml: `<div class="form-group"><label>과제 요약</label><textarea name="project_summary" rows="8">${Fmt.escape(p.project_summary || '')}</textarea></div>`,
+          parsePayload: (fd) => ({ project_summary: (fd.get('project_summary') || '').toString().trim() || null }),
+        });
+        return;
+      }
+      if (field === 'project_type') {
+        openSimpleEditor({
+          title: '과제 구분 편집',
+          inputHtml: `<div class="form-group"><label>과제 구분</label><select name="project_type"><option value="primary"${(p.project_type || 'primary') === 'primary' ? ' selected' : ''}>정식과제</option><option value="associate"${(p.project_type || 'primary') === 'associate' ? ' selected' : ''}>준참여과제</option></select></div>`,
+          parsePayload: (fd) => ({ project_type: (fd.get('project_type') || 'primary').toString() }),
+        });
+        return;
+      }
+
+      const defaultValues = {
+        project_name: p.project_name || '',
+        organization: p.organization || '',
+        representative: p.representative || '',
+        ai_tech_category: p.ai_tech_category || p.category || '',
+        ai_tech_used: p.ai_tech_used || '',
+        progress_rate: String(progressValue),
+      };
+      const labels = {
+        project_name: '과제명',
+        organization: '부서명',
+        representative: '과제 대표자',
+        ai_tech_category: 'AI기술 분류',
+        ai_tech_used: '사용된 AI기술',
+        progress_rate: '전체 진행률 (%)',
+      };
+      const isNumber = field === 'progress_rate';
+      openSimpleEditor({
+        title: `${labels[field] || '항목'} 편집`,
+        inputHtml: `<div class="form-group"><label>${labels[field] || field}</label><input ${isNumber ? 'type="number" min="0" max="100"' : ''} name="value" value="${Fmt.escape(defaultValues[field] || '')}" /></div>`,
+        parsePayload: (fd) => {
+          if (field === 'progress_rate') {
+            const value = parseInt((fd.get('value') || '').toString(), 10);
+            return { progress_rate: Number.isNaN(value) ? null : Math.max(0, Math.min(100, value)) };
+          }
+          return { [field]: (fd.get('value') || '').toString().trim() || null };
+        },
       });
-    }
+    };
+
+    el.querySelectorAll('.info-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => openFieldEditor(btn.dataset.field));
+    });
 
     if (isAdmin) {
       document.getElementById('add-member-btn')?.addEventListener('click', () => {
@@ -239,14 +314,34 @@ Pages.projectDetail = {
     const memberUserIds = new Set((currentMembers || []).map((m) => m.user_id));
     const candidates = users.filter((u) => !memberUserIds.has(u.user_id));
 
+    let sortBy = 'name';
+    const sortCandidates = (rows) => {
+      const copied = [...rows];
+      copied.sort((a, b) => {
+        if (sortBy === 'department') {
+          const ad = (a.department || '').toLowerCase();
+          const bd = (b.department || '').toLowerCase();
+          if (ad !== bd) return ad > bd ? 1 : -1;
+        }
+        const an = (a.name || '').toLowerCase();
+        const bn = (b.name || '').toLowerCase();
+        return an > bn ? 1 : -1;
+      });
+      return copied;
+    };
+
     Modal.open(`<h2>과제 팀원 추가</h2>
       <form id="add-member-form">
         <div class="form-group">
-          <label>사용자 *</label>
-          <select name="user_id" required>
-            <option value="">선택</option>
-            ${candidates.map((u) => `<option value="${u.user_id}">${Fmt.escape(u.name)} (${Fmt.escape(u.emp_id)})</option>`).join('')}
+          <label>정렬 기준</label>
+          <select name="sort_by" id="member-sort-select">
+            <option value="name">이름순</option>
+            <option value="department">부서명순</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label>사용자 (복수 선택)</label>
+          <div id="member-candidate-list" class="member-candidate-list"></div>
         </div>
         <div class="form-group">
           <label>역할</label>
@@ -255,22 +350,53 @@ Pages.projectDetail = {
             <option value="leader">leader</option>
           </select>
         </div>
-        <div class="form-group"><label><input type="checkbox" name="is_representative" /> 대표자 지정</label></div>
+        <div class="form-group"><label><input type="checkbox" name="is_representative" /> 대표자 지정 (여러 명 선택 시 첫 번째 사용자만 적용)</label></div>
         <button type="submit" class="btn btn-primary">추가</button>
         <p class="form-error" id="add-member-err" style="display:none;"></p>
-      </form>`);
+      </form>`, null, { className: 'modal-box-xl' });
+
+    const candidateList = document.getElementById('member-candidate-list');
+    const renderCandidates = () => {
+      const rows = sortCandidates(candidates);
+      candidateList.innerHTML = rows.length
+        ? rows.map((u) => `
+          <label class="member-candidate-item">
+            <input type="checkbox" name="user_ids" value="${u.user_id}" />
+            <span>${Fmt.escape(u.name)} (${Fmt.escape(u.emp_id)})</span>
+            <span class="hint">${Fmt.escape(u.department || '부서 미등록')}</span>
+          </label>
+        `).join('')
+        : '<p class="empty-state">추가 가능한 사용자가 없습니다.</p>';
+    };
+    renderCandidates();
+    document.getElementById('member-sort-select')?.addEventListener('change', (e) => {
+      sortBy = e.target.value === 'department' ? 'department' : 'name';
+      renderCandidates();
+    });
 
     document.getElementById('add-member-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const userId = fd.get('user_id');
-      if (!userId) return;
+      const userIds = fd.getAll('user_ids')
+        .map((v) => Number.parseInt(String(v), 10))
+        .filter((v) => !Number.isNaN(v));
+      if (!userIds.length) {
+        const errEl = document.getElementById('add-member-err');
+        if (!errEl) return;
+        errEl.textContent = '추가할 사용자를 선택하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
       try {
-        await API.addMember(projectId, {
-          user_id: parseInt(userId, 10),
-          role: (fd.get('role') || 'member').toString(),
-          is_representative: fd.has('is_representative'),
-        });
+        const role = (fd.get('role') || 'member').toString();
+        const representative = fd.has('is_representative');
+        for (let i = 0; i < userIds.length; i += 1) {
+          await API.addMember(projectId, {
+            user_id: userIds[i],
+            role,
+            is_representative: representative && i === 0,
+          });
+        }
         Modal.close();
         if (onSaved) onSaved();
       } catch (err) {
@@ -287,40 +413,41 @@ Pages.projectDetail = {
     const docs = await API.getDocuments(projectId);
     const types = [
       ['application', '지원서'],
-      ['basic_consulting', '기초컨설팅'],
-      ['workshop_result', '워크샵결과'],
-      ['mid_presentation', '중간발표'],
-      ['final_presentation', '최종발표'],
+      ['basic_consulting', '기초컨설팅 산출물'],
+      ['workshop_result', '공동워크샵 산출물'],
+      ['mid_presentation', '중간 발표 자료'],
+      ['final_presentation', '최종 발표 자료'],
     ];
-    let openedType = types[0][0];
+    let selectedType = types[0][0];
 
     const draw = () => {
-      el.innerHTML = `<div class="records-accordion">
-        ${types.map(([t, label]) => {
-          const doc = docs.find((d) => d.doc_type === t);
-          const isOpen = openedType === t;
-          const preview = doc?.content ? Fmt.excerpt(doc.content, 180) : '';
-          return `
-            <section class="record-item ${isOpen ? 'open' : ''}">
-              <button class="record-head" data-doc-type="${t}">
-                <span>${label}</span>
-                <span>${doc ? '등록됨' : '미등록'}</span>
-              </button>
-              <div class="record-body" style="display:${isOpen ? 'block' : 'none'};">
-                <div class="record-actions">
-                  ${doc ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">보기</button>` : ''}
-                  ${canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${doc?.doc_id || ''}" data-type="${t}" data-label="${Fmt.escape(label)}">${doc ? '편집' : '작성'}</button>` : ''}
-                  ${(canWrite && doc) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${doc.doc_id}" data-label="${Fmt.escape(label)}">삭제</button>` : ''}
-                </div>
-                ${preview ? `<div class="doc-content-preview"><div class="preview-title">${label} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : '<p class="empty-state">저장된 내용이 없습니다.</p>'}
-              </div>
-            </section>
-          `;
-        }).join('')}
+      const current = docs.find((d) => d.doc_type === selectedType) || null;
+      const currentLabel = types.find(([t]) => t === selectedType)?.[1] || '과제기록';
+      const preview = current?.content ? Fmt.excerpt(current.content, 200) : '';
+
+      el.innerHTML = `<div class="records-tab-layout">
+        <aside class="records-tab-nav">
+          ${types.map(([t, label]) => {
+            const doc = docs.find((d) => d.doc_type === t);
+            return `<button class="records-tab-btn${selectedType === t ? ' active' : ''}" data-doc-type="${t}">
+              <span>${label}</span>
+              <span>${doc ? '등록됨' : '미등록'}</span>
+            </button>`;
+          }).join('')}
+        </aside>
+        <section class="records-tab-panel">
+          <h3>${Fmt.escape(currentLabel)}</h3>
+          <div class="record-actions">
+            ${current ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${current.doc_id}" data-label="${Fmt.escape(currentLabel)}">보기</button>` : ''}
+            ${canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${current?.doc_id || ''}" data-type="${selectedType}" data-label="${Fmt.escape(currentLabel)}">${current ? '편집' : '작성'}</button>` : ''}
+            ${(canWrite && current) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${current.doc_id}" data-label="${Fmt.escape(currentLabel)}">삭제</button>` : ''}
+          </div>
+          ${preview ? `<div class="doc-content-preview"><div class="preview-title">${currentLabel} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : '<p class="empty-state">저장된 내용이 없습니다.</p>'}
+        </section>
       </div>`;
 
-      el.querySelectorAll('.record-head').forEach((btn) => btn.addEventListener('click', () => {
-        openedType = btn.dataset.docType;
+      el.querySelectorAll('.records-tab-btn').forEach((btn) => btn.addEventListener('click', () => {
+        selectedType = btn.dataset.docType;
         draw();
       }));
 
@@ -395,6 +522,7 @@ Pages.projectDetail = {
       initialHTML: content,
       placeholder: '과제기록을 작성하세요. 이미지/표 삽입이 가능합니다.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'document', projectId }),
+      onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'document', projectId }),
     });
     const formEl = document.getElementById('doc-editor-form');
     const titleEl = formEl.querySelector('input[name="title"]');
@@ -476,11 +604,30 @@ Pages.projectDetail = {
     }
   },
 
-  _renderNotes(el, notes, projectId, canWrite, user, project) {
+  _renderNotes(el, notes, projectId, canWrite, user, project, options = {}) {
     if (!this._noteFeedState) this._noteFeedState = {};
-    const state = this._noteFeedState[projectId] || { visible: 3 };
-    this._noteFeedState[projectId] = state;
+    if (!this._noteFeedState[projectId]) {
+      this._noteFeedState[projectId] = {
+        visible: 3,
+        expandedIds: new Set(notes[0] ? [notes[0].note_id] : []),
+        expandAll: false,
+      };
+    }
+    const state = this._noteFeedState[projectId];
     const canComment = user.role !== 'observer';
+    const onChanged = options.onChanged || (async () => {});
+    const batch = options.batch || null;
+    const validIds = new Set(notes.map((n) => n.note_id));
+    state.expandedIds = new Set([...state.expandedIds].filter((id) => validIds.has(id)));
+    if (!state.expandAll && state.expandedIds.size === 0 && notes[0]) {
+      state.expandedIds.add(notes[0].note_id);
+    }
+
+    const hasText = (value) => Fmt.excerpt(value || '', 1).length > 0;
+    const renderField = (label, value) => {
+      if (!hasText(value)) return '';
+      return `<div class="note-field"><label>${label}</label><div class="field-val rich-content">${Fmt.rich(value)}</div></div>`;
+    };
 
     const draw = async () => {
       const shown = notes.slice(0, state.visible);
@@ -496,6 +643,7 @@ Pages.projectDetail = {
           ${canWrite ? `<button id="add-note-btn" class="btn btn-primary">+ 코칭노트 작성</button>` : ''}
           ${canWrite ? `<button id="note-ai-summary-btn" class="btn btn-secondary">AI 요약</button>` : ''}
           ${canWrite ? `<button id="note-ai-qa-btn" class="btn btn-secondary">AI Q&A</button>` : ''}
+          ${shown.length > 1 ? `<button id="toggle-all-notes-btn" class="btn btn-secondary">${state.expandAll ? '모두 접기' : '모두 펼치기'}</button>` : ''}
         </div>
         ${shown.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : shown.map((n, i) => {
           const comments = commentBundles[i] || [];
@@ -503,69 +651,76 @@ Pages.projectDetail = {
           const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo');
           const writerTitle = canWrite ? '코칭 의견 작성' : '메모 작성';
           const writerPlaceholder = canWrite ? '코칭 의견을 입력하세요' : '메모를 입력하세요';
+          const expanded = state.expandAll || state.expandedIds.has(n.note_id);
+          const fieldsHtml = [
+            renderField('현재 상태', n.current_status),
+            renderField('주요 문제', n.main_issue),
+            renderField('다음 작업', n.next_action),
+          ].join('');
           return `
             <div class="note-card note-feed-card">
               <div class="note-header">
-                <span class="note-date">${Fmt.date(n.coaching_date)}</span>
+                <span class="note-date">${Fmt.date(n.coaching_date)}${n.week_number ? ` · ${n.week_number}주차` : ''}</span>
+                <button class="btn btn-sm btn-secondary toggle-note-btn" data-note-id="${n.note_id}">${expanded ? '접기' : '펼치기'}</button>
                 ${canWrite ? `<button class="btn btn-sm btn-secondary edit-note-btn" data-note-id="${n.note_id}">수정</button>` : ''}
                 ${canWrite ? `<button class="btn btn-sm btn-danger delete-note-btn" data-note-id="${n.note_id}">삭제</button>` : ''}
               </div>
-              <div class="note-fields">
-                <div class="note-field"><label>현재 상태</label><div class="field-val rich-content">${Fmt.rich(n.current_status, '-')}</div></div>
-                <div class="note-field"><label>주요 문제</label><div class="field-val rich-content">${Fmt.rich(n.main_issue, '-')}</div></div>
-                <div class="note-field"><label>다음 작업</label><div class="field-val rich-content">${Fmt.rich(n.next_action, '-')}</div></div>
-              </div>
-              <div class="comments-section">
-                <div class="comment-group">
-                  <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
-                  <div class="comment-list">
-                    ${coachingFeedbacks.length ? coachingFeedbacks.map((c) => `
-                      <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
-                        <div class="comment-head">
-                          <span class="comment-type-badge feedback">코칭 의견</span>
-                          ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
-                        </div>
-                        <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
-                        <div class="comment-meta">
-                          <span>${Fmt.datetime(c.created_at)}</span>
-                          ${(c.author_id === user.user_id || user.role === 'admin')
-                            ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
-                            : ''}
-                        </div>
-                      </div>
-                    `).join('') : '<p class="empty-state">등록된 코칭 의견이 없습니다.</p>'}
-                  </div>
+              <div class="note-collapsible" style="display:${expanded ? 'block' : 'none'};">
+                <div class="note-fields">
+                  ${fieldsHtml || '<p class="hint">입력된 본문 항목이 없습니다.</p>'}
                 </div>
-                <div class="comment-group">
-                  <h4>참여자 메모 (${participantMemos.length})</h4>
-                  <div class="comment-list">
-                    ${participantMemos.length ? participantMemos.map((c) => `
-                      <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
-                        <div class="comment-head">
-                          <span class="comment-type-badge memo">참여자 메모</span>
-                          ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                <div class="comments-section">
+                  <div class="comment-group">
+                    <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
+                    <div class="comment-list">
+                      ${coachingFeedbacks.length ? coachingFeedbacks.map((c) => `
+                        <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
+                          <div class="comment-head">
+                            <span class="comment-type-badge feedback">코칭 의견</span>
+                            ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                          </div>
+                          <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
+                          <div class="comment-meta">
+                            <span>${Fmt.datetime(c.created_at)}</span>
+                            ${(c.author_id === user.user_id || user.role === 'admin')
+                              ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
+                              : ''}
+                          </div>
                         </div>
-                        <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
-                        <div class="comment-meta">
-                          <span>${Fmt.datetime(c.created_at)}</span>
-                          ${(c.author_id === user.user_id || user.role === 'admin')
-                            ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
-                            : ''}
-                        </div>
-                      </div>
-                    `).join('') : '<p class="empty-state">등록된 참여자 메모가 없습니다.</p>'}
-                  </div>
-                </div>
-                ${canComment ? `
-                  <form class="inline-comment-form" data-note-id="${n.note_id}">
-                    <label class="inline-comment-title">${writerTitle}</label>
-                    <textarea name="content" rows="3" placeholder="${writerPlaceholder}"></textarea>
-                    <div class="page-actions">
-                      ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
-                      <button type="submit" class="btn btn-primary btn-sm">등록</button>
+                      `).join('') : '<p class="empty-state">등록된 코칭 의견이 없습니다.</p>'}
                     </div>
-                  </form>
-                ` : '<p class="empty-state">참관자는 의견을 작성할 수 없습니다.</p>'}
+                  </div>
+                  <div class="comment-group">
+                    <h4>참여자 메모 (${participantMemos.length})</h4>
+                    <div class="comment-list">
+                      ${participantMemos.length ? participantMemos.map((c) => `
+                        <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
+                          <div class="comment-head">
+                            <span class="comment-type-badge memo">참여자 메모</span>
+                            ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                          </div>
+                          <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
+                          <div class="comment-meta">
+                            <span>${Fmt.datetime(c.created_at)}</span>
+                            ${(c.author_id === user.user_id || user.role === 'admin')
+                              ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
+                              : ''}
+                          </div>
+                        </div>
+                      `).join('') : '<p class="empty-state">등록된 참여자 메모가 없습니다.</p>'}
+                    </div>
+                  </div>
+                  ${canComment ? `
+                    <form class="inline-comment-form" data-note-id="${n.note_id}">
+                      <label class="inline-comment-title">${writerTitle}</label>
+                      <textarea name="content" rows="3" placeholder="${writerPlaceholder}"></textarea>
+                      <div class="page-actions">
+                        ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
+                        <button type="submit" class="btn btn-primary btn-sm">등록</button>
+                      </div>
+                    </form>
+                  ` : '<p class="empty-state">참관자는 의견을 작성할 수 없습니다.</p>'}
+                </div>
               </div>
             </div>
           `;
@@ -573,11 +728,22 @@ Pages.projectDetail = {
         ${state.visible < notes.length ? `<div class="page-actions"><button id="load-more-notes-btn" class="btn btn-secondary">이전 코칭노트 더 보기</button></div>` : ''}
       </div>`;
 
+      document.getElementById('toggle-all-notes-btn')?.addEventListener('click', () => {
+        state.expandAll = !state.expandAll;
+        if (!state.expandAll && notes[0]) {
+          state.expandedIds = new Set([notes[0].note_id]);
+        }
+        draw();
+      });
+
       document.getElementById('add-note-btn')?.addEventListener('click', () => {
         Pages.coachingNote.showCreateModal(projectId, async () => {
-          const updated = await API.getNotes(projectId);
-          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user, project);
-        }, { projectProgressRate: project?.progress_rate });
+          await onChanged();
+        }, {
+          projectName: project?.project_name,
+          projectProgressRate: project?.progress_rate,
+          coachingStartDate: batch?.coaching_start_date || batch?.start_date || null,
+        });
       });
 
       document.getElementById('note-ai-summary-btn')?.addEventListener('click', async () => {
@@ -603,13 +769,24 @@ Pages.projectDetail = {
         draw();
       });
 
+      el.querySelectorAll('.toggle-note-btn').forEach((btn) => btn.addEventListener('click', () => {
+        const noteId = Number.parseInt(btn.dataset.noteId, 10);
+        if (Number.isNaN(noteId)) return;
+        if (state.expandedIds.has(noteId)) state.expandedIds.delete(noteId);
+        else state.expandedIds.add(noteId);
+        state.expandAll = false;
+        draw();
+      }));
+
       el.querySelectorAll('.edit-note-btn').forEach((btn) => btn.addEventListener('click', async () => {
         const noteId = +btn.dataset.noteId;
         const note = notes.find((item) => item.note_id === noteId);
         if (!note) return;
         Pages.coachingNote.showEditModal(projectId, note, async () => {
-          const updated = await API.getNotes(projectId);
-          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user, project);
+          await onChanged();
+        }, {
+          projectName: project?.project_name,
+          coachingStartDate: batch?.coaching_start_date || batch?.start_date || null,
         });
       }));
 
@@ -618,8 +795,7 @@ Pages.projectDetail = {
         if (!confirm('코칭노트를 삭제하시겠습니까?')) return;
         try {
           await API.deleteNote(noteId);
-          const updated = await API.getNotes(projectId);
-          this._renderNotes(el, [...updated].sort((a, b) => new Date(b.coaching_date) - new Date(a.coaching_date)), projectId, canWrite, user, project);
+          await onChanged();
         } catch (err) {
           alert(err.message || '코칭노트 삭제 실패');
         }
@@ -632,7 +808,7 @@ Pages.projectDetail = {
         if (!confirm(`${targetLabel}을(를) 삭제하시겠습니까?`)) return;
         try {
           await API.deleteComment(commentId);
-          draw();
+          await onChanged();
         } catch (err) {
           alert(err.message || `${targetLabel} 삭제 실패`);
         }
@@ -651,8 +827,7 @@ Pages.projectDetail = {
             content,
             is_coach_only: fd.has('is_coach_only'),
           });
-          form.reset();
-          draw();
+          await onChanged();
         } catch (err) {
           alert(err.message || '의견 등록 실패');
         }

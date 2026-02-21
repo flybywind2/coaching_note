@@ -18,6 +18,7 @@ class Project(Base):
     representative = Column(String(50))
     category = Column(String(50))
     visibility = Column(String(20), default="public")  # public/restricted
+    project_type = Column(String(20), default="primary")  # primary/associate
     progress_rate = Column(Integer, default=0)
     status = Column(String(20), default="preparing")
     ai_summary = Column(Text)

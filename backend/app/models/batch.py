@@ -13,6 +13,7 @@ class Batch(Base):
     batch_name = Column(String(100), nullable=False)
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
+    coaching_start_date = Column(Date, nullable=True)
     status = Column(String(20), default="planned")  # planned/ongoing/completed
     created_at = Column(DateTime, server_default=func.now())
 

@@ -81,3 +81,40 @@ def test_upload_image_about_scope_success(client, seed_users, monkeypatch):
         shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
 
 
+def test_upload_file_requires_auth(client, seed_users):
+    files = {"file": ("spec.pdf", b"%PDF-1.4", "application/pdf")}
+    resp = client.post("/api/uploads/files", files=files)
+    assert resp.status_code in (401, 403)
+
+
+def test_upload_file_success(client, seed_users, monkeypatch):
+    test_upload_dir = _set_test_upload_dir(monkeypatch)
+    headers = auth_headers(client, "admin001")
+    files = {"file": ("spec.pdf", b"%PDF-1.4\n%test", "application/pdf")}
+    try:
+        resp = client.post(
+            "/api/uploads/files",
+            headers=headers,
+            files=files,
+            data={"scope": "note", "project_id": "101"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "spec.pdf"
+        assert data["url"].startswith("/uploads/editor_files/projects/101/note/")
+        assert data["size"] > 0
+    finally:
+        shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
+
+
+def test_upload_file_rejects_invalid_extension(client, seed_users, monkeypatch):
+    test_upload_dir = _set_test_upload_dir(monkeypatch)
+    headers = auth_headers(client, "admin001")
+    files = {"file": ("bad.exe", b"MZ", "application/octet-stream")}
+    try:
+        resp = client.post("/api/uploads/files", headers=headers, files=files)
+        assert resp.status_code == 400
+    finally:
+        shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
+
+

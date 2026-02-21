@@ -9,7 +9,7 @@ Pages.projectList = {
       const batches = await API.getBatches();
       State.set('batches', batches);
 
-      let batchId = params.batchId ? parseInt(params.batchId) : (batches[0]?.batch_id);
+      let batchId = params.batchId ? parseInt(params.batchId, 10) : (batches[0]?.batch_id);
       if (!batchId) {
         el.innerHTML = '<div class="empty-state">차수(Batch)가 없습니다. 관리자에게 문의하세요.</div>';
         return;
@@ -23,7 +23,13 @@ Pages.projectList = {
       let page = 1;
       const pageSize = 12;
       const canManage = user.role === 'admin';
-      const showOwnSection = user.role === 'participant' || user.role === 'observer';
+      let activeType = 'primary';
+
+      const normalizeType = (value) => {
+        const text = (value || '').toString().trim().toLowerCase();
+        return text === 'associate' ? 'associate' : 'primary';
+      };
+
       const ownProjects = projects.filter((p) => p.is_my_project);
 
       el.innerHTML = `
@@ -37,19 +43,34 @@ Pages.projectList = {
               </div>
             </div>
             <div class="batch-tabs">
-              ${batches.map(b => `<button class="batch-tab${b.batch_id === batchId ? ' active' : ''}" data-bid="${b.batch_id}">${Fmt.escape(b.batch_name)}</button>`).join('')}
+              ${batches.map((b) => `<button class="batch-tab${b.batch_id === batchId ? ' active' : ''}" data-bid="${b.batch_id}">${Fmt.escape(b.batch_name)}</button>`).join('')}
             </div>
           </div>
-          ${showOwnSection ? `
-          <div class="project-own-section">
+
+          <div class="project-own-table-section">
             <h3>내 과제</h3>
-            ${ownProjects.length ? `
-              <div class="project-own-list">
-                ${ownProjects.map((p) => `<a class="project-own-item" href="#/project/${p.project_id}">${Fmt.escape(p.project_name)}</a>`).join('')}
-              </div>
-            ` : '<p class="empty-state">내 과제가 없습니다.</p>'}
+            <div class="project-list-table-wrap">
+              <table class="data-table project-list-table">
+                <thead>
+                  <tr>
+                    <th>구분</th>
+                    <th>과제명</th>
+                    <th>부서명</th>
+                    <th>과제 대표자</th>
+                    <th>AI기술 분류</th>
+                    <th>사용된 AI기술</th>
+                  </tr>
+                </thead>
+                <tbody id="own-project-list-body"></tbody>
+              </table>
+            </div>
           </div>
-          ` : ''}
+
+          <div class="project-type-tabs">
+            <button class="project-type-tab active" data-type="primary">정식과제</button>
+            <button class="project-type-tab" data-type="associate">준참여과제</button>
+          </div>
+
           <div class="project-list-table-wrap">
             <table class="data-table project-list-table">
               <thead>
@@ -67,6 +88,7 @@ Pages.projectList = {
           <div id="project-list-pagination"></div>
         </div>`;
 
+      const ownBody = document.getElementById('own-project-list-body');
       const listBody = document.getElementById('project-list-body');
       const paginationEl = document.getElementById('project-list-pagination');
 
@@ -76,48 +98,60 @@ Pages.projectList = {
         return String(v).toLowerCase();
       };
 
-      const sortedProjects = () => {
-        const rows = [...projects];
-        rows.sort((a, b) => {
+      const renderProjectRows = (rows, includeType = false) => {
+        if (!rows.length) {
+          const colCount = includeType ? 6 : 5;
+          return `<tr><td colspan="${colCount}" class="empty-state">표시할 과제가 없습니다.</td></tr>`;
+        }
+        return rows.map((p) => `
+          <tr class="project-list-row" data-id="${p.project_id}">
+            ${includeType ? `<td><span class="tag">${normalizeType(p.project_type) === 'primary' ? '정식과제' : '준참여과제'}</span></td>` : ''}
+            <td><strong>${Fmt.escape(p.project_name)}</strong></td>
+            <td>${Fmt.escape(p.organization || '-')}</td>
+            <td>${Fmt.escape(p.representative || '-')}</td>
+            <td>${Fmt.escape(p.ai_tech_category || p.category || '-')}</td>
+            <td>${Fmt.escape(p.ai_tech_used || '-')}</td>
+          </tr>
+        `).join('');
+      };
+
+      const sortedRows = (rows) => {
+        const copied = [...rows];
+        copied.sort((a, b) => {
           const av = valueByKey(a, sortBy);
           const bv = valueByKey(b, sortBy);
           if (av === bv) return 0;
           const result = av > bv ? 1 : -1;
           return sortDir === 'asc' ? result : -result;
         });
-        return rows;
+        return copied;
       };
 
-      const renderTable = () => {
-        const rows = sortedProjects();
+      const renderOwnTable = () => {
+        const rows = sortedRows(ownProjects);
+        ownBody.innerHTML = renderProjectRows(rows, true);
+        ownBody.querySelectorAll('.project-list-row').forEach((row) => row.addEventListener('click', () => {
+          Router.go(`/project/${row.dataset.id}`);
+        }));
+      };
+
+      const renderMainTable = () => {
+        const typed = projects.filter((p) => normalizeType(p.project_type) === activeType);
+        const rows = sortedRows(typed);
         const total = rows.length;
         const totalPages = Math.max(1, Math.ceil(total / pageSize));
         if (page > totalPages) page = totalPages;
         const start = (page - 1) * pageSize;
         const pageRows = rows.slice(start, start + pageSize);
 
-        listBody.innerHTML = pageRows.length ? pageRows.map((p) => `
-          <tr class="project-list-row" data-id="${p.project_id}">
-            <td>
-              <div class="project-list-title-cell">
-                ${showOwnSection && p.is_my_project ? '<span class="tag tag-done">내 과제</span>' : ''}
-                <strong>${Fmt.escape(p.project_name)}</strong>
-              </div>
-            </td>
-            <td>${Fmt.escape(p.organization || '-')}</td>
-            <td>${Fmt.escape(p.representative || '-')}</td>
-            <td>${Fmt.escape(p.ai_tech_category || p.category || '-')}</td>
-            <td>${Fmt.escape(p.ai_tech_used || '-')}</td>
-          </tr>
-        `).join('') : '<tr><td colspan="5" class="empty-state">이 차수에 과제가 없습니다.</td></tr>';
-
+        listBody.innerHTML = renderProjectRows(pageRows, false);
         listBody.querySelectorAll('.project-list-row').forEach((row) => row.addEventListener('click', () => {
           Router.go(`/project/${row.dataset.id}`);
         }));
 
         renderPagination(paginationEl, total, pageSize, page, (nextPage) => {
           page = nextPage;
-          renderTable();
+          renderMainTable();
         });
 
         el.querySelectorAll('.sort-btn').forEach((btn) => {
@@ -125,11 +159,20 @@ Pages.projectList = {
           btn.classList.toggle('active', active);
           btn.textContent = `${btn.textContent.replace(/[▲▼]\s*$/, '').trim()}${active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}`;
         });
+
+        el.querySelectorAll('.project-type-tab').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.type === activeType);
+        });
       };
 
-      renderTable();
+      const renderAll = () => {
+        renderOwnTable();
+        renderMainTable();
+      };
 
-      el.querySelectorAll('.batch-tab').forEach(btn => {
+      renderAll();
+
+      el.querySelectorAll('.batch-tab').forEach((btn) => {
         btn.addEventListener('click', () => Router.go(`/projects/${btn.dataset.bid}`));
       });
 
@@ -143,7 +186,13 @@ Pages.projectList = {
           sortDir = 'asc';
         }
         page = 1;
-        renderTable();
+        renderAll();
+      }));
+
+      el.querySelectorAll('.project-type-tab').forEach((btn) => btn.addEventListener('click', () => {
+        activeType = btn.dataset.type === 'associate' ? 'associate' : 'primary';
+        page = 1;
+        renderMainTable();
       }));
 
       if (canManage) {
@@ -164,6 +213,9 @@ Pages.projectList = {
         <div class="form-group"><label>조직 *</label><input name="organization" required /></div>
         <div class="form-group"><label>대표자</label><input name="representative" /></div>
         <div class="form-group"><label>분류</label><input name="category" /></div>
+        <div class="form-group"><label>과제 구분</label>
+          <select name="project_type"><option value="primary">정식과제</option><option value="associate">준참여과제</option></select>
+        </div>
         <div class="form-group"><label>공개여부</label>
           <select name="visibility"><option value="public">공개</option><option value="restricted">비공개</option></select>
         </div>
@@ -187,5 +239,3 @@ Pages.projectList = {
     });
   },
 };
-
-

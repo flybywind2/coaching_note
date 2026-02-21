@@ -70,7 +70,16 @@ const Fmt = {
       h3: new Set(['align', 'style']),
       h4: new Set(['align', 'style']),
     };
-    const allowedStyleProps = new Set(['color', 'background-color', 'text-align', 'font-size']);
+    const allowedStyleProps = new Set([
+      'color',
+      'background-color',
+      'text-align',
+      'font-size',
+      'width',
+      'height',
+      'min-width',
+      'min-height',
+    ]);
 
     const isSafeUrl = (url, forImage = false) => {
       if (!url) return false;

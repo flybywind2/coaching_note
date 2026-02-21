@@ -42,19 +42,20 @@ Pages.admin = {
           <button id="add-batch-btn" class="btn btn-primary">+ 차수 추가</button>
         </div>
         <table class="data-table">
-          <thead><tr><th>ID</th><th>차수명</th><th>시작일</th><th>종료일</th><th>상태</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>차수명</th><th>시작일</th><th>코칭 시작일</th><th>종료일</th><th>상태</th><th></th></tr></thead>
           <tbody>
             ${batches.map(b => `<tr>
               <td>${b.batch_id}</td>
               <td>${Fmt.escape(b.batch_name)}</td>
               <td>${Fmt.date(b.start_date)}</td>
+              <td>${Fmt.date(b.coaching_start_date || b.start_date)}</td>
               <td>${Fmt.date(b.end_date)}</td>
               <td><span class="tag">${Fmt.status(b.status)}</span></td>
               <td>
                 <button class="btn btn-sm btn-secondary edit-batch-btn" data-id="${b.batch_id}">수정</button>
                 <button class="btn btn-sm btn-danger del-batch-btn" data-id="${b.batch_id}">삭제</button>
               </td>
-            </tr>`).join('') || '<tr><td colspan="6" class="empty-state">차수가 없습니다.</td></tr>'}
+            </tr>`).join('') || '<tr><td colspan="7" class="empty-state">차수가 없습니다.</td></tr>'}
           </tbody>
         </table>
       </div>`;
@@ -64,6 +65,7 @@ Pages.admin = {
         <form id="add-batch-form">
           <div class="form-group"><label>차수명 *</label><input name="batch_name" required placeholder="2026년 1차" /></div>
           <div class="form-group"><label>시작일 *</label><input type="date" name="start_date" required /></div>
+          <div class="form-group"><label>코칭 시작일</label><input type="date" name="coaching_start_date" /></div>
           <div class="form-group"><label>종료일 *</label><input type="date" name="end_date" required /></div>
           <div class="form-group"><label>상태</label><select name="status"><option value="planned">예정</option><option value="ongoing">진행중</option><option value="completed">완료</option></select></div>
           <button type="submit" class="btn btn-primary">생성</button>
@@ -71,7 +73,9 @@ Pages.admin = {
       document.getElementById('add-batch-form').addEventListener('submit', async e => {
         e.preventDefault();
         const fd = new FormData(e.target);
-        await API.createBatch(Object.fromEntries(fd.entries()));
+        const payload = Object.fromEntries(fd.entries());
+        if (!payload.coaching_start_date) payload.coaching_start_date = null;
+        await API.createBatch(payload);
         Modal.close();
         this._renderBatches(el);
       });
@@ -85,6 +89,7 @@ Pages.admin = {
         <form id="edit-batch-form">
           <div class="form-group"><label>차수명 *</label><input name="batch_name" required value="${Fmt.escape(current.batch_name)}" /></div>
           <div class="form-group"><label>시작일 *</label><input type="date" name="start_date" required value="${current.start_date}" /></div>
+          <div class="form-group"><label>코칭 시작일</label><input type="date" name="coaching_start_date" value="${current.coaching_start_date || current.start_date}" /></div>
           <div class="form-group"><label>종료일 *</label><input type="date" name="end_date" required value="${current.end_date}" /></div>
           <div class="form-group"><label>상태</label><select name="status">
             <option value="planned"${current.status === 'planned' ? ' selected' : ''}>예정</option>
@@ -96,7 +101,9 @@ Pages.admin = {
       document.getElementById('edit-batch-form').addEventListener('submit', async e => {
         e.preventDefault();
         const fd = new FormData(e.target);
-        await API.updateBatch(batchId, Object.fromEntries(fd.entries()));
+        const payload = Object.fromEntries(fd.entries());
+        if (!payload.coaching_start_date) payload.coaching_start_date = null;
+        await API.updateBatch(batchId, payload);
         Modal.close();
         this._renderBatches(el);
       });
@@ -177,13 +184,16 @@ Pages.admin = {
         <h3>사용자 목록</h3>
         <div class="inline-actions">
           <button id="bulk-user-btn" class="btn btn-secondary">일괄 등록</button>
+          <button id="bulk-user-update-btn" class="btn btn-secondary">일괄 수정</button>
+          <button id="bulk-user-delete-btn" class="btn btn-danger">선택 삭제</button>
           <button id="add-user-btn" class="btn btn-primary">+ 사용자 추가</button>
         </div>
       </div>
       <table class="data-table">
-        <thead><tr><th>ID</th><th>Knox ID</th><th>이름</th><th>부서</th><th>역할</th><th>상태</th><th>이메일</th><th>생성일</th><th></th></tr></thead>
+        <thead><tr><th><input type="checkbox" id="select-all-users" /></th><th>ID</th><th>Knox ID</th><th>이름</th><th>부서</th><th>역할</th><th>상태</th><th>이메일</th><th>생성일</th><th></th></tr></thead>
         <tbody>
-          ${users.map(u => `<tr>
+          ${users.map(u => `<tr data-user-id="${u.user_id}">
+            <td><input type="checkbox" class="user-select-chk" value="${u.user_id}"${u.user_id === me.user_id ? ' disabled' : ''} /></td>
             <td>${u.user_id}</td>
             <td>${Fmt.escape(u.emp_id)}</td>
             <td>${Fmt.escape(u.name)}</td>
@@ -193,10 +203,23 @@ Pages.admin = {
             <td>${Fmt.escape(u.email || '-')}</td>
             <td>${Fmt.date(u.created_at)}</td>
             <td>${this._renderUserActionButton(u, me)}</td>
-          </tr>`).join('') || '<tr><td colspan="9" class="empty-state">사용자가 없습니다.</td></tr>'}
+          </tr>`).join('') || '<tr><td colspan="10" class="empty-state">사용자가 없습니다.</td></tr>'}
         </tbody>
       </table>
     </div>`;
+
+    const getSelectedUserIds = () => (
+      Array.from(el.querySelectorAll('.user-select-chk:checked'))
+        .map((chk) => Number.parseInt(chk.value, 10))
+        .filter((v) => !Number.isNaN(v))
+    );
+    const selectAll = document.getElementById('select-all-users');
+    selectAll?.addEventListener('change', (e) => {
+      const checked = !!e.target.checked;
+      el.querySelectorAll('.user-select-chk:not(:disabled)').forEach((chk) => {
+        chk.checked = checked;
+      });
+    });
 
     document.getElementById('add-user-btn').addEventListener('click', () => {
       Modal.open(`<h2>사용자 추가</h2>
@@ -212,7 +235,7 @@ Pages.admin = {
               <option value="admin">관리자</option>
             </select>
           </div>
-          <div class="form-group"><label>이메일</label><input type="email" name="email" placeholder="user@company.com" /></div>
+          <div class="form-group"><label>이메일</label><input type="email" name="email" placeholder="미입력 시 Knox ID@samsung.com 자동 생성" /></div>
           <button type="submit" class="btn btn-primary">생성</button>
           <p class="form-error" id="add-user-err" style="display:none;"></p>
         </form>`);
@@ -245,10 +268,12 @@ Pages.admin = {
           <div class="form-group">
             <label>입력 포맷</label>
             <p class="hint">한 줄에 한 명씩 입력하세요. 구분자는 탭 또는 콤마를 사용할 수 있습니다.</p>
-            <p class="hint"><code>Knox ID, 이름, 부서, 역할, 이메일(선택)</code></p>
+            <p class="hint"><code>Knox ID, 이름, 부서, 역할</code></p>
+            <p class="hint">이메일은 <code>Knox ID@samsung.com</code> 형식으로 자동 생성됩니다.</p>
+            <p class="hint">역할 값: <code>participant(참여자)</code>, <code>observer(참관자)</code>, <code>coach(코치)</code>, <code>admin(관리자)</code></p>
           </div>
           <div class="form-group">
-            <textarea name="rows" rows="10" placeholder="knox001, 홍길동, 개발팀, participant, hong@company.com"></textarea>
+            <textarea name="rows" rows="10" placeholder="예시: knox001, 홍길동, 개발팀, participant"></textarea>
           </div>
           <button type="submit" class="btn btn-primary">일괄 반영</button>
           <p class="form-error" id="bulk-user-err" style="display:none;"></p>
@@ -278,7 +303,6 @@ Pages.admin = {
               name: cells[1] || '',
               department: cells[2] || null,
               role: this._normalizeRole(cells[3] || ''),
-              email: cells[4] || null,
             };
           });
 
@@ -296,6 +320,118 @@ Pages.admin = {
           await this._renderUsers(el);
         } catch (err) {
           errEl.textContent = err.message || '일괄 등록 실패';
+          errEl.style.display = 'block';
+        }
+      });
+    });
+
+    document.getElementById('bulk-user-delete-btn').addEventListener('click', async () => {
+      const userIds = getSelectedUserIds();
+      if (!userIds.length) {
+        alert('삭제할 사용자를 선택하세요.');
+        return;
+      }
+      if (!confirm(`선택한 ${userIds.length}명을 완전 삭제하시겠습니까?`)) return;
+      try {
+        const result = await API.bulkDeleteUsers({ user_ids: userIds });
+        const summary = `삭제 ${result.deleted}건 / 실패 ${result.failed}건`;
+        if (result.failed > 0) {
+          alert(`${summary}\n${(result.errors || []).slice(0, 5).join('\n')}`);
+        } else {
+          alert(summary);
+        }
+        await this._renderUsers(el);
+      } catch (err) {
+        alert(err.message || '일괄 삭제 실패');
+      }
+    });
+
+    document.getElementById('bulk-user-update-btn').addEventListener('click', async () => {
+      const userIds = getSelectedUserIds();
+      if (!userIds.length) {
+        alert('수정할 사용자를 선택하세요.');
+        return;
+      }
+      const [batches, allProjects] = await Promise.all([
+        API.getBatches().catch(() => []),
+        (async () => {
+          const rows = await API.getBatches().catch(() => []);
+          const mapped = await Promise.all(rows.map(async (b) => ({
+            batch: b,
+            projects: await API.getProjects(b.batch_id).catch(() => []),
+          })));
+          return mapped.flatMap((row) => row.projects.map((p) => ({
+            ...p,
+            batch_name: row.batch.batch_name,
+          })));
+        })(),
+      ]);
+      Modal.open(`<h2>사용자 일괄 수정</h2>
+        <form id="bulk-update-user-form">
+          <p class="hint">선택한 ${userIds.length}명에게 체크한 항목만 일괄 반영됩니다.</p>
+          <div class="form-group">
+            <label><input type="checkbox" name="apply_department" /> 부서 변경</label>
+            <input name="department" placeholder="예: AI혁신팀" />
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" name="apply_role" /> 역할 변경</label>
+            <select name="role">
+              <option value="">선택</option>
+              <option value="participant">참여자</option>
+              <option value="observer">참관자</option>
+              <option value="coach">코치</option>
+              <option value="admin">관리자</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" name="apply_batch_ids" /> 차수 변경 (복수 선택)</label>
+            <div class="perm-checkbox-grid compact-check-grid">
+              ${batches.map((b) => `<label><input type="checkbox" name="batch_ids" value="${b.batch_id}" /> ${Fmt.escape(b.batch_name)}</label>`).join('') || '<p class="empty-state">차수가 없습니다.</p>'}
+            </div>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" name="apply_project_ids" /> 과제 권한 변경 (복수 선택)</label>
+            <div class="perm-checkbox-grid compact-check-grid">
+              ${allProjects.map((p) => `<label><input type="checkbox" name="project_ids" value="${p.project_id}" /> [${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</label>`).join('') || '<p class="empty-state">과제가 없습니다.</p>'}
+            </div>
+          </div>
+          <p class="hint">Knox ID/이름/이메일은 일괄 수정 대상이 아닙니다.</p>
+          <button type="submit" class="btn btn-primary">일괄 반영</button>
+          <p class="form-error" id="bulk-update-user-err" style="display:none;"></p>
+        </form>`, null, { className: 'modal-box-xl' });
+
+      document.getElementById('bulk-update-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errEl = document.getElementById('bulk-update-user-err');
+        errEl.style.display = 'none';
+        const fd = new FormData(e.target);
+        const payload = { user_ids: userIds };
+        if (fd.has('apply_department')) payload.department = (fd.get('department') || '').toString().trim() || null;
+        if (fd.has('apply_role')) payload.role = (fd.get('role') || '').toString();
+        if (fd.has('apply_batch_ids')) {
+          payload.batch_ids = fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+        }
+        if (fd.has('apply_project_ids')) {
+          payload.project_ids = fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+        }
+        if (Object.keys(payload).length <= 1) {
+          errEl.textContent = '반영할 항목을 최소 1개 선택하세요.';
+          errEl.style.display = 'block';
+          return;
+        }
+        try {
+          const result = await API.bulkUpdateUsers(payload);
+          const summary = `수정 ${result.updated}건 / 실패 ${result.failed}건`;
+          if (result.failed > 0) {
+            errEl.textContent = `${summary}\n${(result.errors || []).slice(0, 5).join('\n')}`;
+            errEl.style.display = 'block';
+          } else {
+            alert(summary);
+            Modal.close();
+            await this._renderUsers(el);
+          }
+        } catch (err) {
+          errEl.textContent = err.message || '일괄 수정 실패';
           errEl.style.display = 'block';
         }
       });
@@ -337,16 +473,16 @@ Pages.admin = {
           </div>
           <div class="form-group"><label>이메일</label><input type="email" name="email" value="${Fmt.escape(current.email || '')}" /></div>
           <div class="form-group">
-            <label>차수 권한 (복수 선택)</label>
-            <p class="hint">선택하지 않으면 전체 차수 접근 허용</p>
-            <div class="cal-coach-grid">
+            <label>차수 (복수 선택)</label>
+            <p class="hint">접근 권한이 아닌 사용자 소속/운영 분류용입니다.</p>
+            <div class="perm-checkbox-grid compact-check-grid">
               ${batches.map((b) => `<label><input type="checkbox" name="batch_ids" value="${b.batch_id}"${batchIds.has(Number(b.batch_id)) ? ' checked' : ''} /> ${Fmt.escape(b.batch_name)}</label>`).join('') || '<p class="empty-state">차수가 없습니다.</p>'}
             </div>
           </div>
           <div class="form-group">
             <label>과제 권한 (복수 선택)</label>
-            <p class="hint">선택하지 않으면 차수 권한/기본 권한 규칙에 따름</p>
-            <div class="cal-coach-grid">
+            <p class="hint">선택한 과제만 추가로 제한할 때 사용합니다.</p>
+            <div class="perm-checkbox-grid compact-check-grid">
               ${allProjects.map((p) => `<label><input type="checkbox" name="project_ids" value="${p.project_id}"${projectIds.has(Number(p.project_id)) ? ' checked' : ''} /> [${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</label>`).join('') || '<p class="empty-state">과제가 없습니다.</p>'}
             </div>
           </div>
@@ -382,7 +518,7 @@ Pages.admin = {
     }));
 
     el.querySelectorAll('.del-user-btn').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('사용자를 삭제(비활성화)하시겠습니까?')) return;
+      if (!confirm('사용자를 완전 삭제하시겠습니까?')) return;
       try {
         await API.deleteUser(+btn.dataset.id);
         await this._renderUsers(el);
@@ -390,21 +526,11 @@ Pages.admin = {
         alert(err.message || '삭제 실패');
       }
     }));
-
-    el.querySelectorAll('.restore-user-btn').forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('사용자를 복구(재활성화)하시겠습니까?')) return;
-      try {
-        await API.restoreUser(+btn.dataset.id);
-        await this._renderUsers(el);
-      } catch (err) {
-        alert(err.message || '복구 실패');
-      }
-    }));
   },
 
   _renderUserActionButton(user, me) {
     if (user.user_id === me.user_id) return '-';
-    if (!user.is_active) return `<button class="btn btn-sm btn-secondary restore-user-btn" data-id="${user.user_id}">복구</button>`;
+    if (!user.is_active) return '<span class="hint">비활성</span>';
     return `<div class="inline-actions">
       <button class="btn btn-sm btn-secondary edit-user-btn" data-id="${user.user_id}">수정</button>
       <button class="btn btn-sm btn-danger del-user-btn" data-id="${user.user_id}">삭제</button>

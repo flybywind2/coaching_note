@@ -11,6 +11,7 @@ class CoachingPlanUpsert(BaseModel):
     coach_user_id: Optional[int] = None
     plan_date: date
     planned_project_id: Optional[int] = None
+    is_all_day: bool = True
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     plan_note: Optional[str] = None
@@ -29,6 +30,7 @@ class CoachingPlanCell(BaseModel):
     plan_id: Optional[int] = None
     planned_project_id: Optional[int] = None
     project_name: Optional[str] = None
+    is_all_day: bool = True
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     plan_note: Optional[str] = None
@@ -37,9 +39,10 @@ class CoachingPlanCell(BaseModel):
     auto_minutes: int = 0
     override_minutes: Optional[int] = None
     final_minutes: int = 0
-    log_count: int = 0
     actual_source: str = "none"  # none/auto/override
     override_reason: Optional[str] = None
+    actual_start_time: Optional[str] = None
+    actual_end_time: Optional[str] = None
 
 
 class CoachingPlanRow(BaseModel):
@@ -55,5 +58,5 @@ class CoachingPlanGridOut(BaseModel):
     start: date
     end: date
     dates: List[date]
+    global_schedule_dates: List[date] = []
     rows: List[CoachingPlanRow]
-

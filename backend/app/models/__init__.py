@@ -11,13 +11,14 @@ from app.models.allowed_ip import AllowedIPRange
 from app.models.task import ProjectTask
 from app.models.schedule import ProgramSchedule
 from app.models.board import Board, BoardPost, PostComment
-from app.models.notification import Notification
+from app.models.notification import Notification, NotificationPreference
 from app.models.ai_content import AIGeneratedContent
 from app.models.content_version import ContentVersion
 from app.models.coaching_template import CoachingNoteTemplate
 from app.models.site_content import SiteContent
 from app.models.coaching_plan import CoachDailyPlan, CoachActualOverride
 from app.models.access_scope import UserBatchAccess, UserProjectAccess
+from app.models.attendance import DailyAttendanceLog
 
 __all__ = [
     "User", "Coach",
@@ -31,13 +32,14 @@ __all__ = [
     "ProjectTask",
     "ProgramSchedule",
     "Board", "BoardPost", "PostComment",
-    "Notification",
+    "Notification", "NotificationPreference",
     "AIGeneratedContent",
     "ContentVersion",
     "CoachingNoteTemplate",
     "SiteContent",
     "CoachDailyPlan", "CoachActualOverride",
     "UserBatchAccess", "UserProjectAccess",
+    "DailyAttendanceLog",
 ]
 
 

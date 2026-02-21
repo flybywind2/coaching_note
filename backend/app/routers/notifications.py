@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.schemas.notification import NotificationOut
+from app.schemas.notification import (
+    NotificationOut,
+    NotificationPreferenceOut,
+    NotificationPreferenceUpdate,
+)
 from app.services import notification_service
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
@@ -30,5 +34,26 @@ def mark_read(noti_id: int, db: Session = Depends(get_db), current_user: User = 
 def mark_all_read(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     notification_service.mark_all_read(db, current_user.user_id)
     return {"message": "모든 알림을 읽음 처리했습니다."}
+
+
+@router.get("/preferences", response_model=NotificationPreferenceOut)
+def get_preferences(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return notification_service.get_or_create_preference(db, current_user.user_id)
+
+
+@router.put("/preferences", response_model=NotificationPreferenceOut)
+def update_preferences(
+    payload: NotificationPreferenceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return notification_service.update_preference(
+        db,
+        user_id=current_user.user_id,
+        mention_enabled=payload.mention_enabled,
+        board_enabled=payload.board_enabled,
+        deadline_enabled=payload.deadline_enabled,
+        frequency=payload.frequency,
+    )
 
 

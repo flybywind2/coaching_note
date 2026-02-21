@@ -1,6 +1,6 @@
 """User 요청/응답 계약을 위한 Pydantic 스키마입니다."""
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 
@@ -72,7 +72,6 @@ class UserBulkItem(BaseModel):
     name: str
     department: Optional[str] = None
     role: str
-    email: Optional[str] = None
 
 
 class UserBulkUpsertRequest(BaseModel):
@@ -95,5 +94,29 @@ class UserPermissionUpdate(BaseModel):
 
 class UserPermissionOut(UserPermissionUpdate):
     user_id: int
+
+
+class UserBulkDeleteRequest(BaseModel):
+    user_ids: list[int]
+
+
+class UserBulkDeleteResult(BaseModel):
+    deleted: int
+    failed: int
+    errors: list[str]
+
+
+class UserBulkUpdateRequest(BaseModel):
+    user_ids: list[int]
+    department: Optional[str] = None
+    role: Optional[str] = None
+    batch_ids: Optional[list[int]] = None
+    project_ids: Optional[list[int]] = None
+
+
+class UserBulkUpdateResult(BaseModel):
+    updated: int
+    failed: int
+    errors: list[str]
 
 
