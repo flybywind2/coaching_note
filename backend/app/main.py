@@ -89,6 +89,15 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE program_schedule ADD COLUMN repeat_group_id VARCHAR(64)"))
         if "repeat_sequence" not in schedule_columns:
             conn.execute(text("ALTER TABLE program_schedule ADD COLUMN repeat_sequence INTEGER"))
+        if "visibility_scope" not in schedule_columns:
+            conn.execute(text("ALTER TABLE program_schedule ADD COLUMN visibility_scope VARCHAR(20)"))
+            conn.execute(text(
+                "UPDATE program_schedule "
+                "SET visibility_scope = CASE "
+                "WHEN schedule_type = 'coaching' THEN 'coaching' "
+                "ELSE 'global' END "
+                "WHERE visibility_scope IS NULL OR visibility_scope = ''"
+            ))
         coaching_plan_rows = conn.execute(text("PRAGMA table_info(coach_daily_plan)")).fetchall()
         coaching_plan_columns = {str(row[1]) for row in coaching_plan_rows}
         if "is_all_day" not in coaching_plan_columns:

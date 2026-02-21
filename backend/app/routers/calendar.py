@@ -2,14 +2,14 @@
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import date, datetime
+from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime, timezone
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
-from app.models.coaching_plan import CoachDailyPlan
+from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.schedule import ProgramSchedule
-from app.models.session import CoachingSession, SessionAttendee
+from app.models.session import AttendanceLog, CoachingSession, SessionAttendee
 from app.models.task import ProjectTask
 from app.models.project import Project
 from app.utils.permissions import is_admin_or_coach
@@ -18,10 +18,41 @@ router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
 EVENT_COLORS = {
     "program": "#4CAF50",
+    "coaching_schedule": "#00ACC1",
     "session": "#2196F3",
     "milestone": "#8A5CF6",
     "task": "#8A5CF6",
 }
+
+
+def _normalize_schedule_scope(schedule: ProgramSchedule) -> str:
+    raw = str(getattr(schedule, "visibility_scope", "") or "").strip().lower()
+    if raw in ("global", "coaching"):
+        return raw
+    if str(schedule.schedule_type or "").strip().lower() == "coaching":
+        return "coaching"
+    return "global"
+
+
+def _normalize_dt(value: datetime | None, session_date: date) -> datetime | None:
+    if value is None:
+        if session_date != date.today():
+            return None
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _duration_minutes(check_in_time: datetime | None, check_out_time: datetime | None, session_date: date) -> int:
+    if not check_in_time:
+        return 0
+    start_at = _normalize_dt(check_in_time, session_date)
+    end_at = _normalize_dt(check_out_time, session_date)
+    if start_at is None or end_at is None:
+        return 0
+    minutes = int((end_at - start_at).total_seconds() // 60)
+    return max(minutes, 0)
 
 
 @router.get("")
@@ -40,7 +71,7 @@ def get_calendar(
     }
 
     # 1. Program schedules
-    schedules = (
+    raw_schedules = (
         db.query(ProgramSchedule)
         .filter(
             ProgramSchedule.batch_id == batch_id,
@@ -50,9 +81,17 @@ def get_calendar(
         .order_by(ProgramSchedule.start_datetime.asc())
         .all()
     )
+    schedules = []
+    for row in raw_schedules:
+        scope = _normalize_schedule_scope(row)
+        if scope == "coaching" and not is_admin_or_coach(current_user):
+            continue
+        schedules.append(row)
+
     schedule_date_set = {row.start_datetime.date() for row in schedules}
     coach_plan_map = {}
-    if schedule_date_set:
+    coach_actual_map = {}
+    if schedule_date_set and is_admin_or_coach(current_user):
         coach_plan_rows = (
             db.query(
                 CoachDailyPlan.plan_date,
@@ -81,15 +120,91 @@ def get_calendar(
                 "end_time": row.end_time,
             })
 
+        coaches = (
+            db.query(User.user_id, User.name)
+            .filter(
+                User.is_active == True,  # noqa: E712
+                User.role.in_(["admin", "coach"]),
+            )
+            .all()
+        )
+        coach_name_map = {int(row.user_id): row.name for row in coaches}
+        coach_ids = [int(row.user_id) for row in coaches]
+
+        auto_map: Dict[Tuple[int, date], int] = {}
+        if coach_ids:
+            attendance_rows = (
+                db.query(
+                    CoachingSession.session_date,
+                    AttendanceLog.user_id,
+                    AttendanceLog.check_in_time,
+                    AttendanceLog.check_out_time,
+                )
+                .join(CoachingSession, AttendanceLog.session_id == CoachingSession.session_id)
+                .filter(
+                    CoachingSession.batch_id == batch_id,
+                    CoachingSession.session_date.in_(schedule_date_set),
+                    AttendanceLog.user_id.in_(coach_ids),
+                )
+                .all()
+            )
+            for row in attendance_rows:
+                key = (int(row.user_id), row.session_date)
+                auto_map[key] = int(auto_map.get(key, 0)) + _duration_minutes(
+                    row.check_in_time,
+                    row.check_out_time,
+                    row.session_date,
+                )
+
+        override_map: Dict[Tuple[int, date], int] = {}
+        if coach_ids:
+            override_rows = (
+                db.query(
+                    CoachActualOverride.coach_user_id,
+                    CoachActualOverride.work_date,
+                    CoachActualOverride.actual_minutes,
+                )
+                .filter(
+                    CoachActualOverride.batch_id == batch_id,
+                    CoachActualOverride.work_date.in_(schedule_date_set),
+                    CoachActualOverride.coach_user_id.in_(coach_ids),
+                )
+                .all()
+            )
+            for row in override_rows:
+                override_map[(int(row.coach_user_id), row.work_date)] = int(row.actual_minutes or 0)
+
+        touched_keys = set(auto_map.keys()) | set(override_map.keys())
+        for coach_id, work_date in sorted(touched_keys, key=lambda k: (k[1], coach_name_map.get(k[0], ""))):
+            override_minutes = override_map.get((coach_id, work_date))
+            auto_minutes = int(auto_map.get((coach_id, work_date), 0))
+            if override_minutes is not None:
+                final_minutes = int(override_minutes)
+                source = "override"
+            elif auto_minutes > 0:
+                final_minutes = auto_minutes
+                source = "auto"
+            else:
+                continue
+            coach_actual_map.setdefault(work_date, []).append({
+                "coach_user_id": coach_id,
+                "coach_name": coach_name_map.get(coach_id, f"코치#{coach_id}"),
+                "final_minutes": final_minutes,
+                "actual_source": source,
+            })
+
     for s in schedules:
-        coach_plans = coach_plan_map.get(s.start_datetime.date(), [])
+        scope = _normalize_schedule_scope(s)
+        coach_plans = coach_plan_map.get(s.start_datetime.date(), []) if scope == "coaching" else []
+        coach_actuals = coach_actual_map.get(s.start_datetime.date(), []) if scope == "coaching" else []
+        color = s.color or (EVENT_COLORS["coaching_schedule"] if scope == "coaching" else EVENT_COLORS["program"])
         events.append({
-            "event_type": "program",
+            "event_type": "coaching_schedule" if scope == "coaching" else "program",
             "id": s.schedule_id,
             "title": s.title,
             "start": s.start_datetime.isoformat(),
             "end": s.end_datetime.isoformat() if s.end_datetime else None,
-            "color": s.color or EVENT_COLORS["program"],
+            "color": color,
             "location": s.location,
             "schedule_type": s.schedule_type,
             "description": s.description,
@@ -97,8 +212,9 @@ def get_calendar(
             "repeat_group_id": s.repeat_group_id,
             "repeat_sequence": s.repeat_sequence,
             "coach_plans": coach_plans,
+            "coach_actuals": coach_actuals,
             "manage_type": "schedule",
-            "scope": "global",
+            "scope": scope,
         })
 
     # 2. Coaching sessions

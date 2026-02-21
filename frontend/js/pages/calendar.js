@@ -48,6 +48,7 @@ Pages.calendar = {
           <div id="cal-grid" class="cal-grid"></div>
           <div class="cal-legend">
             <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>공통 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#00ACC1"></span>코칭 일정</span>
             <span class="legend-item"><span class="dot" style="background:#2196F3"></span>과제 일정</span>
             <span class="legend-item"><span class="dot" style="background:#8A5CF6"></span>마일스톤</span>
           </div>
@@ -464,6 +465,29 @@ Pages.calendar = {
     return row.coach_name;
   },
 
+  _formatMinutes(minutes) {
+    const total = Number(minutes || 0);
+    if (!total) return '0분';
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    if (!h) return `${m}분`;
+    if (!m) return `${h}시간`;
+    return `${h}시간 ${m}분`;
+  },
+
+  _coachActualLabel(row) {
+    if (!row) return '-';
+    const source = row.actual_source === 'override' ? '수동' : '자동';
+    return `${row.coach_name} (${this._formatMinutes(row.final_minutes)} · ${source})`;
+  },
+
+  _scopeLabel(scope) {
+    if (scope === 'global') return '공통';
+    if (scope === 'coaching') return '코칭';
+    if (scope === 'project') return '과제';
+    return scope || '-';
+  },
+
   async _openEventCreateModal(batchId, options = {}) {
     const {
       presetDate = '',
@@ -491,6 +515,7 @@ Pages.calendar = {
           <label>공개 범위 *</label>
           <select name="scope" id="cal-event-scope">
             <option value="global"${scopeValue === 'global' ? ' selected' : ''}>공통 일정</option>
+            <option value="coaching"${scopeValue === 'coaching' ? ' selected' : ''}>코칭 일정</option>
             <option value="project"${scopeValue === 'project' ? ' selected' : ''}>과제 일정</option>
           </select>
         </div>
@@ -508,7 +533,7 @@ Pages.calendar = {
         </div>
         <div class="form-group" id="cal-color-row">
           <label>색상</label>
-          <input type="color" name="color" value="#4caf50" />
+          <input type="color" name="color" value="${scopeValue === 'coaching' ? '#00acc1' : '#4caf50'}" />
         </div>
         <div class="form-group">
           <label>설명</label>
@@ -570,9 +595,16 @@ Pages.calendar = {
 
     const syncScope = () => {
       const isProject = allowGlobalScope ? scopeEl.value === 'project' : true;
+      const isCoaching = allowGlobalScope ? scopeEl.value === 'coaching' : false;
       projectRow.style.display = isProject ? '' : 'none';
       colorRow.style.display = isProject ? 'none' : '';
       repeatRow.style.display = isProject ? 'none' : '';
+      if (allowGlobalScope) {
+        const colorInput = document.querySelector('#calendar-event-form input[name="color"]');
+        if (colorInput && !isProject) {
+          colorInput.value = isCoaching ? '#00acc1' : '#4caf50';
+        }
+      }
       if (isProject && !projectSelect.value && selectableProjects.length === 1) {
         projectSelect.value = String(selectableProjects[0].project_id);
       }
@@ -607,7 +639,6 @@ Pages.calendar = {
       const projectId = Number.parseInt((fd.get('project_id') || '').toString(), 10);
       const repeatType = (fd.get('repeat_type') || 'none').toString();
       const repeatEndDate = (fd.get('repeat_end_date') || '').toString() || date;
-      const color = (fd.get('color') || '#4CAF50').toString();
 
       const errEl = document.getElementById('calendar-event-err');
       errEl.style.display = 'none';
@@ -623,10 +654,10 @@ Pages.calendar = {
         return;
       }
 
-      const dates = scope === 'global'
-        ? this._buildRepeatingDates(date, repeatType, repeatEndDate, String(batch.end_date || ''))
-        : [date];
-      if (!dates.length) {
+      const dates = scope === 'project'
+        ? [date]
+        : this._buildRepeatingDates(date, repeatType, repeatEndDate, String(batch.end_date || ''));
+      if (scope !== 'project' && !dates.length) {
         errEl.textContent = '반복 종료일이 올바르지 않거나 차수 종료일을 초과했습니다.';
         errEl.style.display = 'block';
         return;
@@ -636,21 +667,7 @@ Pages.calendar = {
         const repeatGroupId = dates.length > 1 ? `schedule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : null;
         for (let i = 0; i < dates.length; i += 1) {
           const dateStr = dates[i];
-          if (scope === 'global') {
-            await API.createSchedule({
-              batch_id: batchId,
-              title,
-              description: description || null,
-              schedule_type: 'other',
-              start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
-              end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
-              location: location || null,
-              is_all_day: isAllDay,
-              color,
-              repeat_group_id: repeatGroupId,
-              repeat_sequence: i + 1,
-            });
-          } else {
+          if (scope === 'project') {
             await API.createSession({
               batch_id: batchId,
               project_id: projectId,
@@ -659,6 +676,22 @@ Pages.calendar = {
               end_time: isAllDay ? '23:59' : endTime,
               location: location || null,
               note: title,
+            });
+          } else {
+            const isCoaching = scope === 'coaching';
+            await API.createSchedule({
+              batch_id: batchId,
+              title,
+              description: description || null,
+              schedule_type: isCoaching ? 'coaching' : 'other',
+              visibility_scope: isCoaching ? 'coaching' : 'global',
+              start_datetime: this._toDateTimeString(dateStr, isAllDay ? '00:00' : startTime),
+              end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
+              location: location || null,
+              is_all_day: isAllDay,
+              color: (fd.get('color') || (isCoaching ? '#00ACC1' : '#4CAF50')).toString(),
+              repeat_group_id: repeatGroupId,
+              repeat_sequence: i + 1,
             });
           }
         }
@@ -673,6 +706,7 @@ Pages.calendar = {
   },
   _openEventDetailModal(event, batchId, policy) {
     const coachPlans = Array.isArray(event.coach_plans) ? event.coach_plans : [];
+    const coachActuals = Array.isArray(event.coach_actuals) ? event.coach_actuals : [];
     const canEdit = (
       (policy.isAdmin && ['schedule', 'session', 'task'].includes(event.manage_type))
       || (policy.isParticipant && event.scope === 'project' && ['session', 'task'].includes(event.manage_type))
@@ -685,9 +719,12 @@ Pages.calendar = {
     lines.push(`<div class="info-item full"><label>일정</label><span>${Fmt.escape(this._formatEventPeriod(event))}</span></div>`);
     if (event.location) lines.push(`<div class="info-item"><label>장소</label><span>${Fmt.escape(event.location)}</span></div>`);
     if (event.description) lines.push(`<div class="info-item full"><label>설명</label><span>${Fmt.escape(event.description)}</span></div>`);
-    if (event.scope) lines.push(`<div class="info-item"><label>공개 범위</label><span>${Fmt.escape(event.scope === 'global' ? '공통' : '과제')}</span></div>`);
+    if (event.scope) lines.push(`<div class="info-item"><label>공개 범위</label><span>${Fmt.escape(this._scopeLabel(event.scope))}</span></div>`);
     if (coachPlans.length) {
       lines.push(`<div class="info-item full"><label>참여 코치</label><span>${Fmt.escape(coachPlans.map((row) => this._coachPlanLabel(row)).join(', '))}</span></div>`);
+    }
+    if (coachActuals.length) {
+      lines.push(`<div class="info-item full"><label>코치 실적</label><span>${Fmt.escape(coachActuals.map((row) => this._coachActualLabel(row)).join(', '))}</span></div>`);
     }
 
     Modal.open(`<h2>일정 상세</h2>
@@ -827,6 +864,7 @@ Pages.calendar = {
             title,
             description,
             schedule_type: event.schedule_type || 'other',
+            visibility_scope: event.scope === 'coaching' ? 'coaching' : 'global',
             start_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '00:00' : startTime),
             end_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '23:59' : endTime),
             location,

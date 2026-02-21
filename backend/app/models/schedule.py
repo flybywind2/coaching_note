@@ -15,6 +15,8 @@ class ProgramSchedule(Base):
     description = Column(Text)
     schedule_type = Column(String(30), nullable=False)
     # orientation/workshop/mid_presentation/final_presentation/networking/other
+    visibility_scope = Column(String(20), default="global")
+    # global/coaching
     start_datetime = Column(DateTime, nullable=False)
     end_datetime = Column(DateTime)
     location = Column(String(200))

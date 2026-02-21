@@ -208,3 +208,39 @@ def test_participant_cannot_edit_global_schedule(client, db, seed_users, seed_ba
         headers=headers,
     )
     assert resp.status_code == 403
+
+
+def test_participant_calendar_hides_coaching_scope_schedule(client, db, seed_users, seed_batch):
+    headers = auth_headers(client, "user001")
+    global_schedule = ProgramSchedule(
+        batch_id=seed_batch.batch_id,
+        title="global schedule",
+        description="seed",
+        schedule_type="other",
+        visibility_scope="global",
+        start_datetime=datetime(2026, 2, 22, 10, 0, 0),
+        end_datetime=datetime(2026, 2, 22, 11, 0, 0),
+        created_by=seed_users["admin"].user_id,
+    )
+    coaching_schedule = ProgramSchedule(
+        batch_id=seed_batch.batch_id,
+        title="coaching schedule",
+        description="seed",
+        schedule_type="coaching",
+        visibility_scope="coaching",
+        start_datetime=datetime(2026, 2, 23, 10, 0, 0),
+        end_datetime=datetime(2026, 2, 23, 11, 0, 0),
+        created_by=seed_users["admin"].user_id,
+    )
+    db.add_all([global_schedule, coaching_schedule])
+    db.commit()
+
+    resp = client.get(
+        f"/api/calendar?batch_id={seed_batch.batch_id}&start=2026-02-01&end=2026-02-28",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    events = resp.json()["events"]
+    schedule_events = [ev for ev in events if ev.get("manage_type") == "schedule"]
+    assert any(ev.get("scope") == "global" for ev in schedule_events)
+    assert all(ev.get("scope") != "coaching" for ev in schedule_events)

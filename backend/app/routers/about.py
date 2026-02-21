@@ -9,6 +9,7 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.access_scope import UserBatchAccess
 from app.models.batch import Batch
+from app.models.project import Project, ProjectMember
 from app.models.site_content import SiteContent
 from app.models.user import User, Coach
 from app.schemas.about import (
@@ -110,6 +111,34 @@ def _next_display_order(db: Session, batch_id: int | None) -> int:
     return int(max_order or 0) + 1
 
 
+def _get_coach_users_for_batch(db: Session, batch_id: int) -> list[User]:
+    users_from_access = (
+        db.query(User)
+        .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
+        .filter(
+            UserBatchAccess.batch_id == batch_id,
+            User.is_active == True,  # noqa: E712
+            User.role.in_(["coach", "admin"]),
+        )
+        .all()
+    )
+    users_from_project_member = (
+        db.query(User)
+        .join(ProjectMember, ProjectMember.user_id == User.user_id)
+        .join(Project, Project.project_id == ProjectMember.project_id)
+        .filter(
+            Project.batch_id == batch_id,
+            User.is_active == True,  # noqa: E712
+            User.role.in_(["coach", "admin"]),
+        )
+        .all()
+    )
+    merged_by_user_id: dict[int, User] = {}
+    for user in users_from_access + users_from_project_member:
+        merged_by_user_id[user.user_id] = user
+    return sorted(merged_by_user_id.values(), key=lambda row: (row.name or "").lower())
+
+
 @router.get("/content", response_model=SiteContentOut)
 def get_content(
     key: str,
@@ -173,38 +202,39 @@ def list_coaches(
     rows = all_rows if include_hidden else [row for row in all_rows if row.is_visible]
     merged: list[CoachProfileOut] = [_coach_to_out(row) for row in rows]
 
-    if batch_id is not None:
+    if batch_id is None:
         coach_users = (
             db.query(User)
-            .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
             .filter(
-                UserBatchAccess.batch_id == batch_id,
                 User.is_active == True,  # noqa: E712
                 User.role.in_(["coach", "admin"]),
             )
             .order_by(User.name.asc())
             .all()
         )
-        for user in coach_users:
-            existing = existing_by_user.get(user.user_id)
-            if existing:
-                continue
-            merged.append(
-                CoachProfileOut(
-                    coach_id=None,
-                    user_id=user.user_id,
-                    batch_id=batch_id,
-                    name=user.name,
-                    coach_type="internal",
-                    department=user.department,
-                    affiliation=user.department,
-                    specialty=None,
-                    career=None,
-                    photo_url=None,
-                    is_visible=True,
-                    display_order=9999,
-                )
+    else:
+        coach_users = _get_coach_users_for_batch(db, batch_id)
+
+    for user in coach_users:
+        existing = existing_by_user.get(user.user_id)
+        if existing:
+            continue
+        merged.append(
+            CoachProfileOut(
+                coach_id=None,
+                user_id=user.user_id,
+                batch_id=batch_id,
+                name=user.name,
+                coach_type="internal",
+                department=user.department,
+                affiliation=user.department,
+                specialty=None,
+                career=None,
+                photo_url=None,
+                is_visible=True,
+                display_order=9999,
             )
+        )
 
     merged.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
     return merged

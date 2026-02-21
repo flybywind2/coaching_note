@@ -116,3 +116,37 @@ def test_schedule_series_update_and_delete(client, seed_users, seed_batch):
     delete_resp = client.delete(f"/api/schedules/{seed_id}/series", headers=admin_headers)
     assert delete_resp.status_code == 200, delete_resp.text
     assert delete_resp.json()["deleted"] == 2
+
+
+def test_admin_can_create_coaching_scope_schedule(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    target_date = "2026-04-10"
+    create_resp = _create_schedule(
+        client,
+        admin_headers,
+        {
+            "batch_id": seed_batch.batch_id,
+            "title": "코칭 일정",
+            "description": None,
+            "schedule_type": "coaching",
+            "visibility_scope": "coaching",
+            "start_datetime": f"{target_date}T10:00:00",
+            "end_datetime": f"{target_date}T11:00:00",
+            "location": "코칭룸",
+            "is_all_day": False,
+            "color": "#00ACC1",
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    schedule_id = create_resp.json()["schedule_id"]
+
+    calendar_resp = client.get(
+        f"/api/calendar?batch_id={seed_batch.batch_id}&start=2026-04-01&end=2026-04-30",
+        headers=admin_headers,
+    )
+    assert calendar_resp.status_code == 200, calendar_resp.text
+    events = calendar_resp.json()["events"]
+    target = next((ev for ev in events if ev.get("manage_type") == "schedule" and ev.get("id") == schedule_id), None)
+    assert target is not None
+    assert target["scope"] == "coaching"
+    assert target["event_type"] == "coaching_schedule"

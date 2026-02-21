@@ -262,6 +262,7 @@ Pages.coachingPlan = {
 
     const todayKey = this._todayKey();
     const globalDateSet = new Set((data.global_schedule_dates || []).map((d) => String(d).slice(0, 10)));
+    const coachingDateSet = new Set((data.coaching_schedule_dates || []).map((d) => String(d).slice(0, 10)));
 
     gridEl.innerHTML = `
       <div class="cp-month-wrap">
@@ -280,6 +281,7 @@ Pages.coachingPlan = {
             const rowClasses = [
               'cp-month-row',
               globalDateSet.has(dateKey) ? 'cp-global-date' : '',
+              coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
               dateKey === todayKey ? 'cp-today-col' : '',
             ].filter(Boolean).join(' ');
             return `
@@ -288,6 +290,7 @@ Pages.coachingPlan = {
                   <strong>${Fmt.escape(`${dateObj.getMonth() + 1}/${dateObj.getDate()}`)}</strong>
                   <span class="${isWeekend ? 'cp-weekend' : ''}">${Fmt.escape(day)}</span>
                   ${globalDateSet.has(dateKey) ? '<span class="tag">공통일정</span>' : ''}
+                  ${coachingDateSet.has(dateKey) ? '<span class="tag">코칭일정</span>' : ''}
                 </td>
                 <td class="cp-month-plan">
                   <div class="cp-line">${Fmt.escape(this._formatPlanTime(cell))}</div>
@@ -385,6 +388,7 @@ Pages.coachingPlan = {
 
     const todayKey = this._todayKey();
     const globalDateSet = new Set((data.global_schedule_dates || []).map((d) => String(d).slice(0, 10)));
+    const coachingDateSet = new Set((data.coaching_schedule_dates || []).map((d) => String(d).slice(0, 10)));
 
     gridEl.innerHTML = `
       <div class="cp-table-wrap">
@@ -397,6 +401,7 @@ Pages.coachingPlan = {
                 const dateKey = String(dt).slice(0, 10);
                 const classes = [
                   globalDateSet.has(dateKey) ? 'cp-global-date' : '',
+                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
                   dateKey === todayKey ? 'cp-today-col' : '',
                 ].filter(Boolean).join(' ');
                 return `<th class="${classes}" data-date="${Fmt.escape(dateKey)}">${this._dayLabel(dateKey)}</th>`;
@@ -414,6 +419,7 @@ Pages.coachingPlan = {
                   'cp-plan-cell',
                   cell.plan_id ? 'cp-plan-entered' : '',
                   globalDateSet.has(dateKey) ? 'cp-global-date' : '',
+                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
                   dateKey === todayKey ? 'cp-today-col' : '',
                 ].filter(Boolean).join(' ');
                 return `<td class="${classes}" data-date="${Fmt.escape(dateKey)}">
@@ -433,6 +439,7 @@ Pages.coachingPlan = {
                 const classes = [
                   'cp-actual-cell',
                   globalDateSet.has(dateKey) ? 'cp-global-date' : '',
+                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
                   dateKey === todayKey ? 'cp-today-col' : '',
                 ].filter(Boolean).join(' ');
                 return `<td class="${classes}" data-date="${Fmt.escape(dateKey)}">

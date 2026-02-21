@@ -136,6 +136,15 @@ def _build_override_payload(reason: Optional[str], project_ids: List[int]) -> Op
     )
 
 
+def _resolve_schedule_scope(schedule: ProgramSchedule) -> str:
+    raw = str(getattr(schedule, "visibility_scope", "") or "").strip().lower()
+    if raw in ("global", "coaching"):
+        return raw
+    if str(schedule.schedule_type or "").strip().lower() == "coaching":
+        return "coaching"
+    return "global"
+
+
 @router.get("/grid", response_model=CoachingPlanGridOut)
 def get_coaching_plan_grid(
     batch_id: int = Query(...),
@@ -178,6 +187,7 @@ def get_coaching_plan_grid(
             end=query_end,
             dates=dates,
             global_schedule_dates=[],
+            coaching_schedule_dates=[],
             rows=[],
         )
 
@@ -246,15 +256,24 @@ def get_coaching_plan_grid(
             auto_map[key]["actual_end"] = end_at
         auto_map[key]["minutes"] += _duration_minutes(row.check_in_time, row.check_out_time, row.session_date)
 
-    global_schedule_dates = sorted({
-        row.start_datetime.date()
-        for row in db.query(ProgramSchedule)
+    schedule_rows = (
+        db.query(ProgramSchedule)
         .filter(
             ProgramSchedule.batch_id == batch_id,
             ProgramSchedule.start_datetime >= datetime.combine(query_start, datetime.min.time()),
             ProgramSchedule.start_datetime <= datetime.combine(query_end, datetime.max.time()),
         )
         .all()
+    )
+    global_schedule_dates = sorted({
+        row.start_datetime.date()
+        for row in schedule_rows
+        if _resolve_schedule_scope(row) == "global"
+    })
+    coaching_schedule_dates = sorted({
+        row.start_datetime.date()
+        for row in schedule_rows
+        if _resolve_schedule_scope(row) == "coaching"
     })
 
     result_rows: List[CoachingPlanRow] = []
@@ -329,6 +348,7 @@ def get_coaching_plan_grid(
         end=query_end,
         dates=dates,
         global_schedule_dates=global_schedule_dates,
+        coaching_schedule_dates=coaching_schedule_dates,
         rows=result_rows,
     )
 
