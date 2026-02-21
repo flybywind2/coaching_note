@@ -3,6 +3,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from app.models.project import Project
+from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession
 from tests.conftest import auth_headers
 
@@ -218,6 +219,43 @@ def test_coach_cannot_override_other_coach_actual(client, db, seed_users, seed_b
         headers=coach_headers,
     )
     assert forbidden_resp.status_code == 403
+
+
+def test_coaching_schedule_links_to_coaching_plan_grid(client, db, seed_users, seed_batch):
+    work_date = date.today()
+    db.add_all([
+        ProgramSchedule(
+            batch_id=seed_batch.batch_id,
+            title="코칭 일정",
+            description=None,
+            schedule_type="coaching",
+            visibility_scope="coaching",
+            start_datetime=datetime.combine(work_date, datetime.min.time()).replace(hour=10),
+            end_datetime=datetime.combine(work_date, datetime.min.time()).replace(hour=11),
+            created_by=seed_users["admin"].user_id,
+        ),
+        ProgramSchedule(
+            batch_id=seed_batch.batch_id,
+            title="공통 일정",
+            description=None,
+            schedule_type="other",
+            visibility_scope="global",
+            start_datetime=datetime.combine(work_date, datetime.min.time()).replace(hour=13),
+            end_datetime=datetime.combine(work_date, datetime.min.time()).replace(hour=14),
+            created_by=seed_users["admin"].user_id,
+        ),
+    ])
+    db.commit()
+
+    coach_headers = auth_headers(client, "coach001")
+    resp = client.get(
+        f"/api/coaching-plan/grid?batch_id={seed_batch.batch_id}&start={work_date}&end={work_date}",
+        headers=coach_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert str(work_date) in [str(d) for d in body.get("global_schedule_dates", [])]
+    assert str(work_date) in [str(d) for d in body.get("coaching_schedule_dates", [])]
 
 
 def test_participant_cannot_access_coaching_plan_grid(client, seed_users, seed_batch):

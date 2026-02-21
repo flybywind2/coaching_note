@@ -13,8 +13,11 @@ Pages.dashboard = {
       }
 
       const batchId = State.get('currentBatchId') || batches[0]?.batch_id;
+      let dateFilter = State.get('dashDateFilter') || 'coaching';
       const data = await API.getDashboard(batchId);
       const dates = Array.isArray(data?.dates) ? data.dates : [];
+      const coachingScheduleDates = Array.isArray(data?.coaching_schedule_dates) ? data.coaching_schedule_dates : [];
+      const visibleDates = this._getVisibleDates(dates, dateFilter, coachingScheduleDates);
 
       el.innerHTML = `
         <div class="page-container">
@@ -27,6 +30,10 @@ Pages.dashboard = {
               <select id="dash-batch">
                 ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === batchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
               </select>
+            </div>
+            <div class="dash-date-filter">
+              <button type="button" class="btn btn-sm dash-date-filter-btn${dateFilter === 'coaching' ? ' btn-primary' : ' btn-secondary'}" data-filter="coaching">코칭일정만</button>
+              <button type="button" class="btn btn-sm dash-date-filter-btn${dateFilter === 'all' ? ' btn-primary' : ' btn-secondary'}" data-filter="all">전체</button>
             </div>
           </div>
 
@@ -42,7 +49,7 @@ Pages.dashboard = {
               <h3>출석 현황 (과제 × 날짜)</h3>
               <button id="dash-attendance-today-btn" class="btn btn-secondary btn-sm">오늘 위치로 이동</button>
             </div>
-            ${this._renderAttendanceMatrix(data.attendance_rows || [], dates, data.pre_schedule_dates || [])}
+            ${this._renderAttendanceMatrix(data.attendance_rows || [], dates, visibleDates, data.pre_schedule_dates || [])}
           </section>
 
           <section class="dash-panel">
@@ -50,7 +57,7 @@ Pages.dashboard = {
               <h3>코칭노트/코칭의견 지표</h3>
               <button id="dash-note-today-btn" class="btn btn-secondary btn-sm">오늘 위치로 이동</button>
             </div>
-            ${this._renderNoteMatrix(data.note_rows || [], dates, data.pre_schedule_dates || [])}
+            ${this._renderNoteMatrix(data.note_rows || [], dates, visibleDates, data.pre_schedule_dates || [])}
           </section>
         </div>`;
 
@@ -58,14 +65,23 @@ Pages.dashboard = {
         State.set('currentBatchId', parseInt(e.target.value, 10));
         this.render(el, params);
       });
+      const filterButtons = Array.from(document.querySelectorAll('.dash-date-filter-btn'));
+      filterButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const next = btn.dataset.filter === 'all' ? 'all' : 'coaching';
+          if (next === dateFilter) return;
+          State.set('dashDateFilter', next);
+          this.render(el, params);
+        });
+      });
 
-      this._attachTodayScroll('dash-attendance-wrap', dates);
-      this._attachTodayScroll('dash-note-wrap', dates);
+      this._attachTodayScroll('dash-attendance-wrap', visibleDates);
+      this._attachTodayScroll('dash-note-wrap', visibleDates);
       document.getElementById('dash-attendance-today-btn')?.addEventListener('click', () => {
-        this._scrollToToday('dash-attendance-wrap', dates);
+        this._scrollToToday('dash-attendance-wrap', visibleDates);
       });
       document.getElementById('dash-note-today-btn')?.addEventListener('click', () => {
-        this._scrollToToday('dash-note-wrap', dates);
+        this._scrollToToday('dash-note-wrap', visibleDates);
       });
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
@@ -91,42 +107,50 @@ Pages.dashboard = {
     </div>`;
   },
 
-  _renderAttendanceMatrix(rows, dates, preScheduleDates) {
+  _renderAttendanceMatrix(rows, dates, visibleDates, preScheduleDates) {
     if (!rows.length || !dates.length) return '<p class="empty-state">출석 데이터가 없습니다.</p>';
+    if (!visibleDates.length) return '<p class="empty-state">코칭일정 날짜가 없어 표시할 데이터가 없습니다. 전체 보기를 선택하세요.</p>';
     const preSet = new Set(preScheduleDates || []);
     return `<div class="dash-matrix-wrap" id="dash-attendance-wrap"><table class="data-table dash-matrix-table">
       <thead>
         <tr>
           <th class="sticky-col sticky-col-project">과제 (대상)</th>
           <th class="sticky-col sticky-col-total">합계</th>
-          ${dates.map((d) => `<th data-date="${d}" class="${this._dateHeaderClass(d, preSet)}">${this._dateLabel(d)}</th>`).join('')}
+          ${visibleDates.map((d) => `<th data-date="${d}" class="${this._dateHeaderClass(d, preSet)}">${this._dateLabel(d)}</th>`).join('')}
         </tr>
       </thead>
       <tbody>
-        ${rows.map((row) => `
-          <tr>
-            <td class="sticky-col sticky-col-project">
-              <a href="#/project/${row.project_id}" class="proj-link">${Fmt.escape(row.project_name)}</a>
-              <div class="dash-subtext">대상 ${row.expected_count || 0}명</div>
-            </td>
-            <td class="sticky-col sticky-col-total dash-total-cell">
-              ${row.total_attendance || 0}/${row.total_expected || 0}
-              <div class="dash-subtext">${Number(row.total_rate || 0).toFixed(1)}%</div>
-            </td>
-            ${(row.cells || []).map((cell) => `
-              <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">
-                ${cell.attendance_count || 0}
-                <div class="dash-subtext">${Number(cell.attendance_rate || 0).toFixed(1)}%</div>
+        ${rows.map((row) => {
+          const filteredCells = this._filterCellsByDates(row.cells || [], visibleDates);
+          const filteredAttendance = filteredCells.reduce((acc, cell) => acc + Number(cell.attendance_count || 0), 0);
+          const filteredExpected = Number(row.expected_count || 0) * filteredCells.length;
+          const filteredRate = filteredExpected > 0 ? (filteredAttendance / filteredExpected) * 100 : 0;
+          return `
+            <tr>
+              <td class="sticky-col sticky-col-project">
+                <a href="#/project/${row.project_id}" class="proj-link">${Fmt.escape(row.project_name)}</a>
+                <div class="dash-subtext">대상 ${row.expected_count || 0}명</div>
               </td>
-            `).join('')}
-          </tr>
-        `).join('')}
+              <td class="sticky-col sticky-col-total dash-total-cell">
+                ${filteredAttendance}/${filteredExpected}
+                <div class="dash-subtext">${filteredRate.toFixed(1)}%</div>
+              </td>
+              ${filteredCells.map((cell) => `
+                <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">
+                  ${cell.attendance_count || 0}
+                  <div class="dash-subtext">${Number(cell.attendance_rate || 0).toFixed(1)}%</div>
+                </td>
+              `).join('')}
+            </tr>
+          `;
+        }).join('')}
       </tbody>
     </table></div>`;
   },
 
-  _renderNoteMatrix(rows, dates, preScheduleDates) {
+  _renderNoteMatrix(rows, dates, visibleDates, preScheduleDates) {
     if (!rows.length || !dates.length) return '<p class="empty-state">코칭노트 데이터가 없습니다.</p>';
+    if (!visibleDates.length) return '<p class="empty-state">코칭일정 날짜가 없어 표시할 데이터가 없습니다. 전체 보기를 선택하세요.</p>';
     const preSet = new Set(preScheduleDates || []);
     return `<div class="dash-matrix-wrap" id="dash-note-wrap"><table class="data-table dash-matrix-table dash-note-table">
       <thead>
@@ -134,31 +158,51 @@ Pages.dashboard = {
           <th class="sticky-col sticky-col-project">과제</th>
           <th class="sticky-col sticky-col-metric">지표</th>
           <th class="sticky-col sticky-col-total">합계</th>
-          ${dates.map((d) => `<th data-date="${d}" class="${this._dateHeaderClass(d, preSet)}">${this._dateLabel(d)}</th>`).join('')}
+          ${visibleDates.map((d) => `<th data-date="${d}" class="${this._dateHeaderClass(d, preSet)}">${this._dateLabel(d)}</th>`).join('')}
         </tr>
       </thead>
       <tbody>
-        ${rows.map((row) => `
-          <tr>
-            <td class="sticky-col sticky-col-project" rowspan="2">
-              <a href="#/project/${row.project_id}" class="proj-link">${Fmt.escape(row.project_name)}</a>
-            </td>
-            <td class="sticky-col sticky-col-metric">코칭노트 건수</td>
-            <td class="sticky-col sticky-col-total dash-total-cell">${row.total_note_count || 0}</td>
-            ${(row.cells || []).map((cell) => `
-              <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">${cell.note_count || 0}</td>
-            `).join('')}
-          </tr>
-          <tr>
-            <td class="sticky-col sticky-col-metric">코칭의견 작성 코치 수</td>
-            <td class="sticky-col sticky-col-total dash-total-cell">${row.total_coach_commenter_count || 0}</td>
-            ${(row.cells || []).map((cell) => `
-              <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">${cell.coach_commenter_count || 0}</td>
-            `).join('')}
-          </tr>
-        `).join('')}
+        ${rows.map((row) => {
+          const filteredCells = this._filterCellsByDates(row.cells || [], visibleDates);
+          const filteredNoteTotal = filteredCells.reduce((acc, cell) => acc + Number(cell.note_count || 0), 0);
+          const filteredCommenterTotal = filteredCells.reduce((acc, cell) => acc + Number(cell.coach_commenter_count || 0), 0);
+          return `
+            <tr>
+              <td class="sticky-col sticky-col-project" rowspan="2">
+                <a href="#/project/${row.project_id}" class="proj-link">${Fmt.escape(row.project_name)}</a>
+              </td>
+              <td class="sticky-col sticky-col-metric">코칭노트 건수</td>
+              <td class="sticky-col sticky-col-total dash-total-cell">${filteredNoteTotal}</td>
+              ${filteredCells.map((cell) => `
+                <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">${cell.note_count || 0}</td>
+              `).join('')}
+            </tr>
+            <tr>
+              <td class="sticky-col sticky-col-metric">코칭의견 작성 코치 수</td>
+              <td class="sticky-col sticky-col-total dash-total-cell">${filteredCommenterTotal}</td>
+              ${filteredCells.map((cell) => `
+                <td data-date="${cell.date}" class="${this._dateCellClass(cell.date, preSet)}">${cell.coach_commenter_count || 0}</td>
+              `).join('')}
+            </tr>
+          `;
+        }).join('')}
       </tbody>
     </table></div>`;
+  },
+
+  _getVisibleDates(dates, dateFilter, coachingScheduleDates) {
+    const list = Array.isArray(dates) ? dates : [];
+    if (dateFilter !== 'coaching') return list;
+    const coachingSet = new Set(Array.isArray(coachingScheduleDates) ? coachingScheduleDates : []);
+    return list.filter((d) => coachingSet.has(d));
+  },
+
+  _filterCellsByDates(cells, visibleDates) {
+    const cellMap = {};
+    (cells || []).forEach((cell) => {
+      cellMap[cell.date] = cell;
+    });
+    return (visibleDates || []).map((d) => cellMap[d] || { date: d, attendance_count: 0, attendance_rate: 0, note_count: 0, coach_commenter_count: 0 });
   },
 
   _dateLabel(isoDate) {

@@ -1,5 +1,6 @@
 """소개 페이지 API 동작 검증 테스트입니다."""
 
+from app.models.project import Project, ProjectMember
 from tests.conftest import auth_headers
 
 
@@ -45,7 +46,35 @@ def test_list_coaches_fallback_from_users(client, seed_users):
     assert any(row["name"] == "Coach" for row in rows)
 
 
-def test_coach_profile_crud_admin_only(client, seed_users):
+def test_list_coaches_includes_project_assigned_coach(client, db, seed_users, seed_batch):
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="코치 소개 노출 테스트 과제",
+        organization="DX",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    db.add(
+        ProjectMember(
+            project_id=project.project_id,
+            user_id=seed_users["coach"].user_id,
+            role="member",
+            is_representative=False,
+        )
+    )
+    db.commit()
+
+    headers = auth_headers(client, "admin001")
+    resp = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=headers)
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert any(row["user_id"] == seed_users["coach"].user_id for row in rows)
+
+
+def test_coach_profile_crud_admin_only(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     participant_headers = auth_headers(client, "user001")
 
@@ -59,6 +88,7 @@ def test_coach_profile_crud_admin_only(client, seed_users):
     create_resp = client.post(
         "/api/about/coaches",
         json={
+            "batch_id": seed_batch.batch_id,
             "name": "외부 코치",
             "coach_type": "external",
             "affiliation": "파트너사",
