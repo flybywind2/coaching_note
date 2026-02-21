@@ -15,24 +15,30 @@ Pages.coachingPlan = {
       }
 
       const batchId = State.get('currentBatchId') || batches[0].batch_id;
+      const viewMode = State.get('cpViewMode') || 'monthly';
       const coaches = isAdmin ? await API.getUsers().then((rows) => rows.filter((u) => ['admin', 'coach'].includes(u.role))) : [];
 
       el.innerHTML = `
         <div class="page-container coaching-plan-page">
           <div class="page-header">
             <h1>코칭 계획/실적</h1>
-            <p class="search-sub">차수 전체 기간 기준으로 코치별 계획/실적을 확인합니다.</p>
+            <p class="search-sub">기본은 코치별 월 단위 관리 화면이며, 필요 시 기존 전체 그리드로 전환할 수 있습니다.</p>
             <div class="cp-controls">
               <select id="cp-batch">
                 ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === batchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
               </select>
+              <select id="cp-view-mode">
+                <option value="monthly"${viewMode === 'monthly' ? ' selected' : ''}>월별 코치관리</option>
+                <option value="grid"${viewMode === 'grid' ? ' selected' : ''}>전체 그리드(기존)</option>
+              </select>
+              <select id="cp-month"></select>
               ${isAdmin ? `
                 <select id="cp-coach-filter">
                   <option value="">전체 코치</option>
                   ${coaches.map((c) => `<option value="${c.user_id}">${Fmt.escape(c.name)} (${Fmt.escape(c.emp_id)})</option>`).join('')}
                 </select>
               ` : ''}
-              <button id="cp-today" class="btn btn-sm">오늘 위치로 이동</button>
+              <button id="cp-today" class="btn btn-sm">오늘/이번달</button>
               <span id="cp-range-label" class="cal-month"></span>
             </div>
           </div>
@@ -40,38 +46,102 @@ Pages.coachingPlan = {
         </div>
       `;
 
-      const loadGrid = async () => {
+      const monthSelect = document.getElementById('cp-month');
+      const rangeLabelEl = document.getElementById('cp-range-label');
+      const gridEl = document.getElementById('cp-grid');
+
+      const syncMonthOptions = (batch, forceCurrentMonth = false) => {
+        const options = this._buildMonthOptions(batch.start_date, batch.end_date);
+        if (!options.length) {
+          monthSelect.innerHTML = '';
+          return;
+        }
+        const todayMonthKey = this._todayKey().slice(0, 7);
+        const currentValue = monthSelect.value;
+        const savedMonth = State.get('cpMonthKey');
+        const hasToday = options.some((opt) => opt.value === todayMonthKey);
+        const selectedMonth = forceCurrentMonth && hasToday
+          ? todayMonthKey
+          : (currentValue && options.some((opt) => opt.value === currentValue)
+            ? currentValue
+            : (savedMonth && options.some((opt) => opt.value === savedMonth)
+              ? savedMonth
+              : options[options.length - 1].value));
+        monthSelect.innerHTML = options
+          .map((opt) => `<option value="${opt.value}"${opt.value === selectedMonth ? ' selected' : ''}>${opt.label}</option>`)
+          .join('');
+        State.set('cpMonthKey', selectedMonth);
+      };
+
+      const loadView = async ({ forceCurrentMonth = false } = {}) => {
         const selectedBatchId = Number.parseInt(document.getElementById('cp-batch').value, 10);
         const batch = await API.getBatch(selectedBatchId);
+        syncMonthOptions(batch, forceCurrentMonth);
+        const currentMode = document.getElementById('cp-view-mode').value;
         const payload = {
           batch_id: selectedBatchId,
-          start: batch.start_date,
-          end: batch.end_date,
         };
         const coachFilter = document.getElementById('cp-coach-filter')?.value;
         if (coachFilter) payload.coach_user_id = Number.parseInt(coachFilter, 10);
 
-        document.getElementById('cp-range-label').textContent = `${batch.start_date} ~ ${batch.end_date}`;
-        await this._renderGrid(document.getElementById('cp-grid'), payload, user);
+        if (currentMode === 'monthly') {
+          const monthKey = monthSelect.value;
+          if (!monthKey) {
+            rangeLabelEl.textContent = '-';
+            gridEl.innerHTML = '<p class="empty-state">표시할 월 데이터가 없습니다.</p>';
+            return;
+          }
+          const monthRange = this._resolveMonthRange(monthKey, batch.start_date, batch.end_date);
+          payload.start = monthRange.start;
+          payload.end = monthRange.end;
+          rangeLabelEl.textContent = `${monthRange.label} (${payload.start} ~ ${payload.end})`;
+          await this._renderMonthlyView(gridEl, payload, user);
+          return;
+        }
+
+        payload.start = batch.start_date;
+        payload.end = batch.end_date;
+        rangeLabelEl.textContent = `${batch.start_date} ~ ${batch.end_date}`;
+        await this._renderGrid(gridEl, payload, user);
       };
 
       document.getElementById('cp-batch').addEventListener('change', async (e) => {
         State.set('currentBatchId', Number.parseInt(e.target.value, 10));
-        await loadGrid();
+        await loadView({ forceCurrentMonth: true });
       });
-      document.getElementById('cp-coach-filter')?.addEventListener('change', loadGrid);
-      document.getElementById('cp-today').addEventListener('click', () => {
-        const wrap = document.querySelector('.cp-table-wrap');
+      document.getElementById('cp-view-mode').addEventListener('change', async (e) => {
+        State.set('cpViewMode', e.target.value);
+        await loadView();
+      });
+      monthSelect.addEventListener('change', async (e) => {
+        State.set('cpMonthKey', e.target.value);
+        if (document.getElementById('cp-view-mode').value === 'monthly') {
+          await loadView();
+        }
+      });
+      document.getElementById('cp-coach-filter')?.addEventListener('change', loadView);
+      document.getElementById('cp-today').addEventListener('click', async () => {
+        const currentMode = document.getElementById('cp-view-mode').value;
+        if (currentMode === 'monthly') {
+          const todayMonthKey = this._todayKey().slice(0, 7);
+          if ([...monthSelect.options].some((opt) => opt.value === todayMonthKey)) {
+            monthSelect.value = todayMonthKey;
+            State.set('cpMonthKey', todayMonthKey);
+            await loadView();
+          }
+          this._focusTodayInMonthly(gridEl);
+          return;
+        }
+        const wrap = gridEl.querySelector('.cp-table-wrap');
         if (!wrap) return;
         const todayKey = this._todayKey();
         const target = wrap.querySelector(`[data-date="${todayKey}"]`);
-        if (target) {
-          const coachWidth = wrap.querySelector('.cp-coach-col')?.offsetWidth || 180;
-          wrap.scrollLeft = Math.max(0, target.offsetLeft - coachWidth - 24);
-        }
+        if (!target) return;
+        const coachWidth = wrap.querySelector('.cp-coach-col')?.offsetWidth || 180;
+        wrap.scrollLeft = Math.max(0, target.offsetLeft - coachWidth - 24);
       });
 
-      await loadGrid();
+      await loadView({ forceCurrentMonth: true });
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
@@ -114,11 +184,188 @@ Pages.coachingPlan = {
     return durationText;
   },
 
+  _formatActualProjectNames(cell) {
+    const raw = Array.isArray(cell.actual_project_names) ? cell.actual_project_names : [];
+    const names = raw.map((name) => String(name || '').trim()).filter(Boolean);
+    return names.join(', ');
+  },
+
   _formatPlanTime(cell) {
     if (!cell.plan_id) return '-';
     if (cell.is_all_day) return '종일';
     if (cell.start_time && cell.end_time) return `${cell.start_time} ~ ${cell.end_time}`;
     return '-';
+  },
+
+  _parseDateText(text) {
+    const [year, month, day] = String(text).split('-').map((n) => Number.parseInt(n, 10));
+    return new Date(year, (month || 1) - 1, day || 1);
+  },
+
+  _toDateKey(dateObj) {
+    return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+  },
+
+  _buildMonthOptions(startText, endText) {
+    const start = this._parseDateText(startText);
+    const end = this._parseDateText(endText);
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    const options = [];
+    while (cursor <= endMonth) {
+      const value = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+      options.push({ value, label: `${cursor.getFullYear()}년 ${cursor.getMonth() + 1}월` });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return options;
+  },
+
+  _resolveMonthRange(monthKey, batchStartText, batchEndText) {
+    const [yearText, monthText] = String(monthKey || '').split('-');
+    const batchStart = this._parseDateText(batchStartText);
+    const batchEnd = this._parseDateText(batchEndText);
+    const fallbackYear = batchStart.getFullYear();
+    const fallbackMonth = batchStart.getMonth() + 1;
+    const year = Number.parseInt(yearText, 10) || fallbackYear;
+    const month = Number.parseInt(monthText, 10) || fallbackMonth;
+    const monthStart = new Date(year, Math.max(0, (month || 1) - 1), 1);
+    const monthEnd = new Date(year, (month || 1), 0);
+    const start = monthStart < batchStart ? batchStart : monthStart;
+    const end = monthEnd > batchEnd ? batchEnd : monthEnd;
+    return {
+      start: this._toDateKey(start),
+      end: this._toDateKey(end),
+      label: `${start.getFullYear()}년 ${start.getMonth() + 1}월`,
+    };
+  },
+
+  _focusTodayInMonthly(gridEl) {
+    const todayTarget = gridEl.querySelector(`.cp-month-row[data-date="${this._todayKey()}"]`);
+    if (!todayTarget) return;
+    todayTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+
+  async _renderMonthlyView(gridEl, payload, user) {
+    gridEl.innerHTML = '<div class="loading">로딩 중...</div>';
+    const isAdmin = user.role === 'admin';
+    const [data, projects] = await Promise.all([
+      API.getCoachingPlanGrid(payload),
+      API.getProjects(payload.batch_id).catch(() => []),
+    ]);
+    const projectMap = {};
+    projects.forEach((p) => { projectMap[p.project_id] = p.project_name; });
+
+    if (!data.rows || !data.rows.length) {
+      gridEl.innerHTML = '<p class="empty-state">표시할 코치 데이터가 없습니다.</p>';
+      return;
+    }
+
+    const todayKey = this._todayKey();
+    const globalDateSet = new Set((data.global_schedule_dates || []).map((d) => String(d).slice(0, 10)));
+
+    gridEl.innerHTML = `
+      <div class="cp-month-wrap">
+        ${data.rows.map((row) => {
+          const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
+          const canEditActual = isAdmin || row.coach_user_id === user.user_id;
+          const planCount = row.cells.filter((cell) => !!cell.plan_id).length;
+          const actualTotalMinutes = row.cells.reduce((acc, cell) => acc + Number(cell.final_minutes || 0), 0);
+
+          const rowsHtml = row.cells.map((cell) => {
+            const dateKey = String(cell.date).slice(0, 10);
+            const dateObj = this._parseDateText(dateKey);
+            const day = ['일', '월', '화', '수', '목', '금', '토'][dateObj.getDay()];
+            const isWeekend = day === '토' || day === '일';
+            const cellJson = this._escapeAttrJson(cell);
+            const rowClasses = [
+              'cp-month-row',
+              globalDateSet.has(dateKey) ? 'cp-global-date' : '',
+              dateKey === todayKey ? 'cp-today-col' : '',
+            ].filter(Boolean).join(' ');
+            return `
+              <tr class="${rowClasses}" data-date="${Fmt.escape(dateKey)}">
+                <td class="cp-month-date">
+                  <strong>${Fmt.escape(`${dateObj.getMonth() + 1}/${dateObj.getDate()}`)}</strong>
+                  <span class="${isWeekend ? 'cp-weekend' : ''}">${Fmt.escape(day)}</span>
+                  ${globalDateSet.has(dateKey) ? '<span class="tag">공통일정</span>' : ''}
+                </td>
+                <td class="cp-month-plan">
+                  <div class="cp-line">${Fmt.escape(this._formatPlanTime(cell))}</div>
+                  ${cell.plan_note ? `<div class="cp-line hint">${Fmt.escape(cell.plan_note)}</div>` : ''}
+                  ${cell.entered_previous_day ? '<span class="tag">전일입력</span>' : ''}
+                </td>
+                <td class="cp-month-actual">
+                  <div class="cp-line">${Fmt.escape(this._formatActualRange(cell))}</div>
+                  ${this._formatActualProjectNames(cell) ? `<div class="cp-line hint">과제: ${Fmt.escape(this._formatActualProjectNames(cell))}</div>` : ''}
+                  ${cell.actual_source === 'override' ? '<div class="cp-line hint">수동 입력값 적용</div>' : ''}
+                </td>
+                <td class="cp-month-actions">
+                  ${canEditPlan ? `<button class="btn btn-xs cp-edit-plan" data-coach="${row.coach_user_id}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">계획</button>` : ''}
+                  ${canEditActual ? `<button class="btn btn-xs btn-secondary cp-edit-actual" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">실적</button>` : ''}
+                </td>
+              </tr>
+            `;
+          }).join('');
+
+          return `
+            <section class="cp-month-coach-card">
+              <div class="cp-month-coach-head">
+                <div>
+                  <h3>${Fmt.escape(row.coach_name)}</h3>
+                  <p class="hint">${Fmt.escape(row.coach_emp_id)}${row.department ? ` · ${Fmt.escape(row.department)}` : ''}</p>
+                </div>
+                <div class="cp-month-summary">
+                  <span class="tag">계획 ${planCount}일</span>
+                  <span class="tag">실적 ${Fmt.escape(this._formatMinutes(actualTotalMinutes))}</span>
+                </div>
+              </div>
+              <div class="cp-month-table-wrap">
+                <table class="data-table cp-month-table">
+                  <thead>
+                    <tr>
+                      <th>일자</th>
+                      <th>계획</th>
+                      <th>실적</th>
+                      <th>관리</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>
+            </section>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    gridEl.querySelectorAll('.cp-edit-plan').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
+        const workDate = btn.dataset.date;
+        const cell = JSON.parse(btn.dataset.cell || '{}');
+        await this._openPlanModal({ payload, coachUserId, workDate, cell, projectMap, reload: () => this._renderMonthlyView(gridEl, payload, user) });
+      });
+    });
+
+    gridEl.querySelectorAll('.cp-edit-actual').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
+        const coachName = btn.dataset.name || '';
+        const workDate = btn.dataset.date;
+        const cell = JSON.parse(btn.dataset.cell || '{}');
+        await this._openActualModal({
+          payload,
+          coachUserId,
+          coachName,
+          workDate,
+          cell,
+          projectMap,
+          reload: () => this._renderMonthlyView(gridEl, payload, user),
+        });
+      });
+    });
+
+    this._focusTodayInMonthly(gridEl);
   },
 
   async _renderGrid(gridEl, payload, user) {
@@ -159,6 +406,7 @@ Pages.coachingPlan = {
           <tbody>
             ${data.rows.map((row) => {
               const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
+              const canEditActual = isAdmin || row.coach_user_id === user.user_id;
               const planCells = row.cells.map((cell) => {
                 const dateKey = String(cell.date).slice(0, 10);
                 const cellJson = this._escapeAttrJson(cell);
@@ -181,6 +429,7 @@ Pages.coachingPlan = {
               const actualCells = row.cells.map((cell) => {
                 const dateKey = String(cell.date).slice(0, 10);
                 const cellJson = this._escapeAttrJson(cell);
+                const actualProjectNames = this._formatActualProjectNames(cell);
                 const classes = [
                   'cp-actual-cell',
                   globalDateSet.has(dateKey) ? 'cp-global-date' : '',
@@ -189,8 +438,9 @@ Pages.coachingPlan = {
                 return `<td class="${classes}" data-date="${Fmt.escape(dateKey)}">
                   <div class="cp-cell">
                     <div class="cp-line">${Fmt.escape(this._formatActualRange(cell))}</div>
-                    <div class="cp-line hint">${Fmt.escape(cell.actual_source === 'override' ? '관리자 보정값 적용' : '')}</div>
-                    ${isAdmin ? `<button class="btn btn-xs btn-secondary cp-edit-actual" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">실적</button>` : ''}
+                    <div class="cp-line hint">${actualProjectNames ? `과제: ${Fmt.escape(actualProjectNames)}` : ''}</div>
+                    <div class="cp-line hint">${Fmt.escape(cell.actual_source === 'override' ? '수동 입력값 적용' : '')}</div>
+                    ${canEditActual ? `<button class="btn btn-xs btn-secondary cp-edit-actual" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">실적</button>` : ''}
                   </div>
                 </td>`;
               }).join('');
@@ -230,7 +480,15 @@ Pages.coachingPlan = {
         const coachName = btn.dataset.name || '';
         const workDate = btn.dataset.date;
         const cell = JSON.parse(btn.dataset.cell || '{}');
-        await this._openActualModal({ payload, coachUserId, coachName, workDate, cell, reload: () => this._renderGrid(gridEl, payload, user) });
+        await this._openActualModal({
+          payload,
+          coachUserId,
+          coachName,
+          workDate,
+          cell,
+          projectMap,
+          reload: () => this._renderGrid(gridEl, payload, user),
+        });
       });
     });
 
@@ -255,13 +513,6 @@ Pages.coachingPlan = {
         <div class="form-group">
           <label>날짜</label>
           <input value="${Fmt.escape(workDate)}" disabled />
-        </div>
-        <div class="form-group">
-          <label>과제</label>
-          <select name="planned_project_id">
-            <option value="">선택 안함</option>
-            ${Object.entries(projectMap).map(([pid, name]) => `<option value="${pid}"${String(cell.planned_project_id || '') === String(pid) ? ' selected' : ''}>${Fmt.escape(name)}</option>`).join('')}
-          </select>
         </div>
         <div class="form-group">
           <label><input type="checkbox" name="is_all_day" ${cell.plan_id ? (cell.is_all_day ? 'checked' : '') : 'checked'} /> 종일</label>
@@ -314,7 +565,6 @@ Pages.coachingPlan = {
           batch_id: payload.batch_id,
           coach_user_id: coachUserId,
           plan_date: workDate,
-          planned_project_id: fd.get('planned_project_id') ? Number.parseInt(String(fd.get('planned_project_id')), 10) : null,
           is_all_day: fd.has('is_all_day'),
           start_time: fd.get('start_time') ? String(fd.get('start_time')) : null,
           end_time: fd.get('end_time') ? String(fd.get('end_time')) : null,
@@ -346,7 +596,9 @@ Pages.coachingPlan = {
     });
   },
 
-  async _openActualModal({ payload, coachUserId, coachName, workDate, cell, reload }) {
+  async _openActualModal({ payload, coachUserId, coachName, workDate, cell, projectMap, reload }) {
+    const selectedProjectIds = new Set((Array.isArray(cell.actual_project_ids) ? cell.actual_project_ids : []).map((id) => String(id)));
+    const projectEntries = Object.entries(projectMap || {});
     Modal.open(`
       <h2>실적 보정</h2>
       <form id="cp-actual-form">
@@ -358,6 +610,19 @@ Pages.coachingPlan = {
         <div class="form-group">
           <label>보정 실적(분)</label>
           <input name="actual_minutes" type="number" min="0" max="1440" value="${cell.override_minutes != null ? String(cell.override_minutes) : String(cell.auto_minutes || 0)}" required />
+        </div>
+        <div class="form-group">
+          <label>실적 과제 (복수 선택)</label>
+          ${projectEntries.length ? `
+            <div class="cp-project-checks">
+              ${projectEntries.map(([projectId, projectName]) => `
+                <label>
+                  <input type="checkbox" name="actual_project_ids" value="${Fmt.escape(projectId)}"${selectedProjectIds.has(String(projectId)) ? ' checked' : ''} />
+                  ${Fmt.escape(projectName)}
+                </label>
+              `).join('')}
+            </div>
+          ` : '<p class="hint">선택 가능한 과제가 없습니다.</p>'}
         </div>
         <div class="form-group">
           <label>사유</label>
@@ -374,6 +639,9 @@ Pages.coachingPlan = {
     document.getElementById('cp-actual-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const actualProjectIds = Array.from(document.querySelectorAll('#cp-actual-form input[name="actual_project_ids"]:checked'))
+        .map((el) => Number.parseInt(String(el.value), 10))
+        .filter((num) => Number.isInteger(num) && num > 0);
       const errEl = document.getElementById('cp-actual-err');
       errEl.style.display = 'none';
       try {
@@ -383,6 +651,7 @@ Pages.coachingPlan = {
           work_date: workDate,
           actual_minutes: Number.parseInt(String(fd.get('actual_minutes') || '0'), 10),
           reason: fd.get('reason') ? String(fd.get('reason')).trim() : null,
+          actual_project_ids: actualProjectIds,
         });
         Modal.close();
         await reload();

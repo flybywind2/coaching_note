@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: List[str] = [
         "jpg", "jpeg", "png", "gif",
         "pdf", "ppt", "pptx", "xls", "xlsx", "csv",
+        "doc", "docx", "hwp", "hwpx", "txt", "zip",
     ]
     UPLOAD_DIR: str = "uploads"
 

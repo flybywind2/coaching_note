@@ -118,3 +118,22 @@ def test_upload_file_rejects_invalid_extension(client, seed_users, monkeypatch):
         shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
 
 
+def test_upload_file_docx_success(client, seed_users, monkeypatch):
+    test_upload_dir = _set_test_upload_dir(monkeypatch)
+    headers = auth_headers(client, "admin001")
+    files = {"file": ("meeting.docx", b"PK\x03\x04mock-docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
+    try:
+        resp = client.post(
+            "/api/uploads/files",
+            headers=headers,
+            files=files,
+            data={"scope": "about"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "meeting.docx"
+        assert data["url"].startswith("/uploads/editor_files/about/")
+    finally:
+        shutil.rmtree(test_upload_dir.parent.parent, ignore_errors=True)
+
+

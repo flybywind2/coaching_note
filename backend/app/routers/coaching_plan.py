@@ -1,5 +1,6 @@
 """코칭 계획/실적 집계 API 라우터입니다."""
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth_middleware import get_current_user, require_roles
+from app.middleware.auth_middleware import get_current_user
 from app.models.batch import Batch
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.project import Project
@@ -80,6 +81,59 @@ def _to_hhmm(value: datetime | None) -> Optional[str]:
         return None
     local = value.astimezone()
     return f"{local.hour:02d}:{local.minute:02d}"
+
+
+def _normalize_project_ids(values: Optional[List[int]]) -> List[int]:
+    if not values:
+        return []
+    normalized: List[int] = []
+    seen = set()
+    for raw in values:
+        try:
+            project_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if project_id <= 0 or project_id in seen:
+            continue
+        seen.add(project_id)
+        normalized.append(project_id)
+    return normalized
+
+
+def _parse_override_payload(raw_reason: Optional[str]) -> Tuple[Optional[str], List[int]]:
+    if not raw_reason:
+        return None, []
+
+    text = str(raw_reason).strip()
+    if not text:
+        return None, []
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        return text, []
+
+    if not isinstance(payload, dict):
+        return text, []
+
+    if "reason" not in payload and "project_ids" not in payload:
+        return text, []
+
+    reason = payload.get("reason")
+    clean_reason = str(reason).strip() if isinstance(reason, str) and reason.strip() else None
+    project_ids = _normalize_project_ids(payload.get("project_ids"))
+    return clean_reason, project_ids
+
+
+def _build_override_payload(reason: Optional[str], project_ids: List[int]) -> Optional[str]:
+    clean_reason = reason.strip() if isinstance(reason, str) and reason.strip() else None
+    normalized_project_ids = _normalize_project_ids(project_ids)
+    if not normalized_project_ids:
+        return clean_reason
+    return json.dumps(
+        {"reason": clean_reason, "project_ids": normalized_project_ids},
+        ensure_ascii=False,
+    )
 
 
 @router.get("/grid", response_model=CoachingPlanGridOut)
@@ -224,6 +278,9 @@ def get_coaching_plan_grid(
                 final_minutes = 0
                 source = "none"
 
+            override_reason, override_project_ids = _parse_override_payload(override.reason if override else None)
+            override_project_names = [project_map[pid] for pid in override_project_ids if pid in project_map]
+
             entered_previous_day = False
             plan_updated_at = None
             if plan:
@@ -248,7 +305,9 @@ def get_coaching_plan_grid(
                     override_minutes=override.actual_minutes if override else None,
                     final_minutes=final_minutes,
                     actual_source=source,
-                    override_reason=override.reason if override else None,
+                    override_reason=override_reason,
+                    actual_project_ids=override_project_ids,
+                    actual_project_names=override_project_names,
                     actual_start_time=_to_hhmm(actual_start),
                     actual_end_time=_to_hhmm(actual_end),
                 )
@@ -314,7 +373,8 @@ def upsert_coaching_plan(
         )
         db.add(row)
 
-    row.planned_project_id = data.planned_project_id
+    # 계획에서는 과제 직접 선택을 사용하지 않음
+    row.planned_project_id = None
     row.is_all_day = data.is_all_day
     row.start_time = None if data.is_all_day else data.start_time
     row.end_time = None if data.is_all_day else data.end_time
@@ -360,13 +420,32 @@ def delete_coaching_plan(
 def upsert_actual_override(
     data: CoachingActualOverrideUpsert,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
+    _ensure_admin_or_coach(current_user)
+    target_coach_user_id = _resolve_coach_id(current_user, data.coach_user_id)
+    if target_coach_user_id is None:
+        raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
+
+    project_ids = _normalize_project_ids(data.actual_project_ids)
+    if project_ids:
+        valid_ids = {
+            project_id
+            for (project_id,) in db.query(Project.project_id)
+            .filter(Project.batch_id == data.batch_id, Project.project_id.in_(project_ids))
+            .all()
+        }
+        invalid_ids = [pid for pid in project_ids if pid not in valid_ids]
+        if invalid_ids:
+            raise HTTPException(status_code=400, detail="유효하지 않은 과제가 포함되어 있습니다.")
+
+    reason_payload = _build_override_payload(data.reason, project_ids)
+
     row = (
         db.query(CoachActualOverride)
         .filter(
             CoachActualOverride.batch_id == data.batch_id,
-            CoachActualOverride.coach_user_id == data.coach_user_id,
+            CoachActualOverride.coach_user_id == target_coach_user_id,
             CoachActualOverride.work_date == data.work_date,
         )
         .first()
@@ -374,16 +453,16 @@ def upsert_actual_override(
     if not row:
         row = CoachActualOverride(
             batch_id=data.batch_id,
-            coach_user_id=data.coach_user_id,
+            coach_user_id=target_coach_user_id,
             work_date=data.work_date,
             actual_minutes=data.actual_minutes,
-            reason=data.reason,
+            reason=reason_payload,
             updated_by=current_user.user_id,
         )
         db.add(row)
     else:
         row.actual_minutes = data.actual_minutes
-        row.reason = data.reason
+        row.reason = reason_payload
         row.updated_by = current_user.user_id
 
     db.commit()
@@ -397,13 +476,18 @@ def delete_actual_override(
     coach_user_id: int = Query(...),
     work_date: date = Query(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
+    _ensure_admin_or_coach(current_user)
+    target_coach_user_id = _resolve_coach_id(current_user, coach_user_id)
+    if target_coach_user_id is None:
+        raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
+
     row = (
         db.query(CoachActualOverride)
         .filter(
             CoachActualOverride.batch_id == batch_id,
-            CoachActualOverride.coach_user_id == coach_user_id,
+            CoachActualOverride.coach_user_id == target_coach_user_id,
             CoachActualOverride.work_date == work_date,
         )
         .first()

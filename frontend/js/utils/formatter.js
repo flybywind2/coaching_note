@@ -3,13 +3,34 @@
  */
 
 const Fmt = {
+  KST_TIMEZONE: 'Asia/Seoul',
+  parseDate(value) {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      const [year, month, day] = raw.split('-').map((v) => Number.parseInt(v, 10));
+      return new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+    }
+    const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(raw);
+    const normalized = hasTimezone ? raw : `${raw}Z`;
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+    const fallback = new Date(raw);
+    if (!Number.isNaN(fallback.getTime())) return fallback;
+    return null;
+  },
   date(str) {
     if (!str) return '-';
-    return new Date(str).toLocaleDateString('ko-KR');
+    const dateValue = this.parseDate(str);
+    if (!dateValue) return '-';
+    return dateValue.toLocaleDateString('ko-KR', { timeZone: this.KST_TIMEZONE });
   },
   datetime(str) {
     if (!str) return '-';
-    return new Date(str).toLocaleString('ko-KR');
+    const dateValue = this.parseDate(str);
+    if (!dateValue) return '-';
+    return dateValue.toLocaleString('ko-KR', { timeZone: this.KST_TIMEZONE });
   },
   progress(val) {
     return `<div class="progress-bar"><div class="progress-fill" style="width:${val}%"></div><span>${val}%</span></div>`;

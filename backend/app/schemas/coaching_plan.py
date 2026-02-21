@@ -23,6 +23,7 @@ class CoachingActualOverrideUpsert(BaseModel):
     work_date: date
     actual_minutes: int = Field(ge=0, le=24 * 60)
     reason: Optional[str] = None
+    actual_project_ids: List[int] = Field(default_factory=list)
 
 
 class CoachingPlanCell(BaseModel):
@@ -41,6 +42,8 @@ class CoachingPlanCell(BaseModel):
     final_minutes: int = 0
     actual_source: str = "none"  # none/auto/override
     override_reason: Optional[str] = None
+    actual_project_ids: List[int] = Field(default_factory=list)
+    actual_project_names: List[str] = Field(default_factory=list)
     actual_start_time: Optional[str] = None
     actual_end_time: Optional[str] = None
 

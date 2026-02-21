@@ -103,7 +103,7 @@ const RichEditor = {
         <div id="${id}" class="rte-editor" contenteditable="true" data-placeholder="${Fmt.escape(placeholder)}"></div>
         <textarea class="rte-source" style="display:none;"></textarea>
         <input type="file" class="rte-image-input" accept="image/*" style="display:none;" />
-        <input type="file" class="rte-file-input" accept=".jpg,.jpeg,.png,.gif,.pdf,.ppt,.pptx,.xls,.xlsx,.csv" style="display:none;" />
+        <input type="file" class="rte-file-input" accept=".jpg,.jpeg,.png,.gif,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.doc,.docx,.hwp,.hwpx,.txt,.zip" style="display:none;" />
       </div>
     `;
 
