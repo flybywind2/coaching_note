@@ -111,3 +111,20 @@ def test_daily_frequency_merges_same_type_notifications(client, seed_users, proj
     assert noti_resp.status_code == 200
     mention_items = [n for n in noti_resp.json() if n["noti_type"] == "mention"]
     assert len(mention_items) == 1
+
+
+def test_mention_notification_accepts_name_without_role_prefix(client, db, seed_users, project):
+    # Production sample names may include prefixes like "코치 이영희"; @이영희 should still match.
+    seed_users["coach"].name = "코치 이영희"
+    seed_users["participant"].name = "참여자 정수연"
+    db.commit()
+
+    coach_headers = auth_headers(client, "coach001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = _create_note_with_mention(client, project.project_id, coach_headers, "정수연")
+    assert create_resp.status_code == 200
+
+    noti_resp = client.get("/api/notifications", headers=participant_headers)
+    assert noti_resp.status_code == 200
+    assert any(n["noti_type"] == "mention" for n in noti_resp.json())

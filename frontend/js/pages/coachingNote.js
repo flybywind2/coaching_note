@@ -88,7 +88,7 @@ Pages.coachingNote = {
                 <h4>${commentFormTitle}</h4>
                 <form id="comment-form">
                   <div id="comment-editor-wrap"></div>
-                  <p class="form-hint">멘션은 @사번 또는 @이름(등록된 값과 정확히 일치) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
+                  <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
                   ${canWrite ? `<label><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유(참여자 비공개)</label>` : ''}
                   <button type="submit" class="btn btn-primary">등록</button>
                 </form>

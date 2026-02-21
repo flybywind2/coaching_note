@@ -11,6 +11,7 @@ from app.services import notification_service
 
 
 MENTION_PATTERN = re.compile(r"(?<![\w@])@([A-Za-z0-9가-힣._-]{2,30})")
+ROLE_NAME_PREFIXES = {"관리자", "코치", "참여자", "참관자"}
 
 
 def _strip_html(raw: Optional[str]) -> str:
@@ -27,6 +28,35 @@ def extract_mentions(texts: Iterable[Optional[str]]) -> Set[str]:
         for token in MENTION_PATTERN.findall(plain):
             tokens.add(token.strip())
     return {token for token in tokens if token}
+
+
+def _normalized_key(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return re.sub(r"\s+", "", str(value)).strip().lower()
+
+
+def _mention_keys_for_user(user: User) -> Set[str]:
+    keys: Set[str] = set()
+
+    def add(raw: Optional[str]):
+        normalized = _normalized_key(raw)
+        if normalized:
+            keys.add(normalized)
+
+    add(user.emp_id)
+    add(user.name)
+
+    name = (user.name or "").strip()
+    if not name:
+        return keys
+
+    parts = [part for part in re.split(r"\s+", name) if part]
+    if parts:
+        add(parts[-1])  # e.g. "코치 이영희" -> "이영희"
+        if parts[0] in ROLE_NAME_PREFIXES and len(parts) > 1:
+            add(" ".join(parts[1:]))  # role prefix removed full name
+    return keys
 
 
 def notify_mentions(
@@ -47,14 +77,16 @@ def notify_mentions(
     if not tokens:
         return
 
-    users = (
-        db.query(User)
-        .filter((User.emp_id.in_(list(tokens))) | (User.name.in_(list(tokens))))
-        .all()
-    )
+    token_keys = {_normalized_key(token) for token in tokens if _normalized_key(token)}
+    if not token_keys:
+        return
+
+    users = db.query(User).filter(User.is_active == True).all()
 
     notified_user_ids = set()
     for user in users:
+        if not (token_keys & _mention_keys_for_user(user)):
+            continue
         if user.user_id == actor.user_id:
             continue
         if user.user_id in notified_user_ids:
@@ -68,4 +100,3 @@ def notify_mentions(
             message=f"{actor.name}님이 회원님을 멘션했습니다.",
             link_url=link_url,
         )
-

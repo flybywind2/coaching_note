@@ -145,7 +145,7 @@ Pages.board = {
         </div>
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
         <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
-        <p class="form-hint">멘션은 @사번 또는 @이름(등록된 값과 정확히 일치) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
+        <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
         <p class="form-error" id="board-post-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
@@ -202,7 +202,7 @@ Pages.board = {
     Modal.open(`<h2>${isEdit ? '댓글 수정' : '댓글 작성'}</h2>
       <form id="board-comment-form">
         <div id="board-comment-editor"></div>
-        <p class="form-hint">멘션은 @사번 또는 @이름(등록된 값과 정확히 일치) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
+        <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
         <p class="form-error" id="board-comment-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
