@@ -21,6 +21,7 @@ from app.models.site_content import SiteContent
 from app.models.task import ProjectTask
 from app.models.user import User
 from app.models.user import Coach
+from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH
 from app.schemas.user import (
     UserBulkDeleteRequest,
     UserBulkDeleteResult,
@@ -34,16 +35,29 @@ from app.schemas.user import (
     UserUpdate,
 )
 
-ALLOWED_ROLES = {"admin", "coach", "participant", "observer"}
+ALLOWED_ROLES = {"admin", LEGACY_COACH, INTERNAL_COACH, EXTERNAL_COACH, "participant", "observer"}
 
 
 def _default_email(emp_id: str) -> str:
     return f"{emp_id}@samsung.com"
 
 
-def _normalize_role_or_raise(role: str):
-    if role not in ALLOWED_ROLES:
+def _canonicalize_role(role: str) -> str:
+    text = str(role or "").strip()
+    if text == LEGACY_COACH:
+        return INTERNAL_COACH
+    return text
+
+
+def _normalize_role_or_raise(role: str) -> str:
+    normalized = _canonicalize_role(role)
+    if normalized not in ALLOWED_ROLES:
         raise HTTPException(status_code=400, detail="유효하지 않은 역할입니다.")
+    return normalized
+
+
+def _can_have_project_scope(role: str) -> bool:
+    return _canonicalize_role(role) == EXTERNAL_COACH
 
 
 def _ensure_not_last_admin_change(db: Session, user: User, next_role: str, next_active: bool):
@@ -108,7 +122,7 @@ def list_users(db: Session, include_inactive: bool = False):
 
 
 def create_user(db: Session, data: UserCreate) -> User:
-    _normalize_role_or_raise(data.role)
+    normalized_role = _normalize_role_or_raise(data.role)
 
     existing = db.query(User).filter(User.emp_id == data.emp_id).first()
     if existing:
@@ -119,7 +133,7 @@ def create_user(db: Session, data: UserCreate) -> User:
         emp_id=data.emp_id,
         name=data.name,
         department=data.department,
-        role=data.role,
+        role=normalized_role,
         email=email,
         is_active=True,
     )
@@ -136,7 +150,7 @@ def update_user(db: Session, user_id: int, data: UserUpdate, current_user: User)
 
     payload = data.model_dump(exclude_unset=True)
     if "role" in payload:
-        _normalize_role_or_raise(payload["role"])
+        payload["role"] = _normalize_role_or_raise(payload["role"])
 
     if "emp_id" in payload:
         next_emp_id = (payload.get("emp_id") or "").strip()
@@ -159,6 +173,9 @@ def update_user(db: Session, user_id: int, data: UserUpdate, current_user: User)
 
     for key, value in payload.items():
         setattr(user, key, value)
+    if "role" in payload and not _can_have_project_scope(user.role):
+        # 외부코치가 아닌 경우 권한 제한 스코프를 초기화한다.
+        _set_permissions(db, user.user_id, [], [])
     if "emp_id" in payload and ("email" not in payload or not (payload.get("email") or "").strip()):
         user.email = _default_email(user.emp_id)
     if "email" in payload and not (payload.get("email") or "").strip():
@@ -177,7 +194,7 @@ def bulk_upsert_users(db: Session, data: UserBulkUpsertRequest) -> UserBulkUpser
     for index, item in enumerate(data.rows, start=1):
         emp_id = (item.emp_id or "").strip()
         name = (item.name or "").strip()
-        role = (item.role or "").strip()
+        role = _canonicalize_role((item.role or "").strip())
         if not emp_id or not name:
             errors.append(f"{index}행: Knox ID와 이름은 필수입니다.")
             continue
@@ -204,6 +221,8 @@ def bulk_upsert_users(db: Session, data: UserBulkUpsertRequest) -> UserBulkUpser
         existing.department = item.department or None
         existing.role = role
         existing.email = email
+        if not _can_have_project_scope(existing.role):
+            _set_permissions(db, existing.user_id, [], [])
         if not existing.is_active and data.reactivate_inactive:
             existing.is_active = True
             reactivated += 1
@@ -224,6 +243,9 @@ def get_user_permissions(db: Session, user_id: int) -> UserPermissionOut:
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
+    if not _can_have_project_scope(user.role):
+        return UserPermissionOut(user_id=user_id, batch_ids=[], project_ids=[])
+
     batch_ids = [
         row[0]
         for row in db.query(UserBatchAccess.batch_id)
@@ -243,6 +265,11 @@ def update_user_permissions(db: Session, user_id: int, data: UserPermissionUpdat
     user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    if not _can_have_project_scope(user.role):
+        _set_permissions(db, user_id, [], [])
+        db.commit()
+        return UserPermissionOut(user_id=user_id, batch_ids=[], project_ids=[])
 
     batch_ids = sorted({int(v) for v in (data.batch_ids or []) if int(v) > 0})
     project_ids = sorted({int(v) for v in (data.project_ids or []) if int(v) > 0})
@@ -324,7 +351,8 @@ def bulk_update_users(db: Session, data: UserBulkUpdateRequest, current_user: Us
 
     role_value = payload.get("role")
     if role_value is not None:
-        _normalize_role_or_raise(role_value)
+        role_value = _normalize_role_or_raise(role_value)
+        payload["role"] = role_value
         if role_value != "admin":
             active_admin_ids = {
                 row[0]
@@ -367,6 +395,8 @@ def bulk_update_users(db: Session, data: UserBulkUpdateRequest, current_user: Us
                 next_batch_ids = batch_ids if batch_ids is not None else current_perm.batch_ids
                 next_project_ids = project_ids if project_ids is not None else current_perm.project_ids
                 _set_permissions(db, user.user_id, next_batch_ids, next_project_ids)
+            if not _can_have_project_scope(user.role):
+                _set_permissions(db, user.user_id, [], [])
             updated += 1
         except HTTPException as exc:
             errors.append(f"{user.user_id}: {exc.detail}")

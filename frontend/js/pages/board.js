@@ -67,7 +67,6 @@ Pages.board = {
               <table class="data-table board-table">
                 <thead>
                   <tr>
-                    <th style="width:72px;">번호</th>
                     <th style="width:120px;">분류</th>
                     <th>제목</th>
                     <th style="width:130px;">작성자</th>
@@ -77,10 +76,9 @@ Pages.board = {
                   </tr>
                 </thead>
                 <tbody>
-                  ${posts.map((p, idx) => `
+                  ${posts.map((p) => `
                     <tr class="board-row ${p.is_notice ? 'notice' : ''}" data-post-id="${p.post_id}">
-                      <td>${posts.length - idx}</td>
-                      <td>${p.is_notice ? '<span class="tag tag-notice">상단고정</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
+                      <td>${p.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
                       <td><a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a></td>
                       <td>${Fmt.escape(p.author_name || `#${p.author_id}`)}</td>
                       <td>${Fmt.date(p.created_at)}</td>
@@ -256,20 +254,18 @@ Pages.board = {
       ]);
       const user = Auth.getUser();
       const canManagePost = user.role === 'admin' || post.author_id === user.user_id;
-      const canPinPost = user.role === 'admin';
 
       el.innerHTML = `
         <div class="page-container">
           <a href="#/board" class="back-link">← 게시판으로</a>
           <div class="post-detail">
             <div class="inline-actions">
-              ${post.is_notice ? '<span class="tag tag-notice">상단고정</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
+              ${post.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
             </div>
             <h2>${Fmt.escape(post.title)}</h2>
             <div class="post-meta">${Fmt.datetime(post.created_at)} · 작성자 ${Fmt.escape(post.author_name || `#${post.author_id}`)} · 조회 ${post.view_count}</div>
             ${canManagePost ? `
               <div class="post-actions">
-                ${canPinPost ? `<button id="toggle-pin-post-btn" class="btn btn-sm ${post.is_notice ? 'btn-secondary' : 'btn-primary'}">${post.is_notice ? '상단 고정 해제' : '상단 고정'}</button>` : ''}
                 <button id="edit-post-btn" class="btn btn-sm btn-secondary">수정</button>
                 <button id="delete-post-btn" class="btn btn-sm btn-danger">삭제</button>
               </div>` : ''}
@@ -317,15 +313,6 @@ Pages.board = {
           Router.go('/board');
         } catch (err) {
           alert(err.message || '게시글 삭제 실패');
-        }
-      });
-
-      document.getElementById('toggle-pin-post-btn')?.addEventListener('click', async () => {
-        try {
-          await API.updatePost(postId, { is_notice: !post.is_notice });
-          await this.renderPost(el, params);
-        } catch (err) {
-          alert(err.message || '상단 고정 상태 변경 실패');
         }
       });
 

@@ -1,13 +1,35 @@
 """Board Service 도메인 서비스 레이어입니다. 비즈니스 규칙과 데이터 접근 흐름을 캡슐화합니다."""
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from fastapi import HTTPException
 from app.models.board import Board, BoardPost, PostComment
 from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate, PostCommentUpdate
 from app.services import mention_service, version_service
 from typing import List
+from app.utils.permissions import is_admin_or_coach
+
+STANDARD_BOARDS = (
+    {"board_type": "notice", "board_name": "공지사항", "description": "프로그램 공지사항"},
+    {"board_type": "question", "board_name": "질문", "description": "질문과 답변"},
+    {"board_type": "tip", "board_name": "팁공유", "description": "운영/기술 팁 공유"},
+    {"board_type": "chat", "board_name": "잡담", "description": "자유 소통"},
+)
+
+BOARD_TYPE_ALIASES = {
+    "notice": {"notice", "공지", "공지사항"},
+    "question": {"question", "qna", "qa", "질문"},
+    "tip": {"tip", "tips", "share", "팁공유"},
+    "chat": {"chat", "free", "잡담", "자유게시판"},
+}
+
+BOARD_PRIORITY = {
+    "notice": 0,
+    "question": 1,
+    "tip": 2,
+    "chat": 3,
+}
 
 
 def _ensure_not_observer(current_user: User):
@@ -20,11 +42,85 @@ def _ensure_notice_board_admin(board: Board, current_user: User):
         raise HTTPException(status_code=403, detail="공지사항 게시판 작성은 관리자만 가능합니다.")
 
 
+def _canonical_board_type(board_type: str | None, board_name: str | None = None) -> str:
+    value = str(board_type or "").strip().lower()
+    name = str(board_name or "").strip().lower()
+    for canonical, aliases in BOARD_TYPE_ALIASES.items():
+        if value in aliases or name in aliases:
+            return canonical
+    return value
+
+
+def _board_priority_expr():
+    return case(
+        (Board.board_type == "notice", 0),
+        (Board.board_type == "question", 1),
+        (Board.board_type == "tip", 2),
+        (Board.board_type == "chat", 3),
+        else_=99,
+    )
+
+
+def _sync_standard_boards(db: Session) -> List[Board]:
+    rows = db.query(Board).order_by(Board.board_id.asc()).all()
+    by_type: dict[str, list[Board]] = {row["board_type"]: [] for row in STANDARD_BOARDS}
+    dirty = False
+
+    for board in rows:
+        canonical_type = _canonical_board_type(board.board_type, board.board_name)
+        if canonical_type in by_type:
+            by_type[canonical_type].append(board)
+
+    for config in STANDARD_BOARDS:
+        canonical_type = config["board_type"]
+        candidates = by_type.get(canonical_type, [])
+        if not candidates:
+            created = Board(
+                board_type=canonical_type,
+                board_name=config["board_name"],
+                description=config.get("description"),
+            )
+            db.add(created)
+            dirty = True
+            continue
+
+        primary = candidates[0]
+        if primary.board_type != canonical_type:
+            primary.board_type = canonical_type
+            dirty = True
+        if primary.board_name != config["board_name"]:
+            primary.board_name = config["board_name"]
+            dirty = True
+        if not (primary.description or "").strip():
+            primary.description = config.get("description")
+            dirty = True
+
+        for extra in candidates[1:]:
+            db.query(BoardPost).filter(BoardPost.board_id == extra.board_id).update(
+                {"board_id": primary.board_id},
+                synchronize_session=False,
+            )
+            db.delete(extra)
+            dirty = True
+
+    if dirty:
+        db.commit()
+
+    target_types = [row["board_type"] for row in STANDARD_BOARDS]
+    return (
+        db.query(Board)
+        .filter(Board.board_type.in_(target_types))
+        .order_by(_board_priority_expr(), Board.board_id.asc())
+        .all()
+    )
+
+
 def get_boards(db: Session) -> List[Board]:
-    return db.query(Board).all()
+    return _sync_standard_boards(db)
 
 
 def get_board(db: Session, board_id: int) -> Board:
+    _sync_standard_boards(db)
     board = db.query(Board).filter(Board.board_id == board_id).first()
     if not board:
         raise HTTPException(status_code=404, detail="게시판을 찾을 수 없습니다.")
@@ -66,10 +162,11 @@ def _posts_query(db: Session):
 
 
 def get_posts(db: Session, board_id: int, skip: int = 0, limit: int = 20) -> List[BoardPost]:
+    _sync_standard_boards(db)
     rows = (
         _posts_query(db)
         .filter(BoardPost.board_id == board_id)
-        .order_by(BoardPost.is_notice.desc(), BoardPost.created_at.desc())
+        .order_by(BoardPost.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -84,9 +181,14 @@ def get_all_posts(
     category: str | None = None,
     search_q: str | None = None,
 ) -> List[BoardPost]:
+    _sync_standard_boards(db)
     query = _posts_query(db)
     if category:
-        query = query.filter(or_(Board.board_type == category, Board.board_name == category))
+        normalized_category = _canonical_board_type(category, category)
+        if normalized_category in BOARD_PRIORITY:
+            query = query.filter(Board.board_type == normalized_category)
+        else:
+            query = query.filter(or_(Board.board_type == category, Board.board_name == category))
     if search_q and search_q.strip():
         keyword = f"%{search_q.strip()}%"
         query = query.filter(
@@ -98,7 +200,7 @@ def get_all_posts(
             )
         )
     rows = (
-        query.order_by(BoardPost.is_notice.desc(), BoardPost.created_at.desc())
+        query.order_by(_board_priority_expr(), BoardPost.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -137,9 +239,9 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
     _ensure_not_observer(current_user)
     board = get_board(db, board_id)
     _ensure_notice_board_admin(board, current_user)
-    if data.is_notice and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="공지 등록은 관리자만 가능합니다.")
-    post = BoardPost(board_id=board_id, author_id=current_user.user_id, **data.model_dump())
+    payload = data.model_dump()
+    payload["is_notice"] = board.board_type == "notice"
+    post = BoardPost(board_id=board_id, author_id=current_user.user_id, **payload)
     db.add(post)
     db.commit()
     db.refresh(post)
@@ -167,10 +269,11 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     before_texts = [post.title, post.content]
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 수정 가능합니다.")
-    if data.is_notice and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="공지 설정은 관리자만 가능합니다.")
-    for k, v in data.model_dump(exclude_none=True).items():
+    payload = data.model_dump(exclude_none=True)
+    payload.pop("is_notice", None)
+    for k, v in payload.items():
         setattr(post, k, v)
+    post.is_notice = post.board.board_type == "notice"
     db.commit()
     db.refresh(post)
     version_service.create_content_version(
@@ -266,7 +369,7 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
 
 def get_post_versions(db: Session, post_id: int, current_user: User) -> List[dict]:
     post = get_post(db, post_id)
-    if post.author_id != current_user.user_id and current_user.role not in ("admin", "coach"):
+    if post.author_id != current_user.user_id and not is_admin_or_coach(current_user):
         raise HTTPException(status_code=403, detail="게시글 이력 조회 권한이 없습니다.")
     versions = version_service.list_versions(db, entity_type="board_post", entity_id=post_id)
     return [version_service.to_response(row) for row in versions]
@@ -286,10 +389,7 @@ def restore_post_version(db: Session, post_id: int, version_id: int, current_use
     snapshot = version_service.parse_snapshot(row)
     post.title = snapshot.get("title") or post.title
     post.content = snapshot.get("content") or post.content
-    if "is_notice" in snapshot:
-        if snapshot.get("is_notice") and current_user.role != "admin":
-            raise HTTPException(status_code=403, detail="공지 설정은 관리자만 가능합니다.")
-        post.is_notice = bool(snapshot.get("is_notice"))
+    post.is_notice = post.board.board_type == "notice"
     db.commit()
     db.refresh(post)
     version_service.create_content_version(

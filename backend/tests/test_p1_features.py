@@ -93,7 +93,7 @@ def test_board_search_and_notice_order(client, seed_users, seed_boards):
     coach_headers = auth_headers(client, "coach001")
 
     notice_board_id = seed_boards[0].board_id
-    free_board_id = seed_boards[2].board_id
+    tip_board_id = seed_boards[2].board_id
 
     notice_resp = client.post(
         f"/api/boards/{notice_board_id}/posts",
@@ -103,7 +103,7 @@ def test_board_search_and_notice_order(client, seed_users, seed_boards):
     assert notice_resp.status_code == 200
 
     free_resp = client.post(
-        f"/api/boards/{free_board_id}/posts",
+        f"/api/boards/{tip_board_id}/posts",
         json={"title": "키워드 일반글", "content": "일반 본문", "is_notice": False},
         headers=coach_headers,
     )
@@ -116,11 +116,11 @@ def test_board_search_and_notice_order(client, seed_users, seed_boards):
     assert rows[0]["is_notice"] is True
     assert "키워드" in rows[0]["title"]
 
-    category_q_resp = client.get("/api/boards/posts?category=free&q=일반글", headers=coach_headers)
+    category_q_resp = client.get("/api/boards/posts?category=tip&q=일반글", headers=coach_headers)
     assert category_q_resp.status_code == 200
     filtered = category_q_resp.json()
     assert len(filtered) == 1
-    assert filtered[0]["board_type"] == "free"
+    assert filtered[0]["board_type"] == "tip"
     assert filtered[0]["title"] == "키워드 일반글"
 
 

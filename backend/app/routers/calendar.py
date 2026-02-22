@@ -1,6 +1,6 @@
 """Calendar 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional, Tuple
 from datetime import date, datetime, timezone
@@ -11,7 +11,11 @@ from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession, SessionAttendee
 from app.models.project import Project
-from app.utils.permissions import can_view_project, is_admin_or_coach
+from app.utils.permissions import (
+    INTERNAL_COACH_ROLES,
+    can_access_calendar,
+    can_view_project,
+)
 
 router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
@@ -61,6 +65,9 @@ def get_calendar(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not can_access_calendar(current_user):
+        raise HTTPException(status_code=403, detail="캘린더 접근 권한이 없습니다.")
+
     events = []
     project_rows = db.query(Project).filter(Project.batch_id == batch_id).all()
     project_map = {p.project_id: p.project_name for p in project_rows}
@@ -93,7 +100,7 @@ def get_calendar(
     schedule_date_set = {row.start_datetime.date() for row in schedules}
     coach_plan_map = {}
     coach_actual_map = {}
-    if schedule_date_set and is_admin_or_coach(current_user):
+    if schedule_date_set:
         coach_plan_rows = (
             db.query(
                 CoachDailyPlan.plan_date,
@@ -108,7 +115,7 @@ def get_calendar(
                 CoachDailyPlan.batch_id == batch_id,
                 CoachDailyPlan.plan_date.in_(schedule_date_set),
                 User.is_active == True,  # noqa: E712
-                User.role.in_(["admin", "coach"]),
+                User.role.in_(["admin", *INTERNAL_COACH_ROLES]),
             )
             .order_by(CoachDailyPlan.plan_date.asc(), User.name.asc())
             .all()
@@ -126,7 +133,7 @@ def get_calendar(
             db.query(User.user_id, User.name)
             .filter(
                 User.is_active == True,  # noqa: E712
-                User.role.in_(["admin", "coach"]),
+                User.role.in_(["admin", *INTERNAL_COACH_ROLES]),
             )
             .all()
         )
@@ -197,8 +204,8 @@ def get_calendar(
 
     for s in schedules:
         scope = _normalize_schedule_scope(s)
-        coach_plans = coach_plan_map.get(s.start_datetime.date(), []) if scope == "coaching" else []
-        coach_actuals = coach_actual_map.get(s.start_datetime.date(), []) if scope == "coaching" else []
+        coach_plans = coach_plan_map.get(s.start_datetime.date(), [])
+        coach_actuals = coach_actual_map.get(s.start_datetime.date(), [])
         color = s.color or (EVENT_COLORS["coaching_schedule"] if scope == "coaching" else EVENT_COLORS["program"])
         events.append({
             "event_type": "coaching_schedule" if scope == "coaching" else "program",

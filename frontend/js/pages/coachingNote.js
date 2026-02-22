@@ -12,14 +12,16 @@ Pages.coachingNote = {
         API.getComments(noteId),
       ]);
       const user = Auth.getUser();
-      const canWrite = user.role === 'admin' || user.role === 'coach';
+      const canWrite = user.role === 'admin' || Auth.isCoach();
       const canComment = user.role !== 'observer';
       const resolveCommentType = (comment) => {
         if (comment.comment_type) return comment.comment_type;
         return comment.author_role === 'participant' ? 'participant_memo' : 'coaching_feedback';
       };
-      const coachingFeedbacks = comments.filter((c) => resolveCommentType(c) === 'coaching_feedback');
-      const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo');
+      const hasText = (value) => Fmt.excerpt(value || '', 1).length > 0;
+      const hasCommentText = (comment) => hasText(comment?.content || '');
+      const coachingFeedbacks = comments.filter((c) => resolveCommentType(c) === 'coaching_feedback' && hasCommentText(c));
+      const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo' && hasCommentText(c));
       const commentFormTitle = canWrite ? '코칭 의견 작성' : '메모 작성';
       const commentPlaceholder = canWrite
         ? '코칭 의견을 입력하세요. 이미지/표 삽입이 가능합니다.'
@@ -71,18 +73,22 @@ Pages.coachingNote = {
           </div>
 
           <div class="comments-section">
-            <div class="comment-group">
-              <h3>코칭 의견 (${coachingFeedbacks.length})</h3>
-              <div id="feedback-comment-list">
-                ${coachingFeedbacks.map((c) => renderCommentCard(c)).join('') || '<p class="empty-state">코칭 의견이 없습니다.</p>'}
+            ${coachingFeedbacks.length ? `
+              <div class="comment-group">
+                <h3>코칭 의견 (${coachingFeedbacks.length})</h3>
+                <div id="feedback-comment-list">
+                  ${coachingFeedbacks.map((c) => renderCommentCard(c)).join('')}
+                </div>
               </div>
-            </div>
-            <div class="comment-group">
-              <h3>참여자 메모 (${participantMemos.length})</h3>
-              <div id="memo-comment-list">
-                ${participantMemos.map((c) => renderCommentCard(c)).join('') || '<p class="empty-state">참여자 메모가 없습니다.</p>'}
+            ` : ''}
+            ${participantMemos.length ? `
+              <div class="comment-group">
+                <h3>참여자 메모 (${participantMemos.length})</h3>
+                <div id="memo-comment-list">
+                  ${participantMemos.map((c) => renderCommentCard(c)).join('')}
+                </div>
               </div>
-            </div>
+            ` : ''}
             <div class="comment-form">
               ${canComment ? `
                 <h4>${commentFormTitle}</h4>

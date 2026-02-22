@@ -83,8 +83,9 @@ def seed():
         # Boards
         boards = [
             Board(board_name="공지사항", board_type="notice", description="프로그램 공지사항"),
-            Board(board_name="Q&A", board_type="qna", description="질문과 답변"),
-            Board(board_name="자유게시판", board_type="free", description="자유롭게 소통하는 공간"),
+            Board(board_name="질문", board_type="question", description="질문과 답변"),
+            Board(board_name="팁공유", board_type="tip", description="운영/기술 팁 공유"),
+            Board(board_name="잡담", board_type="chat", description="자유롭게 소통하는 공간"),
         ]
         db.add_all(boards)
 

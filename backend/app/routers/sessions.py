@@ -16,7 +16,7 @@ from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 from app.services import attendance_service
 from app.models.project import Project, ProjectMember
-from app.utils.permissions import can_view_project
+from app.utils.permissions import COACH_ROLES, can_view_project, is_coach
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -27,7 +27,7 @@ def _ensure_project_session_manage_permission(db: Session, project_id: int, curr
         raise HTTPException(status_code=404, detail="과제를 찾을 수 없습니다.")
     if current_user.role == "admin":
         return project
-    if current_user.role == "coach":
+    if is_coach(current_user):
         if not can_view_project(db, project, current_user):
             raise HTTPException(status_code=403, detail="해당 과제 일정을 관리할 권한이 없습니다.")
         return project
@@ -187,7 +187,7 @@ def auto_checkin_today(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("coach", "participant"):
+    if not (is_coach(current_user) or current_user.role == "participant"):
         return {"checked_in": 0, "skipped": 0}
 
     today = date.today()
@@ -202,7 +202,7 @@ def auto_checkin_today(
         if not member_project_ids:
             return {"checked_in": 0, "skipped": 0}
         q = q.filter(CoachingSession.project_id.in_(member_project_ids))
-    else:
+    elif is_coach(current_user):
         attendee_session_ids = [
             row[0]
             for row in db.query(SessionAttendee.session_id)
@@ -221,6 +221,8 @@ def auto_checkin_today(
             )
         else:
             q = q.filter(CoachingSession.created_by == current_user.user_id)
+    else:
+        return {"checked_in": 0, "skipped": 0}
 
     sessions = q.all()
     if not sessions:
@@ -248,7 +250,7 @@ def get_attendance(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if current_user.role not in ("admin", *COACH_ROLES):
         raise HTTPException(status_code=403, detail="관리자/코치만 조회 가능합니다.")
     from app.models.session import AttendanceLog
     return db.query(AttendanceLog).filter(AttendanceLog.session_id == session_id).all()
@@ -260,7 +262,7 @@ def coaching_start(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if current_user.role not in ("admin", *COACH_ROLES):
         raise HTTPException(status_code=403, detail="코치/관리자만 가능합니다.")
     return attendance_service.coaching_start(session_id, current_user.user_id, db)
 
@@ -271,7 +273,7 @@ def coaching_end(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if current_user.role not in ("admin", *COACH_ROLES):
         raise HTTPException(status_code=403, detail="코치/관리자만 가능합니다.")
     return attendance_service.coaching_end(session_id, current_user.user_id, db)
 

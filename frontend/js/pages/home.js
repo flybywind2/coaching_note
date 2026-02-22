@@ -7,7 +7,7 @@ Pages.home = {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
-      const canSelectBatch = user.role === 'admin' || user.role === 'coach';
+      const canSelectBatch = user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach';
       const batches = await API.getBatches();
       const batchId = canSelectBatch
         ? (State.get('currentBatchId') || batches[0]?.batch_id || null)

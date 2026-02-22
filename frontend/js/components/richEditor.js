@@ -88,22 +88,12 @@ const RichEditor = {
           <div class="rte-table-picker-grid" data-role="table-picker-grid"></div>
           <div class="rte-table-picker-status" data-role="table-picker-status">0 x 0</div>
           <button type="button" class="rte-table-picker-advanced-toggle" data-role="table-picker-advanced-toggle">직접 입력</button>
-          <div class="rte-table-picker-advanced" data-role="table-picker-advanced" hidden>
-            <div class="rte-table-picker-advanced-row">
-              <label>행 <input type="number" min="1" max="${TABLE_INSERT_MAX}" step="1" data-role="table-rows-input" value="3" /></label>
-              <label>열 <input type="number" min="1" max="${TABLE_INSERT_MAX}" step="1" data-role="table-cols-input" value="3" /></label>
-            </div>
-            <div class="rte-table-picker-advanced-row">
-              <label>기본 열 폭(px) <input type="number" min="${TABLE_MIN_COL_WIDTH}" max="360" step="1" data-role="table-col-width-input" placeholder="자동" /></label>
-              <label>기본 행 높이(px) <input type="number" min="${TABLE_MIN_ROW_HEIGHT}" max="240" step="1" data-role="table-row-height-input" placeholder="36" /></label>
-            </div>
-            <button type="button" class="rte-table-picker-advanced-apply" data-role="table-picker-advanced-apply">표 삽입</button>
-          </div>
         </div>
         <div id="${id}" class="rte-editor" contenteditable="true" data-placeholder="${Fmt.escape(placeholder)}"></div>
         <textarea class="rte-source" style="display:none;"></textarea>
         <input type="file" class="rte-image-input" accept="image/*" style="display:none;" />
         <input type="file" class="rte-file-input" accept=".jpg,.jpeg,.png,.gif,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.doc,.docx,.hwp,.hwpx,.txt,.zip" style="display:none;" />
+        <div class="rte-inline-modal-host" data-role="rte-inline-modal-host"></div>
       </div>
     `;
 
@@ -117,12 +107,7 @@ const RichEditor = {
     const tablePickerGrid = root.querySelector('[data-role="table-picker-grid"]');
     const tablePickerStatus = root.querySelector('[data-role="table-picker-status"]');
     const tablePickerAdvancedToggle = root.querySelector('[data-role="table-picker-advanced-toggle"]');
-    const tablePickerAdvancedPanel = root.querySelector('[data-role="table-picker-advanced"]');
-    const tableRowsInput = root.querySelector('[data-role="table-rows-input"]');
-    const tableColsInput = root.querySelector('[data-role="table-cols-input"]');
-    const tableColWidthInput = root.querySelector('[data-role="table-col-width-input"]');
-    const tableRowHeightInput = root.querySelector('[data-role="table-row-height-input"]');
-    const tableAdvancedApplyButton = root.querySelector('[data-role="table-picker-advanced-apply"]');
+    const inlineModalHost = root.querySelector('[data-role="rte-inline-modal-host"]');
     const formatBlockSelect = root.querySelector('[data-action="format-block"]');
     const fontSizeSelect = root.querySelector('[data-action="font-size"]');
     editor.innerHTML = initialHTML;
@@ -247,6 +232,56 @@ const RichEditor = {
       document.body.classList.remove('rte-resizing', 'rte-resizing-col', 'rte-resizing-row');
     };
 
+    const closeInlineModal = () => {
+      if (!inlineModalHost) return;
+      inlineModalHost.innerHTML = '';
+    };
+
+    const openInlineModal = ({ title, bodyHtml, submitLabel = '확인', onSubmit = null, onCancel = null }) => {
+      if (!inlineModalHost) return;
+      closeInlineModal();
+      inlineModalHost.innerHTML = `
+        <div class="rte-inline-modal-overlay">
+          <div class="rte-inline-modal-box">
+            <h4>${Fmt.escape(title || '안내')}</h4>
+            <form class="rte-inline-modal-form">
+              <div class="rte-inline-modal-body">${bodyHtml || ''}</div>
+              <div class="rte-inline-modal-actions">
+                <button type="button" class="btn btn-sm btn-secondary" data-role="rte-inline-cancel">취소</button>
+                <button type="submit" class="btn btn-sm btn-primary">${Fmt.escape(submitLabel)}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      const cancel = inlineModalHost.querySelector('[data-role="rte-inline-cancel"]');
+      const form = inlineModalHost.querySelector('.rte-inline-modal-form');
+      cancel?.addEventListener('click', () => {
+        closeInlineModal();
+        if (onCancel) onCancel();
+      });
+      form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!onSubmit) {
+          closeInlineModal();
+          return;
+        }
+        const keepOpen = await onSubmit(new FormData(form));
+        if (!keepOpen) closeInlineModal();
+      });
+    };
+
+    const openInlineMessage = (message, title = '안내') => {
+      openInlineModal({
+        title,
+        bodyHtml: `<p class="rte-inline-modal-message">${Fmt.escape(message)}</p>`,
+        submitLabel: '확인',
+      });
+      const cancel = inlineModalHost?.querySelector('[data-role="rte-inline-cancel"]');
+      if (cancel) cancel.style.display = 'none';
+    };
+
     const buildTableHTML = (rows, cols, options = {}) => {
       const safeRows = Math.max(1, Math.min(TABLE_INSERT_MAX, rows));
       const safeCols = Math.max(1, Math.min(TABLE_INSERT_MAX, cols));
@@ -282,8 +317,6 @@ const RichEditor = {
     const closeTablePicker = () => {
       tablePicker.hidden = true;
       tableInsertButton.classList.remove('active');
-      tablePickerAdvancedPanel.hidden = true;
-      tablePickerAdvancedToggle.classList.remove('active');
       updateTablePickerPreview(0, 0);
     };
 
@@ -318,20 +351,43 @@ const RichEditor = {
       updateTablePickerPreview(tablePickerRows, tablePickerCols);
     });
     tablePickerAdvancedToggle.addEventListener('click', () => {
-      const willOpen = tablePickerAdvancedPanel.hidden;
-      tablePickerAdvancedPanel.hidden = !willOpen;
-      tablePickerAdvancedToggle.classList.toggle('active', willOpen);
-    });
-    tableAdvancedApplyButton.addEventListener('click', () => {
-      const rows = Number.parseInt(tableRowsInput.value || '0', 10);
-      const cols = Number.parseInt(tableColsInput.value || '0', 10);
-      if (!rows || !cols || rows < 1 || cols < 1) {
-        alert('행/열 값을 1 이상 입력하세요.');
-        return;
-      }
-      insertTable(rows, cols, {
-        colWidth: tableColWidthInput.value || null,
-        rowHeight: tableRowHeightInput.value || null,
+      openInlineModal({
+        title: '표 삽입(직접 입력)',
+        bodyHtml: `
+          <div class="rte-inline-modal-grid">
+            <label>행
+              <input type="number" name="rows" min="1" max="${TABLE_INSERT_MAX}" step="1" value="3" />
+            </label>
+            <label>열
+              <input type="number" name="cols" min="1" max="${TABLE_INSERT_MAX}" step="1" value="3" />
+            </label>
+            <label>기본 열 폭(px)
+              <input type="number" name="col_width" min="${TABLE_MIN_COL_WIDTH}" max="360" step="1" placeholder="자동" />
+            </label>
+            <label>기본 행 높이(px)
+              <input type="number" name="row_height" min="${TABLE_MIN_ROW_HEIGHT}" max="240" step="1" placeholder="36" />
+            </label>
+          </div>
+          <p class="form-error rte-inline-modal-error" data-role="rte-inline-modal-error" style="display:none;"></p>
+        `,
+        submitLabel: '표 삽입',
+        onSubmit: (fd) => {
+          const rows = Number.parseInt((fd.get('rows') || '0').toString(), 10);
+          const cols = Number.parseInt((fd.get('cols') || '0').toString(), 10);
+          const errEl = inlineModalHost?.querySelector('[data-role="rte-inline-modal-error"]');
+          if (!rows || !cols || rows < 1 || cols < 1) {
+            if (errEl) {
+              errEl.textContent = '행/열 값을 1 이상 입력하세요.';
+              errEl.style.display = 'block';
+            }
+            return true;
+          }
+          insertTable(rows, cols, {
+            colWidth: fd.get('col_width') ? String(fd.get('col_width')) : null,
+            rowHeight: fd.get('row_height') ? String(fd.get('row_height')) : null,
+          });
+          return false;
+        },
       });
     });
 
@@ -499,50 +555,139 @@ const RichEditor = {
 
     root.querySelector('[data-action="table-row-add"]').addEventListener('click', () => {
       const cell = currentCell();
-      if (!cell) return alert('표 안의 셀을 선택하세요.');
+      if (!cell) {
+        openInlineMessage('표 안의 셀을 선택하세요.');
+        return;
+      }
       const row = cell.parentElement;
       const tbody = row.parentElement;
-      const newRow = row.cloneNode(true);
-      newRow.querySelectorAll('td,th').forEach((c) => { c.innerHTML = '&nbsp;'; });
-      row.after(newRow);
-      tbody.normalize();
+      openInlineModal({
+        title: '행 추가',
+        bodyHtml: `
+          <label>추가할 행 수
+            <input type="number" name="count" min="1" max="20" step="1" value="1" />
+          </label>
+          <p class="form-error rte-inline-modal-error" data-role="rte-inline-modal-error" style="display:none;"></p>
+        `,
+        submitLabel: '추가',
+        onSubmit: (fd) => {
+          const count = Number.parseInt((fd.get('count') || '0').toString(), 10);
+          const errEl = inlineModalHost?.querySelector('[data-role="rte-inline-modal-error"]');
+          if (!count || count < 1 || count > 20) {
+            if (errEl) {
+              errEl.textContent = '1~20 범위의 숫자를 입력하세요.';
+              errEl.style.display = 'block';
+            }
+            return true;
+          }
+          let anchor = row;
+          for (let i = 0; i < count; i += 1) {
+            const newRow = row.cloneNode(true);
+            newRow.querySelectorAll('td,th').forEach((c) => { c.innerHTML = '&nbsp;'; });
+            anchor.after(newRow);
+            anchor = newRow;
+          }
+          tbody.normalize();
+          return false;
+        },
+      });
     });
 
     root.querySelector('[data-action="table-col-add"]').addEventListener('click', () => {
       const cell = currentCell();
-      if (!cell) return alert('표 안의 셀을 선택하세요.');
+      if (!cell) {
+        openInlineMessage('표 안의 셀을 선택하세요.');
+        return;
+      }
       const colIndex = [...cell.parentElement.children].indexOf(cell);
       const table = cell.closest('table');
-      table.querySelectorAll('tr').forEach((tr) => {
-        const ref = tr.children[colIndex];
-        const tag = ref ? ref.tagName.toLowerCase() : 'td';
-        const n = document.createElement(tag);
-        n.innerHTML = '&nbsp;';
-        if (ref && ref.style.width) n.style.width = ref.style.width;
-        if (ref && ref.style.height) n.style.height = ref.style.height;
-        if (ref) ref.after(n);
-        else tr.appendChild(n);
+      openInlineModal({
+        title: '열 추가',
+        bodyHtml: `
+          <label>추가할 열 수
+            <input type="number" name="count" min="1" max="20" step="1" value="1" />
+          </label>
+          <p class="form-error rte-inline-modal-error" data-role="rte-inline-modal-error" style="display:none;"></p>
+        `,
+        submitLabel: '추가',
+        onSubmit: (fd) => {
+          const count = Number.parseInt((fd.get('count') || '0').toString(), 10);
+          const errEl = inlineModalHost?.querySelector('[data-role="rte-inline-modal-error"]');
+          if (!count || count < 1 || count > 20) {
+            if (errEl) {
+              errEl.textContent = '1~20 범위의 숫자를 입력하세요.';
+              errEl.style.display = 'block';
+            }
+            return true;
+          }
+          table.querySelectorAll('tr').forEach((tr) => {
+            let ref = tr.children[colIndex];
+            for (let i = 0; i < count; i += 1) {
+              const tag = ref ? ref.tagName.toLowerCase() : 'td';
+              const n = document.createElement(tag);
+              n.innerHTML = '&nbsp;';
+              if (ref && ref.style.width) n.style.width = ref.style.width;
+              if (ref && ref.style.height) n.style.height = ref.style.height;
+              if (ref) {
+                ref.after(n);
+                ref = n;
+              } else {
+                tr.appendChild(n);
+                ref = n;
+              }
+            }
+          });
+          return false;
+        },
       });
     });
 
     root.querySelector('[data-action="table-row-del"]').addEventListener('click', () => {
       const cell = currentCell();
-      if (!cell) return alert('표 안의 셀을 선택하세요.');
+      if (!cell) {
+        openInlineMessage('표 안의 셀을 선택하세요.');
+        return;
+      }
       const row = cell.parentElement;
       const table = row.closest('table');
-      if (table.querySelectorAll('tr').length <= 1) return alert('마지막 행은 삭제할 수 없습니다.');
-      row.remove();
+      if (table.querySelectorAll('tr').length <= 1) {
+        openInlineMessage('마지막 행은 삭제할 수 없습니다.');
+        return;
+      }
+      openInlineModal({
+        title: '행 삭제',
+        bodyHtml: '<p class="rte-inline-modal-message">현재 선택된 행을 삭제하시겠습니까?</p>',
+        submitLabel: '삭제',
+        onSubmit: () => {
+          row.remove();
+          return false;
+        },
+      });
     });
 
     root.querySelector('[data-action="table-col-del"]').addEventListener('click', () => {
       const cell = currentCell();
-      if (!cell) return alert('표 안의 셀을 선택하세요.');
+      if (!cell) {
+        openInlineMessage('표 안의 셀을 선택하세요.');
+        return;
+      }
       const colIndex = [...cell.parentElement.children].indexOf(cell);
       const table = cell.closest('table');
       const firstRowCells = table.querySelector('tr').children.length;
-      if (firstRowCells <= 1) return alert('마지막 열은 삭제할 수 없습니다.');
-      table.querySelectorAll('tr').forEach((tr) => {
-        if (tr.children[colIndex]) tr.children[colIndex].remove();
+      if (firstRowCells <= 1) {
+        openInlineMessage('마지막 열은 삭제할 수 없습니다.');
+        return;
+      }
+      openInlineModal({
+        title: '열 삭제',
+        bodyHtml: '<p class="rte-inline-modal-message">현재 선택된 열을 삭제하시겠습니까?</p>',
+        submitLabel: '삭제',
+        onSubmit: () => {
+          table.querySelectorAll('tr').forEach((tr) => {
+            if (tr.children[colIndex]) tr.children[colIndex].remove();
+          });
+          return false;
+        },
       });
     });
 
@@ -612,6 +757,8 @@ const RichEditor = {
     });
 
     document.addEventListener('mousedown', (e) => {
+      if (inlineModalHost && inlineModalHost.contains(e.target)) return;
+      closeInlineModal();
       if (tablePicker.hidden) return;
       const target = e.target instanceof Element ? e.target : null;
       if (!target) return;
@@ -631,6 +778,7 @@ const RichEditor = {
     const toggleSourceMode = () => {
       sourceMode = !sourceMode;
       closeTablePicker();
+      closeInlineModal();
       stopResize();
       if (sourceMode) {
         sourceArea.value = editor.innerHTML;

@@ -58,8 +58,10 @@ def test_coach_grid_shows_auto_actual_from_attendance(client, db, seed_users, se
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["rows"]) == 1
-    cell = body["rows"][0]["cells"][0]
+    assert len(body["rows"]) >= 1
+    coach_row = next((row for row in body["rows"] if row["coach_user_id"] == seed_users["coach"].user_id), None)
+    assert coach_row is not None
+    cell = coach_row["cells"][0]
     assert cell["auto_minutes"] >= 59
     assert cell["actual_source"] == "auto"
 
@@ -189,17 +191,7 @@ def test_coach_can_override_own_actual_minutes(client, db, seed_users, seed_batc
         },
         headers=coach_headers,
     )
-    assert override_resp.status_code == 200, override_resp.text
-
-    grid_resp = client.get(
-        f"/api/coaching-plan/grid?batch_id={seed_batch.batch_id}&start={work_date}&end={work_date}",
-        headers=coach_headers,
-    )
-    assert grid_resp.status_code == 200
-    cell = grid_resp.json()["rows"][0]["cells"][0]
-    assert cell["override_minutes"] == 150
-    assert cell["final_minutes"] == 150
-    assert cell["actual_source"] == "override"
+    assert override_resp.status_code == 403
 
 
 def test_coach_cannot_override_other_coach_actual(client, db, seed_users, seed_batch):
@@ -266,3 +258,18 @@ def test_participant_cannot_access_coaching_plan_grid(client, seed_users, seed_b
         headers=participant_headers,
     )
     assert resp.status_code == 403
+
+
+def test_coach_grid_shows_all_coaches_with_self_first(client, db, seed_users, seed_batch):
+    work_date = date.today()
+    _project, _session = _create_project_and_session(db, seed_users, seed_batch, work_date)
+    coach_headers = auth_headers(client, "coach001")
+
+    resp = client.get(
+        f"/api/coaching-plan/grid?batch_id={seed_batch.batch_id}&start={work_date}&end={work_date}",
+        headers=coach_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["rows"]
+    assert len(rows) >= 2
+    assert rows[0]["coach_user_id"] == seed_users["coach"].user_id

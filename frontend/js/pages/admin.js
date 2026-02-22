@@ -3,6 +3,25 @@
  */
 
 Pages.admin = {
+  _ROLE_OPTIONS: [
+    { value: 'participant', label: '참여자' },
+    { value: 'observer', label: '참관자' },
+    { value: 'internal_coach', label: '사내코치' },
+    { value: 'external_coach', label: '외부코치' },
+    { value: 'admin', label: '관리자' },
+  ],
+
+  _renderRoleOptions(selectedRole = '') {
+    const normalized = this._normalizeRole(selectedRole || '');
+    return this._ROLE_OPTIONS
+      .map((opt) => `<option value="${opt.value}"${normalized === opt.value ? ' selected' : ''}>${opt.label}</option>`)
+      .join('');
+  },
+
+  _isExternalCoachRole(roleText) {
+    return this._normalizeRole(roleText) === 'external_coach';
+  },
+
   async render(el, params) {
     const user = Auth.getUser();
     if (user.role !== 'admin') {
@@ -229,10 +248,7 @@ Pages.admin = {
           <div class="form-group"><label>부서</label><input name="department" placeholder="개발팀" /></div>
           <div class="form-group"><label>역할 *</label>
             <select name="role" required>
-              <option value="participant">참여자</option>
-              <option value="observer">참관자</option>
-              <option value="coach">코치</option>
-              <option value="admin">관리자</option>
+              ${this._renderRoleOptions('participant')}
             </select>
           </div>
           <div class="form-group"><label>이메일</label><input type="email" name="email" placeholder="미입력 시 Knox ID@samsung.com 자동 생성" /></div>
@@ -270,7 +286,7 @@ Pages.admin = {
             <p class="hint">한 줄에 한 명씩 입력하세요. 구분자는 탭 또는 콤마를 사용할 수 있습니다.</p>
             <p class="hint"><code>Knox ID, 이름, 부서, 역할</code></p>
             <p class="hint">이메일은 <code>Knox ID@samsung.com</code> 형식으로 자동 생성됩니다.</p>
-            <p class="hint">역할 값: <code>participant(참여자)</code>, <code>observer(참관자)</code>, <code>coach(코치)</code>, <code>admin(관리자)</code></p>
+            <p class="hint">역할 값: <code>participant(참여자)</code>, <code>observer(참관자)</code>, <code>internal_coach(사내코치)</code>, <code>external_coach(외부코치)</code>, <code>admin(관리자)</code></p>
           </div>
           <div class="form-group">
             <textarea name="rows" rows="10" placeholder="예시: knox001, 홍길동, 개발팀, participant"></textarea>
@@ -368,37 +384,64 @@ Pages.admin = {
       ]);
       Modal.open(`<h2>사용자 일괄 수정</h2>
         <form id="bulk-update-user-form">
-          <p class="hint">선택한 ${userIds.length}명에게 체크한 항목만 일괄 반영됩니다.</p>
+          <p class="hint">선택한 ${userIds.length}명에게 입력한 항목만 일괄 반영됩니다. 비워둔 항목은 변경하지 않습니다.</p>
           <div class="form-group">
-            <label><input type="checkbox" name="apply_department" /> 부서 변경</label>
-            <input name="department" placeholder="예: AI혁신팀" />
+            <label>부서 변경</label>
+            <input name="department" placeholder="예: AI혁신팀 (입력 시에만 반영)" />
           </div>
           <div class="form-group">
-            <label><input type="checkbox" name="apply_role" /> 역할 변경</label>
+            <label>역할 변경</label>
             <select name="role">
               <option value="">선택</option>
-              <option value="participant">참여자</option>
-              <option value="observer">참관자</option>
-              <option value="coach">코치</option>
-              <option value="admin">관리자</option>
+              ${this._renderRoleOptions()}
             </select>
           </div>
-          <div class="form-group">
-            <label><input type="checkbox" name="apply_batch_ids" /> 차수 변경 (복수 선택)</label>
-            <div class="perm-checkbox-grid compact-check-grid">
-              ${batches.map((b) => `<label><input type="checkbox" name="batch_ids" value="${b.batch_id}" /> ${Fmt.escape(b.batch_name)}</label>`).join('') || '<p class="empty-state">차수가 없습니다.</p>'}
-            </div>
+          <div class="form-group" id="bulk-batch-scope-group">
+            <label>차수 변경 (복수 선택)</label>
+            <p class="hint">외부코치 전용 권한 설정입니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${batches.length
+              ? `<select name="batch_ids" class="perm-multi-select" multiple size="8">
+                  ${batches.map((b) => `<option value="${b.batch_id}">${Fmt.escape(b.batch_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">차수가 없습니다.</p>'}
           </div>
-          <div class="form-group">
-            <label><input type="checkbox" name="apply_project_ids" /> 과제 권한 변경 (복수 선택)</label>
-            <div class="perm-checkbox-grid compact-check-grid">
-              ${allProjects.map((p) => `<label><input type="checkbox" name="project_ids" value="${p.project_id}" /> [${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</label>`).join('') || '<p class="empty-state">과제가 없습니다.</p>'}
-            </div>
+          <div class="form-group" id="bulk-project-scope-group">
+            <label>과제 권한 변경 (복수 선택)</label>
+            <p class="hint">외부코치 전용 권한 설정입니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${allProjects.length
+              ? `<select name="project_ids" class="perm-multi-select" multiple size="10">
+                  ${allProjects.map((p) => `<option value="${p.project_id}">[${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">과제가 없습니다.</p>'}
           </div>
           <p class="hint">Knox ID/이름/이메일은 일괄 수정 대상이 아닙니다.</p>
           <button type="submit" class="btn btn-primary">일괄 반영</button>
           <p class="form-error" id="bulk-update-user-err" style="display:none;"></p>
         </form>`, null, { className: 'modal-box-xl' });
+      const selectedUsers = users.filter((u) => userIds.includes(u.user_id));
+      const allSelectedExternalCoach = selectedUsers.length > 0 && selectedUsers.every((u) => this._isExternalCoachRole(u.role));
+      const bulkForm = document.getElementById('bulk-update-user-form');
+      const roleSelectEl = bulkForm?.querySelector('select[name="role"]');
+      const scopeGroups = [
+        document.getElementById('bulk-batch-scope-group'),
+        document.getElementById('bulk-project-scope-group'),
+      ];
+      const syncBulkScopeVisibility = () => {
+        const nextRole = this._normalizeRole(roleSelectEl?.value || '');
+        const showScope = this._isExternalCoachRole(nextRole) || (!nextRole && allSelectedExternalCoach);
+        scopeGroups.forEach((group) => {
+          if (!group) return;
+          group.style.display = showScope ? '' : 'none';
+        });
+        if (!showScope && bulkForm) {
+          bulkForm.querySelectorAll('select[name="batch_ids"] option').forEach((el) => { el.selected = false; });
+          bulkForm.querySelectorAll('select[name="project_ids"] option').forEach((el) => { el.selected = false; });
+        }
+      };
+      roleSelectEl?.addEventListener('change', syncBulkScopeVisibility);
+      syncBulkScopeVisibility();
 
       document.getElementById('bulk-update-user-form').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -406,16 +449,19 @@ Pages.admin = {
         errEl.style.display = 'none';
         const fd = new FormData(e.target);
         const payload = { user_ids: userIds };
-        if (fd.has('apply_department')) payload.department = (fd.get('department') || '').toString().trim() || null;
-        if (fd.has('apply_role')) payload.role = (fd.get('role') || '').toString();
-        if (fd.has('apply_batch_ids')) {
-          payload.batch_ids = fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
-        }
-        if (fd.has('apply_project_ids')) {
-          payload.project_ids = fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+        const department = (fd.get('department') || '').toString().trim();
+        if (department) payload.department = department;
+        const normalizedRole = this._normalizeRole((fd.get('role') || '').toString());
+        if (normalizedRole) payload.role = normalizedRole;
+        const shouldApplyScope = this._isExternalCoachRole(payload.role || (allSelectedExternalCoach ? 'external_coach' : ''));
+        if (shouldApplyScope) {
+          const batchIds = fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+          const projectIds = fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+          if (batchIds.length) payload.batch_ids = batchIds;
+          if (projectIds.length) payload.project_ids = projectIds;
         }
         if (Object.keys(payload).length <= 1) {
-          errEl.textContent = '반영할 항목을 최소 1개 선택하세요.';
+          errEl.textContent = '반영할 값을 최소 1개 이상 입력하세요.';
           errEl.style.display = 'block';
           return;
         }
@@ -445,6 +491,7 @@ Pages.admin = {
         API.getBatches().catch(() => []),
         API.getUserPermissions(userId).catch(() => ({ batch_ids: [], project_ids: [] })),
       ]);
+      const currentRole = this._normalizeRole(current.role);
       const batchIds = new Set((permission.batch_ids || []).map((v) => Number(v)));
       const projectIds = new Set((permission.project_ids || []).map((v) => Number(v)));
       const batchProjects = await Promise.all(
@@ -465,30 +512,52 @@ Pages.admin = {
           <div class="form-group"><label>부서</label><input name="department" value="${Fmt.escape(current.department || '')}" /></div>
           <div class="form-group"><label>역할 *</label>
             <select name="role" required>
-              <option value="participant"${current.role === 'participant' ? ' selected' : ''}>참여자</option>
-              <option value="observer"${current.role === 'observer' ? ' selected' : ''}>참관자</option>
-              <option value="coach"${current.role === 'coach' ? ' selected' : ''}>코치</option>
-              <option value="admin"${current.role === 'admin' ? ' selected' : ''}>관리자</option>
+              ${this._renderRoleOptions(currentRole)}
             </select>
           </div>
           <div class="form-group"><label>이메일</label><input type="email" name="email" value="${Fmt.escape(current.email || '')}" /></div>
-          <div class="form-group">
+          <div class="form-group" id="user-batch-scope-group">
             <label>차수 (복수 선택)</label>
-            <p class="hint">접근 권한이 아닌 사용자 소속/운영 분류용입니다.</p>
-            <div class="perm-checkbox-grid compact-check-grid">
-              ${batches.map((b) => `<label><input type="checkbox" name="batch_ids" value="${b.batch_id}"${batchIds.has(Number(b.batch_id)) ? ' checked' : ''} /> ${Fmt.escape(b.batch_name)}</label>`).join('') || '<p class="empty-state">차수가 없습니다.</p>'}
-            </div>
+            <p class="hint">외부코치 전용 접근 권한입니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${batches.length
+              ? `<select name="batch_ids" class="perm-multi-select" multiple size="8">
+                  ${batches.map((b) => `<option value="${b.batch_id}"${batchIds.has(Number(b.batch_id)) ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">차수가 없습니다.</p>'}
           </div>
-          <div class="form-group">
+          <div class="form-group" id="user-project-scope-group">
             <label>과제 권한 (복수 선택)</label>
-            <p class="hint">선택한 과제만 추가로 제한할 때 사용합니다.</p>
-            <div class="perm-checkbox-grid compact-check-grid">
-              ${allProjects.map((p) => `<label><input type="checkbox" name="project_ids" value="${p.project_id}"${projectIds.has(Number(p.project_id)) ? ' checked' : ''} /> [${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</label>`).join('') || '<p class="empty-state">과제가 없습니다.</p>'}
-            </div>
+            <p class="hint">외부코치 전용 접근 권한입니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${allProjects.length
+              ? `<select name="project_ids" class="perm-multi-select" multiple size="10">
+                  ${allProjects.map((p) => `<option value="${p.project_id}"${projectIds.has(Number(p.project_id)) ? ' selected' : ''}>[${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">과제가 없습니다.</p>'}
           </div>
           <button type="submit" class="btn btn-primary">저장</button>
           <p class="form-error" id="edit-user-err" style="display:none;"></p>
         </form>`);
+      const editForm = document.getElementById('edit-user-form');
+      const editRoleEl = editForm?.querySelector('select[name="role"]');
+      const editScopeGroups = [
+        document.getElementById('user-batch-scope-group'),
+        document.getElementById('user-project-scope-group'),
+      ];
+      const syncEditScopeVisibility = () => {
+        const showScope = this._isExternalCoachRole(editRoleEl?.value || '');
+        editScopeGroups.forEach((group) => {
+          if (!group) return;
+          group.style.display = showScope ? '' : 'none';
+        });
+        if (!showScope && editForm) {
+          editForm.querySelectorAll('select[name="batch_ids"] option').forEach((el) => { el.selected = false; });
+          editForm.querySelectorAll('select[name="project_ids"] option').forEach((el) => { el.selected = false; });
+        }
+      };
+      editRoleEl?.addEventListener('change', syncEditScopeVisibility);
+      syncEditScopeVisibility();
 
       document.getElementById('edit-user-form').addEventListener('submit', async e => {
         e.preventDefault();
@@ -497,12 +566,17 @@ Pages.admin = {
           emp_id: fd.get('emp_id').trim(),
           name: fd.get('name').trim(),
           department: fd.get('department')?.trim() || null,
-          role: fd.get('role'),
+          role: this._normalizeRole(fd.get('role')),
           email: fd.get('email')?.trim() || null,
         };
+        const canEditScope = this._isExternalCoachRole(data.role);
         const permissionPayload = {
-          batch_ids: fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v)),
-          project_ids: fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v)),
+          batch_ids: canEditScope
+            ? fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v))
+            : [],
+          project_ids: canEditScope
+            ? fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v))
+            : [],
         };
         try {
           await API.updateUser(userId, data);
@@ -542,8 +616,12 @@ Pages.admin = {
     const roleMap = {
       admin: 'admin',
       관리자: 'admin',
-      coach: 'coach',
-      코치: 'coach',
+      coach: 'internal_coach',
+      코치: 'internal_coach',
+      internal_coach: 'internal_coach',
+      사내코치: 'internal_coach',
+      external_coach: 'external_coach',
+      외부코치: 'external_coach',
       participant: 'participant',
       참여자: 'participant',
       observer: 'observer',

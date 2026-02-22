@@ -10,7 +10,7 @@ from app.models.user import User
 from app.schemas.coaching_note import CoachingNoteCreate, CoachingNoteUpdate, CoachingCommentCreate
 from app.schemas.coaching_template import CoachingNoteTemplateCreate, CoachingNoteTemplateUpdate
 from app.services import mention_service, version_service
-from app.utils.permissions import can_view_project, can_write_coaching_note, can_view_coach_only_comment
+from app.utils.permissions import can_view_project, can_write_coaching_note, can_view_coach_only_comment, is_coach
 from typing import List
 from datetime import date
 
@@ -172,7 +172,7 @@ def create_comment(db: Session, note_id: int, data: CoachingCommentCreate, curre
     mention_service.notify_mentions(
         db,
         actor=current_user,
-        context_title="코칭 의견" if current_user.role in ("admin", "coach") else "참여자 메모",
+        context_title="코칭 의견" if (current_user.role == "admin" or is_coach(current_user)) else "참여자 메모",
         link_url=f"#/project/{comment.note.project_id}/notes/{note_id}",
         new_texts=[comment.content],
     )

@@ -17,7 +17,7 @@ Pages.projectDetail = {
       const latestNote = sortedNotes[0] || null;
       const latestComments = latestNote ? await API.getComments(latestNote.note_id).catch(() => []) : [];
       const user = Auth.getUser();
-      const canWrite = user.role === 'admin' || user.role === 'coach';
+      const canWrite = user.role === 'admin' || Auth.isCoach();
       const isAdmin = user.role === 'admin';
       const noteCount = sortedNotes.length;
       const initialTab = ['info', 'records', 'notes'].includes(params.tab) ? params.tab : 'info';
@@ -91,15 +91,15 @@ Pages.projectDetail = {
     } = options;
     const repos = Array.isArray(p.github_repos) ? p.github_repos : [];
     const progressValue = Math.max(0, Math.min(100, Number(p.progress_rate) || 0));
-    const noteLink = latestNote ? `#/project/${projectId}/notes/${latestNote.note_id}` : `#/project/${projectId}?tab=notes`;
+    const noteLink = `#/project/${projectId}?tab=notes`;
     const resolveCommentType = (comment) => {
       if (comment.comment_type) return comment.comment_type;
       return comment.author_role === 'participant' ? 'participant_memo' : 'coaching_feedback';
     };
-    const coachingFeedbacks = (latestComments || []).filter((c) => resolveCommentType(c) === 'coaching_feedback');
-    const participantMemos = (latestComments || []).filter((c) => resolveCommentType(c) === 'participant_memo');
-    const projectTypeLabel = (p.project_type || 'primary') === 'associate' ? '준참여과제' : '정식과제';
     const hasText = (value) => Fmt.excerpt(value || '', 1).length > 0;
+    const hasCommentText = (comment) => hasText(comment?.content || '');
+    const coachingFeedbacks = (latestComments || []).filter((c) => resolveCommentType(c) === 'coaching_feedback' && hasCommentText(c));
+    const participantMemos = (latestComments || []).filter((c) => resolveCommentType(c) === 'participant_memo' && hasCommentText(c));
 
     const renderInfoItem = ({ label, value, field, full = false }) => `
       <div class="info-item${full ? ' full' : ''}">
@@ -115,7 +115,6 @@ Pages.projectDetail = {
       <div class="project-info-main">
         <div class="project-title-hero">
           <h2>${Fmt.escape(p.project_name)}</h2>
-          <span class="tag">${projectTypeLabel}</span>
         </div>
         <div class="project-info-panel">
           <div class="info-grid project-info-grid">
@@ -130,12 +129,10 @@ Pages.projectDetail = {
               ` : '<span>-</span>',
             })}
             ${renderInfoItem({ label: '과제 요약', field: 'project_summary', full: true, value: `<div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>` })}
-            ${renderInfoItem({ label: '과제명', field: 'project_name', value: `<span>${Fmt.escape(p.project_name)}</span>` })}
             ${renderInfoItem({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
             ${renderInfoItem({ label: '과제 대표자', field: 'representative', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
             ${renderInfoItem({ label: 'AI기술 분류', field: 'ai_tech_category', value: `<span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span>` })}
             ${renderInfoItem({ label: '사용된 AI기술', field: 'ai_tech_used', value: `<span>${Fmt.escape(p.ai_tech_used || '-')}</span>` })}
-            ${renderInfoItem({ label: '과제 구분', field: 'project_type', value: `<span>${projectTypeLabel}</span>` })}
             ${renderInfoItem({
               label: '전체 진행률',
               field: 'progress_rate',
@@ -180,14 +177,18 @@ Pages.projectDetail = {
               ${(!hasText(latestNote.current_status) && !hasText(latestNote.main_issue) && !hasText(latestNote.next_action)) ? '<p class="hint">입력된 본문이 없습니다.</p>' : ''}
             </a>
             <div class="recent-comment-wrap">
-              <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
-              <div class="comment-list compact">
-                ${coachingFeedbacks.length ? coachingFeedbacks.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('') : '<p class="hint">등록된 코칭 의견이 없습니다.</p>'}
-              </div>
-              <h4>참여자 메모 (${participantMemos.length})</h4>
-              <div class="comment-list compact">
-                ${participantMemos.length ? participantMemos.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('') : '<p class="hint">등록된 참여자 메모가 없습니다.</p>'}
-              </div>
+              ${coachingFeedbacks.length ? `
+                <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
+                <div class="comment-list compact">
+                  ${coachingFeedbacks.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('')}
+                </div>
+              ` : ''}
+              ${participantMemos.length ? `
+                <h4>참여자 메모 (${participantMemos.length})</h4>
+                <div class="comment-list compact">
+                  ${participantMemos.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('')}
+                </div>
+              ` : ''}
             </div>
           ` : '<p class="empty-state">코칭노트가 없습니다.</p>'}
         </div>
@@ -236,15 +237,6 @@ Pages.projectDetail = {
         });
         return;
       }
-      if (field === 'project_type') {
-        openSimpleEditor({
-          title: '과제 구분 편집',
-          inputHtml: `<div class="form-group"><label>과제 구분</label><select name="project_type"><option value="primary"${(p.project_type || 'primary') === 'primary' ? ' selected' : ''}>정식과제</option><option value="associate"${(p.project_type || 'primary') === 'associate' ? ' selected' : ''}>준참여과제</option></select></div>`,
-          parsePayload: (fd) => ({ project_type: (fd.get('project_type') || 'primary').toString() }),
-        });
-        return;
-      }
-
       const defaultValues = {
         project_name: p.project_name || '',
         organization: p.organization || '',
@@ -341,7 +333,8 @@ Pages.projectDetail = {
         </div>
         <div class="form-group">
           <label>사용자 (복수 선택)</label>
-          <div id="member-candidate-list" class="member-candidate-list"></div>
+          <select id="member-candidate-select" class="member-candidate-select" name="user_ids" multiple size="12"></select>
+          <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
         </div>
         <div class="form-group">
           <label>역할</label>
@@ -355,18 +348,14 @@ Pages.projectDetail = {
         <p class="form-error" id="add-member-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
-    const candidateList = document.getElementById('member-candidate-list');
+    const candidateSelect = document.getElementById('member-candidate-select');
     const renderCandidates = () => {
       const rows = sortCandidates(candidates);
-      candidateList.innerHTML = rows.length
-        ? rows.map((u) => `
-          <label class="member-candidate-item">
-            <input type="checkbox" name="user_ids" value="${u.user_id}" />
-            <span>${Fmt.escape(u.name)} (${Fmt.escape(u.emp_id)})</span>
-            <span class="hint">${Fmt.escape(u.department || '부서 미등록')}</span>
-          </label>
-        `).join('')
-        : '<p class="empty-state">추가 가능한 사용자가 없습니다.</p>';
+      if (!candidateSelect) return;
+      candidateSelect.innerHTML = rows.length
+        ? rows.map((u) => `<option value="${u.user_id}">${Fmt.escape(u.name)} (${Fmt.escape(u.emp_id)}) · ${Fmt.escape(u.department || '부서 미등록')}</option>`).join('')
+        : '';
+      candidateSelect.disabled = rows.length === 0;
     };
     renderCandidates();
     document.getElementById('member-sort-select')?.addEventListener('change', (e) => {
@@ -377,7 +366,7 @@ Pages.projectDetail = {
     document.getElementById('add-member-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const userIds = fd.getAll('user_ids')
+      const userIds = (candidateSelect ? Array.from(candidateSelect.selectedOptions).map((opt) => opt.value) : [])
         .map((v) => Number.parseInt(String(v), 10))
         .filter((v) => !Number.isNaN(v));
       if (!userIds.length) {
@@ -647,8 +636,9 @@ Pages.projectDetail = {
         </div>
         ${shown.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : shown.map((n, i) => {
           const comments = commentBundles[i] || [];
-          const coachingFeedbacks = comments.filter((c) => resolveCommentType(c) === 'coaching_feedback');
-          const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo');
+          const hasCommentText = (comment) => hasText(comment?.content || '');
+          const coachingFeedbacks = comments.filter((c) => resolveCommentType(c) === 'coaching_feedback' && hasCommentText(c));
+          const participantMemos = comments.filter((c) => resolveCommentType(c) === 'participant_memo' && hasCommentText(c));
           const writerTitle = canWrite ? '코칭 의견 작성' : '메모 작성';
           const writerPlaceholder = canWrite ? '코칭 의견을 입력하세요' : '메모를 입력하세요';
           const expanded = state.expandAll || state.expandedIds.has(n.note_id);
@@ -670,46 +660,50 @@ Pages.projectDetail = {
                   ${fieldsHtml || '<p class="hint">입력된 본문 항목이 없습니다.</p>'}
                 </div>
                 <div class="comments-section">
-                  <div class="comment-group">
-                    <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
-                    <div class="comment-list">
-                      ${coachingFeedbacks.length ? coachingFeedbacks.map((c) => `
-                        <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
-                          <div class="comment-head">
-                            <span class="comment-type-badge feedback">코칭 의견</span>
-                            ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                  ${coachingFeedbacks.length ? `
+                    <div class="comment-group">
+                      <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
+                      <div class="comment-list">
+                        ${coachingFeedbacks.map((c) => `
+                          <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
+                            <div class="comment-head">
+                              <span class="comment-type-badge feedback">코칭 의견</span>
+                              ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                            </div>
+                            <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
+                            <div class="comment-meta">
+                              <span>${Fmt.datetime(c.created_at)}</span>
+                              ${(c.author_id === user.user_id || user.role === 'admin')
+                                ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
+                                : ''}
+                            </div>
                           </div>
-                          <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
-                          <div class="comment-meta">
-                            <span>${Fmt.datetime(c.created_at)}</span>
-                            ${(c.author_id === user.user_id || user.role === 'admin')
-                              ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
-                              : ''}
-                          </div>
-                        </div>
-                      `).join('') : '<p class="empty-state">등록된 코칭 의견이 없습니다.</p>'}
+                        `).join('')}
+                      </div>
                     </div>
-                  </div>
-                  <div class="comment-group">
-                    <h4>참여자 메모 (${participantMemos.length})</h4>
-                    <div class="comment-list">
-                      ${participantMemos.length ? participantMemos.map((c) => `
-                        <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
-                          <div class="comment-head">
-                            <span class="comment-type-badge memo">참여자 메모</span>
-                            ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                  ` : ''}
+                  ${participantMemos.length ? `
+                    <div class="comment-group">
+                      <h4>참여자 메모 (${participantMemos.length})</h4>
+                      <div class="comment-list">
+                        ${participantMemos.map((c) => `
+                          <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
+                            <div class="comment-head">
+                              <span class="comment-type-badge memo">참여자 메모</span>
+                              ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                            </div>
+                            <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
+                            <div class="comment-meta">
+                              <span>${Fmt.datetime(c.created_at)}</span>
+                              ${(c.author_id === user.user_id || user.role === 'admin')
+                                ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
+                                : ''}
+                            </div>
                           </div>
-                          <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
-                          <div class="comment-meta">
-                            <span>${Fmt.datetime(c.created_at)}</span>
-                            ${(c.author_id === user.user_id || user.role === 'admin')
-                              ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
-                              : ''}
-                          </div>
-                        </div>
-                      `).join('') : '<p class="empty-state">등록된 참여자 메모가 없습니다.</p>'}
+                        `).join('')}
+                      </div>
                     </div>
-                  </div>
+                  ` : ''}
                   ${canComment ? `
                     <form class="inline-comment-form" data-note-id="${n.note_id}">
                       <label class="inline-comment-title">${writerTitle}</label>

@@ -41,11 +41,10 @@ def test_list_projects(client, seed_users, seed_batch, db):
     assert resp.status_code == 200
     assert len(resp.json()) == 2
 
-    # Observer sees only public
+    # Observer sees both (조회 전용 전체 열람)
     obs_headers = auth_headers(client, "obs001")
     resp = client.get(f"/api/batches/{seed_batch.batch_id}/projects", headers=obs_headers)
-    assert len(resp.json()) == 1
-    assert resp.json()[0]["visibility"] == "public"
+    assert len(resp.json()) == 2
 
 
 def test_progress_rate_auto_calc(client, seed_users, seed_batch, db):
@@ -74,7 +73,7 @@ def test_progress_rate_auto_calc(client, seed_users, seed_batch, db):
     assert proj_resp.json()["progress_rate"] == 50
 
 
-def test_update_project_status_by_coach(client, seed_users, seed_batch):
+def test_update_project_status_by_coach_forbidden(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     coach_headers = auth_headers(client, "coach001")
 
@@ -91,8 +90,7 @@ def test_update_project_status_by_coach(client, seed_users, seed_batch):
         json={"status": "completed"},
         headers=coach_headers,
     )
-    assert update_resp.status_code == 200
-    assert update_resp.json()["status"] == "completed"
+    assert update_resp.status_code == 403
 
 
 def test_update_project_status_participant_forbidden(client, seed_users, seed_batch):
@@ -277,12 +275,6 @@ def test_project_profile_fields_and_my_project_flag(client, seed_users, seed_bat
             "progress_rate": 35,
         },
     )
-    assert update_resp.status_code == 200
-    body = update_resp.json()
-    assert body["ai_tech_category"] == "생성형AI"
-    assert body["ai_tech_used"] == "GPT-4o, LangGraph"
-    assert body["project_summary"] == "프로젝트 요약 테스트"
-    assert body["github_repos"] == ["https://github.com/example/app", "https://github.com/example/api"]
-    assert body["progress_rate"] == 35
+    assert update_resp.status_code == 403
 
 

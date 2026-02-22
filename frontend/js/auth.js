@@ -5,6 +5,7 @@
 const Auth = {
   _key: 'ssp_token',
   _userKey: 'ssp_user',
+  _coachRoles: ['coach', 'internal_coach', 'external_coach'],
 
   getToken() { return localStorage.getItem(this._key); },
   getUser() {
@@ -16,14 +17,27 @@ const Auth = {
     const u = this.getUser();
     return u && roles.includes(u.role);
   },
-  isAdminOrCoach() { return this.isRole('admin', 'coach'); },
+  isCoach() {
+    const u = this.getUser();
+    return !!(u && this._coachRoles.includes(u.role));
+  },
+  isInternalCoach() { return this.isRole('coach', 'internal_coach'); },
+  isExternalCoach() { return this.isRole('external_coach'); },
+  isAdminOrCoach() {
+    const u = this.getUser();
+    return !!(u && (u.role === 'admin' || this._coachRoles.includes(u.role)));
+  },
+  isAdminOrInternalCoach() {
+    const u = this.getUser();
+    return !!(u && (u.role === 'admin' || u.role === 'coach' || u.role === 'internal_coach'));
+  },
   isAdmin() { return this.isRole('admin'); },
 
   async login(emp_id) {
     const data = await API.login(emp_id);
     localStorage.setItem(this._key, data.access_token);
     localStorage.setItem(this._userKey, JSON.stringify(data.user));
-    if (data.user?.role === 'coach' || data.user?.role === 'participant') {
+    if ((data.user && this._coachRoles.includes(data.user.role)) || data.user?.role === 'participant') {
       API.autoCheckInToday().catch(() => {});
     }
     return data.user;

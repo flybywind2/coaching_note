@@ -12,8 +12,9 @@ from app.schemas.ai_content import (
 )
 from app.services.ai_service import AIService
 from app.services import coaching_service
-from app.middleware.auth_middleware import get_current_user, require_roles
+from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
+from app.utils.permissions import is_admin_or_coach
 
 router = APIRouter(tags=["ai"])
 
@@ -25,7 +26,7 @@ def generate_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if not is_admin_or_coach(current_user):
         raise HTTPException(status_code=403, detail="관리자/코치만 AI 요약을 생성할 수 있습니다.")
     try:
         svc = AIService(db)
@@ -56,7 +57,7 @@ def generate_qa_set(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if not is_admin_or_coach(current_user):
         raise HTTPException(status_code=403, detail="관리자/코치만 Q&A Set을 생성할 수 있습니다.")
     try:
         svc = AIService(db)
@@ -84,7 +85,7 @@ def enhance_coaching_note(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if not is_admin_or_coach(current_user):
         raise HTTPException(status_code=403, detail="관리자/코치만 코칭노트 AI 보완을 사용할 수 있습니다.")
 
     note = coaching_service.get_note(db, note_id, current_user)

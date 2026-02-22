@@ -60,7 +60,8 @@ def test_notice_board_write_admin_only(client, seed_users, seed_boards):
         json={"is_notice": True},
         headers=participant_headers,
     )
-    assert pin_blocked_resp.status_code == 403
+    assert pin_blocked_resp.status_code == 200
+    assert pin_blocked_resp.json()["is_notice"] is False
 
     pin_admin_resp = client.put(
         f"/api/boards/posts/{free_post_id}",
@@ -68,6 +69,7 @@ def test_notice_board_write_admin_only(client, seed_users, seed_boards):
         headers=admin_headers,
     )
     assert pin_admin_resp.status_code == 200
+    assert pin_admin_resp.json()["is_notice"] is False
 
     admin_resp = client.post(
         f"/api/boards/{notice_board_id}/posts",
@@ -77,7 +79,7 @@ def test_notice_board_write_admin_only(client, seed_users, seed_boards):
     assert admin_resp.status_code == 200
 
 
-def test_restricted_project_notes_and_tasks_not_exposed_to_observer(client, db, seed_users, seed_batch):
+def test_restricted_project_notes_and_tasks_are_readable_for_observer(client, db, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     observer_headers = auth_headers(client, "obs001")
 
@@ -107,11 +109,11 @@ def test_restricted_project_notes_and_tasks_not_exposed_to_observer(client, db, 
     assert task_resp.status_code == 200
     task_id = task_resp.json()["task_id"]
 
-    assert client.get(f"/api/projects/{project.project_id}", headers=observer_headers).status_code == 403
-    assert client.get(f"/api/projects/{project.project_id}/notes", headers=observer_headers).status_code == 403
-    assert client.get(f"/api/projects/{project.project_id}/tasks", headers=observer_headers).status_code == 403
-    assert client.get(f"/api/notes/{note_id}", headers=observer_headers).status_code == 403
-    assert client.get(f"/api/tasks/{task_id}", headers=observer_headers).status_code == 403
+    assert client.get(f"/api/projects/{project.project_id}", headers=observer_headers).status_code == 200
+    assert client.get(f"/api/projects/{project.project_id}/notes", headers=observer_headers).status_code == 200
+    assert client.get(f"/api/projects/{project.project_id}/tasks", headers=observer_headers).status_code == 200
+    assert client.get(f"/api/notes/{note_id}", headers=observer_headers).status_code == 200
+    assert client.get(f"/api/tasks/{task_id}", headers=observer_headers).status_code == 200
 
 
 def test_observer_cannot_write_public_project_notes_or_tasks(client, db, seed_users, seed_batch):

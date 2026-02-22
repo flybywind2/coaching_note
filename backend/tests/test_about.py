@@ -1,6 +1,7 @@
 """소개 페이지 API 동작 검증 테스트입니다."""
 
 from app.models.project import Project, ProjectMember
+from app.models.user import User
 from tests.conftest import auth_headers
 
 
@@ -72,6 +73,50 @@ def test_list_coaches_includes_project_assigned_coach(client, db, seed_users, se
     assert resp.status_code == 200
     rows = resp.json()
     assert any(row["user_id"] == seed_users["coach"].user_id for row in rows)
+
+
+def test_list_coaches_includes_internal_coach_without_scope_link(client, db, seed_users, seed_batch):
+    _ = seed_users
+    db.add(
+        User(
+            emp_id="coach_new_01",
+            name="New Internal Coach",
+            role="internal_coach",
+            department="AI",
+            email="coach_new_01@samsung.com",
+            is_active=True,
+        )
+    )
+    db.commit()
+
+    headers = auth_headers(client, "admin001")
+    resp = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+    assert any(row["name"] == "New Internal Coach" for row in rows)
+
+
+def test_list_coaches_excludes_profile_when_user_role_changes_from_coach(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    create_resp = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "user_id": seed_users["coach"].user_id,
+            "name": "Coach",
+            "coach_type": "internal",
+            "is_visible": True,
+        },
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200, create_resp.text
+
+    seed_users["coach"].role = "admin"
+    db.commit()
+
+    list_resp = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=admin_headers)
+    assert list_resp.status_code == 200, list_resp.text
+    assert all(row.get("user_id") != seed_users["coach"].user_id for row in list_resp.json())
 
 
 def test_coach_profile_crud_admin_only(client, seed_users, seed_batch):

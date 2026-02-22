@@ -1,7 +1,7 @@
 """SSP+ 소개 페이지 콘텐츠 API 라우터입니다."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -12,6 +12,7 @@ from app.models.batch import Batch
 from app.models.project import Project, ProjectMember
 from app.models.site_content import SiteContent
 from app.models.user import User, Coach
+from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH
 from app.schemas.about import (
     SiteContentOut,
     SiteContentUpdate,
@@ -22,6 +23,7 @@ from app.schemas.about import (
 )
 
 router = APIRouter(prefix="/api/about", tags=["about"])
+COACH_USER_ROLES = [LEGACY_COACH, INTERNAL_COACH, EXTERNAL_COACH]
 
 ALLOWED_CONTENT_KEYS = {
     "ssp_intro": "SSP+ 소개",
@@ -78,8 +80,8 @@ def _validate_coach_user(db: Session, user_id: int) -> User:
     user = db.query(User).filter(User.user_id == user_id, User.is_active == True).first()  # noqa: E712
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-    if user.role not in ("coach", "admin"):
-        raise HTTPException(status_code=400, detail="코치/관리자 역할 사용자만 연결할 수 있습니다.")
+    if user.role not in COACH_USER_ROLES:
+        raise HTTPException(status_code=400, detail="코치 역할 사용자만 연결할 수 있습니다.")
     return user
 
 
@@ -112,13 +114,31 @@ def _next_display_order(db: Session, batch_id: int | None) -> int:
 
 
 def _get_coach_users_for_batch(db: Session, batch_id: int) -> list[User]:
+    internal_users = (
+        db.query(User)
+        .filter(
+            User.is_active == True,  # noqa: E712
+            User.role.in_([LEGACY_COACH, INTERNAL_COACH]),
+        )
+        .all()
+    )
+    external_users_from_access = (
+        db.query(User)
+        .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
+        .filter(
+            UserBatchAccess.batch_id == batch_id,
+            User.is_active == True,  # noqa: E712
+            User.role == EXTERNAL_COACH,
+        )
+        .all()
+    )
     users_from_access = (
         db.query(User)
         .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
         .filter(
             UserBatchAccess.batch_id == batch_id,
             User.is_active == True,  # noqa: E712
-            User.role.in_(["coach", "admin"]),
+            User.role.in_(COACH_USER_ROLES),
         )
         .all()
     )
@@ -129,12 +149,12 @@ def _get_coach_users_for_batch(db: Session, batch_id: int) -> list[User]:
         .filter(
             Project.batch_id == batch_id,
             User.is_active == True,  # noqa: E712
-            User.role.in_(["coach", "admin"]),
+            User.role.in_(COACH_USER_ROLES),
         )
         .all()
     )
     merged_by_user_id: dict[int, User] = {}
-    for user in users_from_access + users_from_project_member:
+    for user in internal_users + external_users_from_access + users_from_access + users_from_project_member:
         merged_by_user_id[user.user_id] = user
     return sorted(merged_by_user_id.values(), key=lambda row: (row.name or "").lower())
 
@@ -193,7 +213,20 @@ def list_coaches(
     if batch_id is not None:
         _validate_batch(db, batch_id)
 
-    all_rows_q = db.query(Coach).filter(Coach.is_active == True)  # noqa: E712
+    all_rows_q = (
+        db.query(Coach)
+        .outerjoin(User, Coach.user_id == User.user_id)
+        .filter(
+            Coach.is_active == True,  # noqa: E712
+            or_(
+                Coach.user_id.is_(None),
+                and_(
+                    User.is_active == True,  # noqa: E712
+                    User.role.in_(COACH_USER_ROLES),
+                ),
+            ),
+        )
+    )
     if batch_id is not None:
         all_rows_q = all_rows_q.filter(Coach.batch_id == batch_id)
     all_rows = all_rows_q.order_by(Coach.display_order.asc(), Coach.name.asc()).all()
@@ -207,7 +240,7 @@ def list_coaches(
             db.query(User)
             .filter(
                 User.is_active == True,  # noqa: E712
-                User.role.in_(["coach", "admin"]),
+                User.role.in_(COACH_USER_ROLES),
             )
             .order_by(User.name.asc())
             .all()
@@ -225,7 +258,7 @@ def list_coaches(
                 user_id=user.user_id,
                 batch_id=batch_id,
                 name=user.name,
-                coach_type="internal",
+                coach_type="external" if user.role == EXTERNAL_COACH else "internal",
                 department=user.department,
                 affiliation=user.department,
                 specialty=None,

@@ -78,8 +78,9 @@ def seed_batch(db, seed_users):
 def seed_boards(db):
     boards = [
         Board(board_name="공지사항", board_type="notice"),
-        Board(board_name="Q&A", board_type="qna"),
-        Board(board_name="자유게시판", board_type="free"),
+        Board(board_name="질문", board_type="question"),
+        Board(board_name="팁공유", board_type="tip"),
+        Board(board_name="잡담", board_type="chat"),
     ]
     for b in boards:
         db.add(b)

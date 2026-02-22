@@ -5,6 +5,11 @@
 const Router = {
   routes: {},
   currentPath: null,
+  roleRestrictedRoots: {
+    '/calendar': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'participant' || user.role === 'observer')),
+    '/coaching-plan': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
+    '/dashboard': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
+  },
 
   register(path, handler) {
     this.routes[path] = handler;
@@ -45,6 +50,18 @@ const Router = {
     if (Auth.isLoggedIn() && path === '/login') {
       this.go('/projects');
       return;
+    }
+
+    const user = Auth.getUser();
+    const restrictedEntry = Object.entries(this.roleRestrictedRoots).find(([rootPath]) => (
+      path === rootPath || path.startsWith(`${rootPath}/`)
+    ));
+    if (restrictedEntry) {
+      const [, checker] = restrictedEntry;
+      if (!checker(user)) {
+        this.go('/projects');
+        return;
+      }
     }
 
     this.currentPath = path;

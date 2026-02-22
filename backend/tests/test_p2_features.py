@@ -151,7 +151,7 @@ def test_document_and_board_version_and_comment_mention(client, seed_users, proj
     assert restore_doc_resp.status_code == 200
     assert restore_doc_resp.json()["title"] == "문서 v1"
 
-    board_id = seed_boards[0].board_id
+    board_id = seed_boards[2].board_id
     create_post_resp = client.post(
         f"/api/boards/{board_id}/posts",
         json={"title": "게시글 v1", "content": "본문 @user001", "is_notice": False},
@@ -194,4 +194,3 @@ def test_document_and_board_version_and_comment_mention(client, seed_users, proj
         n["noti_type"] == "mention" and f"/board/{board_id}/post/{post_id}" in (n["link_url"] or "")
         for n in admin_notifications.json()
     )
-
