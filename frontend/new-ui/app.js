@@ -10,6 +10,8 @@ const THEMES = [
   { id: 'emerald', label: 'Emerald' },
   { id: 'amber', label: 'Amber' },
   { id: 'slate', label: 'Slate' },
+  { id: 'glass', label: 'Glassmorphism' },
+  { id: 'retro', label: 'Retro' },
 ];
 
 const KST_TIMEZONE = 'Asia/Seoul';
@@ -88,13 +90,13 @@ function loadUser() {
 }
 
 function resolveInitialTheme() {
+  const saved = localStorage.getItem(STORAGE_KEYS.theme);
+  if (THEMES.some((t) => t.id === saved)) return saved;
   const fromQuery = new URLSearchParams(location.search).get('theme');
   if (THEMES.some((t) => t.id === fromQuery)) {
     localStorage.setItem(STORAGE_KEYS.theme, fromQuery);
     return fromQuery;
   }
-  const saved = localStorage.getItem(STORAGE_KEYS.theme);
-  if (THEMES.some((t) => t.id === saved)) return saved;
   return 'ocean';
 }
 
@@ -116,9 +118,80 @@ function escapeHtml(value) {
 
 function parseDate(value) {
   if (!value) return null;
-  const dt = new Date(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === 'number') {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+
+  const raw = String(value).trim();
+  const noTzMatch = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  const hasTimezone = /([zZ]|[+\-]\d{2}:\d{2}|[+\-]\d{4})$/.test(raw);
+  if (noTzMatch && !hasTimezone) {
+    const year = Number.parseInt(noTzMatch[1], 10);
+    const month = Number.parseInt(noTzMatch[2], 10);
+    const day = Number.parseInt(noTzMatch[3], 10);
+    const hour = Number.parseInt(noTzMatch[4] || '0', 10);
+    const minute = Number.parseInt(noTzMatch[5] || '0', 10);
+    const second = Number.parseInt(noTzMatch[6] || '0', 10);
+    const utcMs = Date.UTC(year, month - 1, day, hour - 9, minute, second);
+    const kstDate = new Date(utcMs);
+    return Number.isNaN(kstDate.getTime()) ? null : kstDate;
+  }
+
+  const dt = new Date(raw);
   if (Number.isNaN(dt.getTime())) return null;
   return dt;
+}
+
+function getKstParts(value = new Date()) {
+  const dt = parseDate(value);
+  if (!dt) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: KST_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(dt);
+  const partMap = {};
+  parts.forEach((part) => {
+    if (part.type !== 'literal') partMap[part.type] = part.value;
+  });
+  const year = Number.parseInt(partMap.year || '', 10);
+  const month = Number.parseInt(partMap.month || '', 10);
+  const day = Number.parseInt(partMap.day || '', 10);
+  const hour = Number.parseInt(partMap.hour || '', 10);
+  const minute = Number.parseInt(partMap.minute || '', 10);
+  const second = Number.parseInt(partMap.second || '', 10);
+  if ([year, month, day, hour, minute, second].some((n) => Number.isNaN(n))) return null;
+  return { year, month, day, hour, minute, second };
+}
+
+function getKstDateKey(value = new Date()) {
+  const parts = getKstParts(value);
+  if (!parts) return '';
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function getKstMonthKey(value = new Date()) {
+  const parts = getKstParts(value);
+  if (!parts) return '';
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}`;
+}
+
+function getKstTimeKey(value) {
+  const parts = getKstParts(value);
+  if (!parts) return '';
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
 }
 
 function formatDateTime(value) {
@@ -149,6 +222,58 @@ function formatDate(value) {
 
 function formatTime(value) {
   const dt = parseDate(value);
+  if (!dt) return '-';
+  return dt.toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: KST_TIMEZONE,
+  });
+}
+
+function parseUtcTimestamp(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') {
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const raw = String(value).trim();
+  const match = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?$/
+  );
+  if (!match) {
+    const dt = new Date(raw);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  const hour = Number.parseInt(match[4] || '0', 10);
+  const minute = Number.parseInt(match[5] || '0', 10);
+  const second = Number.parseInt(match[6] || '0', 10);
+  const micro = String(match[7] || '').padEnd(6, '0');
+  const milli = Number.parseInt(micro.slice(0, 3) || '0', 10);
+  const dt = new Date(Date.UTC(year, month - 1, day, hour, minute, second, milli));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatUtcDateTime(value) {
+  const dt = parseUtcTimestamp(value);
+  if (!dt) return '-';
+  return dt.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: KST_TIMEZONE,
+  });
+}
+
+function formatUtcTime(value) {
+  const dt = parseUtcTimestamp(value);
   if (!dt) return '-';
   return dt.toLocaleTimeString('ko-KR', {
     hour: '2-digit',
@@ -257,12 +382,7 @@ function toDateInputValue(value) {
     const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})/);
     if (match) return match[1];
   }
-  const dt = parseDate(value);
-  if (!dt) return '';
-  const year = dt.getFullYear();
-  const month = String(dt.getMonth() + 1).padStart(2, '0');
-  const day = String(dt.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return getKstDateKey(value);
 }
 
 async function uploadEditorImage(file, options = {}) {
@@ -439,12 +559,11 @@ function renderShell(path) {
 
   const role = state.user?.role || '';
   const navItems = [
+    { path: '/about', label: 'SSP+ 소개', visible: ROLE.canAbout(role) },
     { path: '/dashboard', label: '대시보드', visible: ROLE.canDashboard(role) },
     { path: '/projects', label: '과제', visible: true },
-    { path: '/search', label: '검색', visible: true },
     { path: '/calendar', label: '캘린더', visible: ROLE.canCalendar(role) },
     { path: '/coaching-plan', label: '코칭 계획/실적', visible: ROLE.canCoachingPlan(role) },
-    { path: '/about', label: 'SSP+ 소개', visible: ROLE.canAbout(role) },
     { path: '/board', label: '게시판', visible: true },
     { path: '/admin', label: '관리', visible: ROLE.canAdmin(role) },
   ].filter((item) => item.visible);
@@ -536,8 +655,8 @@ async function renderAttendanceQuick() {
     const status = await api('/api/attendance/my-status');
     const log = status?.attendance_log || null;
     const workDateText = formatDate(status?.work_date || new Date());
-    const checkInText = log?.check_in_time ? formatTime(log.check_in_time) : '-';
-    const checkOutText = log?.check_out_time ? formatTime(log.check_out_time) : '-';
+    const checkInText = log?.check_in_time ? formatUtcTime(log.check_in_time) : '-';
+    const checkOutText = log?.check_out_time ? formatUtcTime(log.check_out_time) : '-';
     const canCheckIn = !!status?.can_checkin;
     const canCheckOut = !!status?.can_checkout;
     const canCancelCheckout = !!(log?.check_out_time && status?.ip_allowed);
@@ -724,12 +843,89 @@ async function renderProjects(view) {
     return;
   }
 
+  const role = normalizeRole(state.user?.role || '');
+  const canCreateProject = role === 'admin';
   const projects = await api(`/api/batches/${state.batchId}/projects`).catch(() => []);
   const rows = Array.isArray(projects) ? projects : [];
   let keyword = '';
   let type = 'all';
   let page = 1;
   const pageSize = 12;
+  const openCreateProjectModal = () => {
+    if (!canCreateProject) return;
+    const modal = openNuModal({
+      title: '과제 추가',
+      maxWidth: 'max-w-3xl',
+      bodyHtml: `
+        <form id="nu-project-create-form" class="space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm block">과제명
+              <input name="project_name" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" required />
+            </label>
+            <label class="text-sm block">부서
+              <input name="organization" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" required />
+            </label>
+            <label class="text-sm block">대표자
+              <input name="representative" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" />
+            </label>
+            <label class="text-sm block">카테고리
+              <input name="category" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" />
+            </label>
+            <label class="text-sm block">과제 구분
+              <select name="project_type" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                <option value="primary">정식과제</option>
+                <option value="associate">준참여과제</option>
+              </select>
+            </label>
+            <label class="text-sm block">상태
+              <select name="status" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                <option value="preparing">준비중</option>
+                <option value="active">진행중</option>
+                <option value="completed">완료</option>
+              </select>
+            </label>
+            <label class="text-sm block md:col-span-2">공개 범위
+              <select name="visibility" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                <option value="public">공개</option>
+                <option value="private">비공개</option>
+              </select>
+            </label>
+          </div>
+          <p id="nu-project-create-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-project-create-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">생성</button>
+          </div>
+        </form>
+      `,
+    });
+    modal.bodyEl.querySelector('#nu-project-create-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-project-create-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-project-create-form'));
+      const payload = {
+        project_name: String(fd.get('project_name') || '').trim(),
+        organization: String(fd.get('organization') || '').trim(),
+        representative: String(fd.get('representative') || '').trim() || null,
+        category: String(fd.get('category') || '').trim() || null,
+        project_type: String(fd.get('project_type') || 'primary').trim() || 'primary',
+        status: String(fd.get('status') || 'preparing').trim() || 'preparing',
+        visibility: String(fd.get('visibility') || 'public').trim() || 'public',
+      };
+      const errorEl = modal.bodyEl.querySelector('#nu-project-create-error');
+      if (!payload.project_name || !payload.organization) {
+        if (errorEl) errorEl.textContent = '과제명과 부서를 입력하세요.';
+        return;
+      }
+      try {
+        await api(`/api/batches/${state.batchId}/projects`, { method: 'POST', body: JSON.stringify(payload) });
+        modal.close();
+        await renderProjects(view);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || '과제 생성 실패';
+      }
+    });
+  };
 
   function draw() {
     const filtered = rows.filter((p) => {
@@ -754,7 +950,6 @@ async function renderProjects(view) {
               <th class="px-3 py-2">부서</th>
               <th class="px-3 py-2">대표자</th>
               <th class="px-3 py-2">진행률</th>
-              <th class="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -763,18 +958,17 @@ async function renderProjects(view) {
                 ? pageRows
                     .map(
                       (p) => `
-                  <tr class="border-b nu-border hover:nu-soft">
+                  <tr class="nu-project-row border-b nu-border hover:nu-soft cursor-pointer" data-project-id="${p.project_id}" tabindex="0" role="button" aria-label="${escapeHtml(p.project_name || '과제 상세')} 상세 열기">
                     <td class="px-3 py-2 font-medium">${escapeHtml(p.project_name || '-')}</td>
                     <td class="px-3 py-2">${escapeHtml(String(p.project_type || 'primary') === 'associate' ? '준참여과제' : '정식과제')}</td>
                     <td class="px-3 py-2">${escapeHtml(p.organization || '-')}</td>
                     <td class="px-3 py-2">${escapeHtml(p.representative || '-')}</td>
                     <td class="px-3 py-2">${Number(p.progress_rate || 0).toFixed(0)}%</td>
-                    <td class="px-3 py-2 text-right"><button data-project-id="${p.project_id}" class="nu-project-open rounded-lg px-3 py-1.5 text-xs nu-primary-bg">열기</button></td>
                   </tr>
                 `
                     )
                     .join('')
-                : '<tr><td colspan="6" class="px-3 py-6 text-center nu-text-muted">조회 결과가 없습니다.</td></tr>'
+                : '<tr><td colspan="5" class="px-3 py-6 text-center nu-text-muted">조회 결과가 없습니다.</td></tr>'
             }
           </tbody>
         </table>
@@ -789,9 +983,18 @@ async function renderProjects(view) {
       </div>
     `;
 
-    tableWrap.querySelectorAll('.nu-project-open').forEach((btn) =>
-      btn.addEventListener('click', () => navigate(`/projects/${btn.dataset.projectId}`))
-    );
+    tableWrap.querySelectorAll('.nu-project-row').forEach((rowEl) => {
+      rowEl.addEventListener('click', () => {
+        const projectId = Number.parseInt(rowEl.dataset.projectId || '', 10);
+        if (!Number.isNaN(projectId)) navigate(`/projects/${projectId}`);
+      });
+      rowEl.addEventListener('keydown', (evt) => {
+        if (evt.key !== 'Enter' && evt.key !== ' ') return;
+        evt.preventDefault();
+        const projectId = Number.parseInt(rowEl.dataset.projectId || '', 10);
+        if (!Number.isNaN(projectId)) navigate(`/projects/${projectId}`);
+      });
+    });
     document.getElementById('nu-project-prev')?.addEventListener('click', () => {
       page = Math.max(1, page - 1);
       draw();
@@ -804,11 +1007,16 @@ async function renderProjects(view) {
 
   view.innerHTML = `
     <section class="mb-5">
-      <h1 class="text-2xl font-bold">과제</h1>
-      <p class="nu-text-muted mt-1">차수당 30~40개 과제를 빠르게 관리할 수 있도록 검색/필터/페이지네이션을 제공합니다.</p>
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 class="text-2xl font-bold">과제</h1>
+          <p class="nu-text-muted mt-1">차수당 30~40개 과제를 빠르게 관리할 수 있도록 검색/필터/페이지네이션을 제공합니다.</p>
+        </div>
+        <button id="nu-project-open-search" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface hover:nu-soft">통합 검색</button>
+      </div>
     </section>
     <section class="rounded-2xl border nu-border nu-surface p-4 mb-4">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
         <input id="nu-project-search" class="rounded-lg border nu-border px-3 py-2 nu-surface" placeholder="과제명/부서/대표자 검색" />
         <select id="nu-project-type" class="rounded-lg border nu-border px-3 py-2 nu-surface">
           <option value="all">전체 과제</option>
@@ -816,6 +1024,9 @@ async function renderProjects(view) {
           <option value="associate">준참여과제</option>
         </select>
         <div class="text-sm nu-text-muted flex items-center">총 ${rows.length}개 과제</div>
+        <div class="flex items-center justify-end">
+          ${canCreateProject ? '<button id="nu-project-create-btn" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">과제 추가</button>' : ''}
+        </div>
       </div>
     </section>
     <section id="nu-project-list"></section>
@@ -835,6 +1046,8 @@ async function renderProjects(view) {
     page = 1;
     draw();
   });
+  document.getElementById('nu-project-create-btn')?.addEventListener('click', openCreateProjectModal);
+  document.getElementById('nu-project-open-search')?.addEventListener('click', () => navigate('/search'));
 
   draw();
 }
@@ -2007,7 +2220,8 @@ async function renderAbout(view) {
   const ABOUT_TAB_KEY = 'new_ui_about_tab';
   const ABOUT_INCLUDE_HIDDEN_KEY = 'new_ui_about_include_hidden';
   const savedTab = localStorage.getItem(ABOUT_TAB_KEY);
-  const activeTab = ['ssp_intro', 'coach_intro', 'coaches'].includes(savedTab) ? savedTab : 'ssp_intro';
+  const normalizedSavedTab = savedTab === 'coach_intro' ? 'coaches' : savedTab;
+  const activeTab = ['ssp_intro', 'coaches'].includes(normalizedSavedTab) ? normalizedSavedTab : 'ssp_intro';
   const includeHidden = isAdmin && localStorage.getItem(ABOUT_INCLUDE_HIDDEN_KEY) === 'true';
 
   const [sspIntro, coachIntro, coaches] = await Promise.all([
@@ -2031,8 +2245,7 @@ async function renderAbout(view) {
     <section class="rounded-2xl border nu-border nu-surface p-4">
       <div class="flex flex-wrap items-center gap-2 mb-4">
         <button class="${tabClass('ssp_intro')}" data-role="nu-about-tab" data-tab="ssp_intro">SSP+ 소개</button>
-        <button class="${tabClass('coach_intro')}" data-role="nu-about-tab" data-tab="coach_intro">코치 소개 안내</button>
-        <button class="${tabClass('coaches')}" data-role="nu-about-tab" data-tab="coaches">코치 목록</button>
+        <button class="${tabClass('coaches')}" data-role="nu-about-tab" data-tab="coaches">코치 소개</button>
         ${
           isAdmin
             ? `
@@ -2063,13 +2276,13 @@ async function renderAbout(view) {
         }
       </div>
 
-      <div class="${showPanel('coach_intro')}">
+      <div class="${showPanel('coaches')}">
         <div class="rich-content rounded-xl border nu-border p-4">${renderRichContent(coachIntro?.content, '-')}</div>
         ${
           isAdmin
             ? `
               <div class="mt-4 rounded-xl border nu-border p-4">
-                <div class="text-sm nu-text-muted mb-2">관리자 편집</div>
+                <div class="text-sm nu-text-muted mb-2">코치 소개 안내 편집</div>
                 <div id="nu-about-editor-coach_intro"></div>
                 <div class="mt-3 flex items-center gap-2">
                   <button id="nu-about-save-coach_intro" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">저장</button>
@@ -2079,9 +2292,7 @@ async function renderAbout(view) {
             `
             : ''
         }
-      </div>
-
-      <div class="${showPanel('coaches')}">
+        <div class="mt-4 text-sm nu-text-muted">코치 목록</div>
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-3" id="nu-about-coach-list">
           ${
             coachRows.length
@@ -2330,13 +2541,12 @@ async function renderCoachingPlan(view) {
   const COACH_KEY = 'new_ui_coaching_plan_coach_filter';
 
   const now = new Date();
-  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const thisMonth = getKstMonthKey(now);
   const mode = localStorage.getItem(MODE_KEY) === 'coaching_only' ? 'coaching_only' : 'month';
   const monthValue = /^\d{4}-\d{2}$/.test(localStorage.getItem(MONTH_KEY) || '') ? localStorage.getItem(MONTH_KEY) : thisMonth;
   const coachFilter = isAdmin ? localStorage.getItem(COACH_KEY) || '' : '';
 
-  const toIsoDate = (dateObj) =>
-    `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
+  const toIsoDate = (dateObj) => getKstDateKey(dateObj);
   const getMonthRange = (value) => {
     const matched = String(value || '').match(/^(\d{4})-(\d{2})$/);
     if (!matched) return null;
@@ -2383,10 +2593,12 @@ async function renderCoachingPlan(view) {
 
   const formatDateHeader = (dateKey) => {
     const dt = parseDate(`${dateKey}T00:00:00`);
-    if (!dt) return dateKey;
-    const mm = String(dt.getMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getDate()).padStart(2, '0');
-    const ww = ['일', '월', '화', '수', '목', '금', '토'][dt.getDay()];
+    const parts = getKstParts(dt);
+    if (!parts) return dateKey;
+    const mm = String(parts.month).padStart(2, '0');
+    const dd = String(parts.day).padStart(2, '0');
+    const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+    const ww = ['일', '월', '화', '수', '목', '금', '토'][weekday];
     return `${mm}-${dd}(${ww})`;
   };
 
@@ -3364,14 +3576,15 @@ function kpiCard(label, value) {
 
 function p1DateLabel(dateKey) {
   const dt = parseDate(`${dateKey}T00:00:00`);
-  if (!dt) return dateKey;
-  const week = ['일', '월', '화', '수', '목', '금', '토'][dt.getDay()];
-  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}(${week})`;
+  const parts = getKstParts(dt);
+  if (!parts) return dateKey;
+  const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  const week = ['일', '월', '화', '수', '목', '금', '토'][weekday];
+  return `${String(parts.month).padStart(2, '0')}/${String(parts.day).padStart(2, '0')}(${week})`;
 }
 
 function p1TodayIso() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return getKstDateKey(new Date());
 }
 
 function p1ProjectTypeLabel(value) {
@@ -3748,7 +3961,7 @@ async function renderCalendar(view) {
   const savedViewMode = localStorage.getItem(CALENDAR_VIEW_KEY);
   let viewMode = savedViewMode === 'list' ? 'list' : 'calendar';
   const now = new Date();
-  let monthValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let monthValue = getKstMonthKey(now);
   let events = [];
   const projects = await api(`/api/batches/${state.batchId}/projects`).catch(() => []);
   const projectRows = Array.isArray(projects) ? projects : [];
@@ -3785,7 +3998,7 @@ async function renderCalendar(view) {
   ];
 
   const pad2 = (value) => String(value).padStart(2, '0');
-  const toDateKey = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const toDateKey = (date) => getKstDateKey(date);
   const parseMonthValue = (value) => {
     const match = String(value || '').match(/^(\d{4})-(\d{2})$/);
     if (!match) return null;
@@ -3795,17 +4008,16 @@ async function renderCalendar(view) {
     return { year, month };
   };
   const shiftMonthValue = (value, diff) => {
-    const parsed = parseMonthValue(value) || parseMonthValue(monthValue) || { year: now.getFullYear(), month: now.getMonth() + 1 };
+    const nowMonth = parseMonthValue(getKstMonthKey(now)) || { year: 1970, month: 1 };
+    const parsed = parseMonthValue(value) || parseMonthValue(monthValue) || nowMonth;
     const next = new Date(parsed.year, parsed.month - 1 + diff, 1);
     return `${next.getFullYear()}-${pad2(next.getMonth() + 1)}`;
   };
   const toDateInputValueFromDateTime = (value) => {
-    const dt = parseDate(value);
-    return dt ? `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}` : '';
+    return getKstDateKey(value);
   };
   const toTimeInputValue = (value) => {
-    const dt = parseDate(value);
-    return dt ? `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}` : '';
+    return getKstTimeKey(value);
   };
   const toDateTimeString = (dateStr, timeStr) => `${dateStr}T${String(timeStr || '00:00').slice(0, 5)}:00`;
   const normalizeScope = (scope, scheduleType) => {
@@ -4146,8 +4358,8 @@ async function renderCalendar(view) {
     const startDt = parseDate(event?.start || null);
     const endDt = parseDate(event?.end || null);
     const startDate = toDateInputValueFromDateTime(event?.start) || presetDate || `${monthValue}-01`;
-    const startTime = startDt ? `${pad2(startDt.getHours())}:${pad2(startDt.getMinutes())}` : '10:00';
-    const endTime = endDt ? `${pad2(endDt.getHours())}:${pad2(endDt.getMinutes())}` : '11:00';
+    const startTime = startDt ? getKstTimeKey(startDt) : '10:00';
+    const endTime = endDt ? getKstTimeKey(endDt) : '11:00';
     const initialProjectId = Number(event?.project_id || selectedProjectForView() || projectRows[0]?.project_id || 0);
     const overlay = openCalendarOverlay(`
       <div class="w-full max-w-xl rounded-2xl border nu-border nu-surface shadow-xl">
@@ -4407,9 +4619,9 @@ async function renderCalendar(view) {
     const start = parseDate(event?.start || event?.start_time);
     const end = parseDate(event?.end || null);
     if (!start) return '';
-    const startText = `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
+    const startText = getKstTimeKey(start);
     if (!end) return startText;
-    return `${startText}-${pad2(end.getHours())}:${pad2(end.getMinutes())}`;
+    return `${startText}-${getKstTimeKey(end)}`;
   };
 
   const drawList = () => {
@@ -4598,14 +4810,15 @@ async function renderCalendar(view) {
     draw();
   };
   const moveCurrentMonth = () => {
-    monthValue = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    monthValue = getKstMonthKey(now);
     syncMonthInput();
     draw();
   };
   const defaultCreateDate = () => {
     const parsed = parseMonthValue(monthEl?.value || monthValue);
-    if (!parsed) return toDateKey(now);
-    if (parsed.year === now.getFullYear() && parsed.month === now.getMonth() + 1) return toDateKey(now);
+    const nowMonth = parseMonthValue(getKstMonthKey(now));
+    if (!parsed) return getKstDateKey(now);
+    if (nowMonth && parsed.year === nowMonth.year && parsed.month === nowMonth.month) return getKstDateKey(now);
     return `${parsed.year}-${pad2(parsed.month)}-01`;
   };
 
@@ -5199,10 +5412,11 @@ async function renderBoard(view, options = {}) {
 
 async function renderProjectDetail(view, projectId) {
   const role = normalizeRole(state.user?.role || '');
-  const [project, members, notes] = await Promise.all([
+  const [project, members, notes, documents] = await Promise.all([
     api(`/api/projects/${projectId}`),
     api(`/api/projects/${projectId}/members`).catch(() => []),
     api(`/api/projects/${projectId}/notes`).catch(() => []),
+    api(`/api/projects/${projectId}/documents`).catch(() => []),
   ]);
   const memberRows = Array.isArray(members) ? members : [];
   const noteRows = (Array.isArray(notes) ? notes : []).sort((a, b) => {
@@ -5210,20 +5424,33 @@ async function renderProjectDetail(view, projectId) {
     const bDate = parseDate(b.coaching_date || b.created_at)?.getTime() || 0;
     return bDate - aDate;
   });
+  const documentRows = (Array.isArray(documents) ? documents : []).sort((a, b) => {
+    const aDate = parseDate(a.updated_at || a.created_at)?.getTime() || 0;
+    const bDate = parseDate(b.updated_at || b.created_at)?.getTime() || 0;
+    return bDate - aDate;
+  });
   const latestNote = noteRows[0] || null;
   const canEditProject = canEditProjectBasicInfo(role, project);
   const canEditNotes = canWriteCoachingNote(role);
+  const canManageRecords = canEditProject || canEditNotes || role === 'admin';
   const canComment = role !== 'observer';
   const canManageMembers = role === 'admin' || (role === 'participant' && !!project?.is_my_project);
 
   if (!renderProjectDetail._uiState) renderProjectDetail._uiState = {};
-  const saved = renderProjectDetail._uiState[projectId] || { memberOpen: false, expandAllNotes: false, expandedNoteIds: [] };
+  const saved = renderProjectDetail._uiState[projectId] || {
+    memberOpen: false,
+    expandAllNotes: false,
+    expandedNoteIds: [],
+    activeTab: 'info',
+    selectedDocType: 'basic_consulting_output',
+  };
   if (!saved.initialized || saved.forceLatestOpen) {
     saved.expandedNoteIds = latestNote ? [Number(latestNote.note_id)] : [];
     saved.expandAllNotes = false;
     saved.forceLatestOpen = false;
     saved.initialized = true;
   }
+  if (!['info', 'records', 'notes'].includes(saved.activeTab)) saved.activeTab = 'info';
   renderProjectDetail._uiState[projectId] = saved;
   const expandedSet = new Set((saved.expandedNoteIds || []).map((value) => Number(value)));
 
@@ -5237,6 +5464,154 @@ async function renderProjectDetail(view, projectId) {
   const latestComments = latestNote ? commentsByNote.get(Number(latestNote.note_id)) || [] : [];
   const latestFeedbacks = latestComments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'coaching_feedback' && p1HasText(comment.content));
   const latestMemos = latestComments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'participant_memo' && p1HasText(comment.content));
+  const defaultDocTypes = [
+    { value: 'basic_consulting_output', label: '기초컨설팅 산출물' },
+    { value: 'workshop_output', label: '공동워크샵 산출물' },
+    { value: 'mid_presentation', label: '중간 발표 자료' },
+    { value: 'final_presentation', label: '최종 발표 자료' },
+  ];
+  const defaultTypeMap = new Map(defaultDocTypes.map((row) => [row.value, row.label]));
+  const discoveredDocTypes = [];
+  documentRows.forEach((row) => {
+    const value = String(row.doc_type || '').trim();
+    if (!value) return;
+    if (defaultTypeMap.has(value)) return;
+    if (discoveredDocTypes.some((item) => item.value === value)) return;
+    discoveredDocTypes.push({ value, label: value });
+  });
+  const docTypes = [...defaultDocTypes, ...discoveredDocTypes];
+  if (!docTypes.some((row) => row.value === saved.selectedDocType)) {
+    saved.selectedDocType = docTypes[0]?.value || 'basic_consulting_output';
+  }
+  const selectedDocType = saved.selectedDocType;
+  const selectedDocLabel = defaultTypeMap.get(selectedDocType) || selectedDocType || '-';
+  const selectedDocRows = documentRows.filter((row) => String(row.doc_type || '') === selectedDocType);
+  const docTypeCountMap = new Map();
+  documentRows.forEach((row) => {
+    const typeValue = String(row.doc_type || '').trim();
+    if (!typeValue) return;
+    docTypeCountMap.set(typeValue, (docTypeCountMap.get(typeValue) || 0) + 1);
+  });
+  const showSidePanel = saved.activeTab === 'info';
+  const parseAttachments = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+  const openDocumentViewer = (doc) => {
+    if (!doc) return;
+    const attachments = parseAttachments(doc.attachments);
+    openNuModal({
+      title: doc.title || selectedDocLabel || '과제 기록',
+      maxWidth: 'max-w-4xl',
+      bodyHtml: `
+        <div class="space-y-3">
+          <div class="text-xs nu-text-muted">
+            <span class="rounded-full px-2 py-1 bg-slate-100 text-slate-700">${escapeHtml(defaultTypeMap.get(String(doc.doc_type || '')) || String(doc.doc_type || '-'))}</span>
+            <span class="ml-2">최종 수정 ${formatDateTime(doc.updated_at || doc.created_at)}</span>
+          </div>
+          <div class="rounded-xl border nu-border p-3 rich-content">${renderRichContent(doc.content, '내용이 없습니다.')}</div>
+          ${
+            attachments.length
+              ? `<div class="rounded-xl border nu-border p-3">
+                   <div class="text-sm font-semibold mb-2">첨부파일</div>
+                   <div class="space-y-1 text-sm">
+                     ${attachments
+                       .map((row) => `<div><a class="underline underline-offset-2" target="_blank" rel="noopener noreferrer" href="${escapeHtml(row.url || '#')}">${escapeHtml(row.filename || row.original_name || row.url || '-')}</a></div>`)
+                       .join('')}
+                   </div>
+                 </div>`
+              : ''
+          }
+        </div>
+      `,
+    });
+  };
+  const openDocumentEditor = (doc = null) => {
+    if (!canManageRecords) return;
+    const isEdit = !!doc;
+    const currentType = String(doc?.doc_type || selectedDocType || docTypes[0]?.value || 'basic_consulting_output');
+    const modal = openNuModal({
+      title: isEdit ? '과제 기록 수정' : '과제 기록 작성',
+      maxWidth: 'max-w-5xl',
+      bodyHtml: `
+        <form id="nu-doc-form" class="space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm block">기록 유형
+              <select name="doc_type" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" ${isEdit ? 'disabled' : ''}>
+                ${docTypes
+                  .map((row) => `<option value="${row.value}" ${row.value === currentType ? 'selected' : ''}>${escapeHtml(row.label)}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="text-sm block">제목
+              <input name="title" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(doc?.title || '')}" />
+            </label>
+          </div>
+          ${
+            isEdit
+              ? ''
+              : `
+                <label class="text-sm block">첨부파일 (선택)
+                  <input type="file" name="file" class="mt-1 block w-full text-sm" />
+                </label>
+              `
+          }
+          <div>
+            <div class="text-sm nu-text-muted mb-1">내용</div>
+            <div id="nu-doc-editor"></div>
+          </div>
+          <p id="nu-doc-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-doc-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      `,
+    });
+    const editor = createRichField('nu-doc-editor', {
+      initialHTML: doc?.content || '',
+      placeholder: '과제 기록 내용을 입력하세요.',
+      uploadOptions: { scope: 'document', projectId },
+    });
+    modal.bodyEl.querySelector('#nu-doc-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-doc-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-doc-form'));
+      const title = String(fd.get('title') || '').trim() || null;
+      const content = editor.getHTML() || null;
+      const errorEl = modal.bodyEl.querySelector('#nu-doc-error');
+      try {
+        if (isEdit) {
+          await api(`/api/documents/${doc.doc_id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ title, content }),
+          });
+        } else {
+          const payload = new FormData();
+          payload.append('doc_type', String(fd.get('doc_type') || currentType));
+          if (title) payload.append('title', title);
+          if (content) payload.append('content', content);
+          const file = fd.get('file');
+          if (file && typeof file === 'object' && file.name) payload.append('file', file);
+          await api(`/api/projects/${projectId}/documents`, {
+            method: 'POST',
+            body: payload,
+          });
+        }
+        renderProjectDetail._uiState[projectId] = { ...saved, activeTab: 'records', selectedDocType: currentType };
+        modal.close();
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || `과제 기록 ${isEdit ? '저장' : '등록'} 실패`;
+      }
+    });
+  };
 
   const openFieldEditor = (field) => {
     const current = {
@@ -5423,9 +5798,72 @@ async function renderProjectDetail(view, projectId) {
     renderCandidates();
   };
 
-  const openNoteEditor = (note = null) => {
+  const openAiResultModal = (modalTitle, data) => {
+    openNuModal({
+      title: modalTitle,
+      maxWidth: 'max-w-4xl',
+      bodyHtml: `
+        <div class="space-y-3">
+          <div class="rounded-xl border nu-border p-3">
+            <div class="font-semibold">${escapeHtml(data?.title || modalTitle)}</div>
+            <div class="text-xs nu-text-muted mt-1">
+              ${
+                data?.model_used
+                  ? `<span>모델 ${escapeHtml(data.model_used)}</span>`
+                  : ''
+              }
+              ${
+                data?.created_at
+                  ? `<span class="${data?.model_used ? 'ml-2' : ''}">생성 ${formatDateTime(data.created_at)}</span>`
+                  : ''
+              }
+            </div>
+          </div>
+          <div class="rounded-xl border nu-border p-3">
+            <pre class="whitespace-pre-wrap break-words text-sm leading-6">${escapeHtml(data?.content || '')}</pre>
+          </div>
+        </div>
+      `,
+    });
+  };
+
+  const runProjectAiGeneration = async (type) => {
+    if (!canEditNotes) return;
+    const isSummary = type === 'summary';
+    const buttonId = isSummary ? 'nu-note-ai-summary' : 'nu-note-ai-qa';
+    const button = document.getElementById(buttonId);
+    const originalText = button?.textContent || '';
+    if (button) {
+      button.disabled = true;
+      button.textContent = isSummary ? 'AI 요약 생성 중...' : 'AI Q&A 생성 중...';
+    }
+    try {
+      const data = await api(
+        `/api/projects/${projectId}/${isSummary ? 'summary' : 'qa-set'}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ force_regenerate: false }),
+        }
+      );
+      openAiResultModal(isSummary ? 'AI 요약' : 'AI Q&A', data || {});
+    } catch (error) {
+      alert(error.message || (isSummary ? 'AI 요약 생성 실패' : 'AI Q&A 생성 실패'));
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText || (isSummary ? 'AI 요약' : 'AI Q&A');
+      }
+    }
+  };
+
+  const openNoteEditor = (note = null, options = {}) => {
     if (!canEditNotes) return;
     const isEdit = !!note;
+    const noteState = {
+      noteId: Number.parseInt(String(note?.note_id || ''), 10),
+    };
+    if (Number.isNaN(noteState.noteId)) noteState.noteId = null;
+    const autoEnhance = !!options.autoEnhance;
     const today = toDateInputValue(new Date()) || '';
     const modal = openNuModal({
       title: isEdit ? '코칭노트 편집' : '코칭노트 작성',
@@ -5449,8 +5887,16 @@ async function renderProjectDetail(view, projectId) {
           <div><div class="text-sm nu-text-muted mb-1">현재 상태</div><div id="nu-note-current-editor"></div></div>
           <div><div class="text-sm nu-text-muted mb-1">주요 문제</div><div id="nu-note-issue-editor"></div></div>
           <div><div class="text-sm nu-text-muted mb-1">다음 작업</div><div id="nu-note-action-editor"></div></div>
+          <div class="rounded-xl border nu-border p-3">
+            <label class="text-sm block">AI 보완 지시사항 (선택)
+              <input type="text" name="ai_instruction" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" placeholder="예: 다음 작업을 일정/담당 기준으로 구체화" />
+            </label>
+            <p class="mt-1 text-xs nu-text-muted">현재 편집 중인 내용으로 AI 보완 제안을 생성합니다.</p>
+            ${isEdit ? '' : '<p class="mt-1 text-xs nu-text-muted">작성 단계에서 AI 보완을 누르면 코칭노트가 먼저 임시 저장됩니다.</p>'}
+          </div>
           <p id="nu-note-form-error" class="text-sm text-red-600"></p>
           <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-note-ai-enhance" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">AI 보완</button>
             <button type="button" id="nu-note-form-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
             <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
           </div>
@@ -5460,34 +5906,128 @@ async function renderProjectDetail(view, projectId) {
     const currentEditor = createRichField('nu-note-current-editor', { initialHTML: note?.current_status || '', placeholder: '현재 상태를 입력하세요.', uploadOptions: { scope: 'note', projectId } });
     const issueEditor = createRichField('nu-note-issue-editor', { initialHTML: note?.main_issue || '', placeholder: '주요 문제를 입력하세요.', uploadOptions: { scope: 'note', projectId } });
     const actionEditor = createRichField('nu-note-action-editor', { initialHTML: note?.next_action || '', placeholder: '다음 작업을 입력하세요.', uploadOptions: { scope: 'note', projectId } });
-    modal.bodyEl.querySelector('#nu-note-form-cancel')?.addEventListener('click', modal.close);
-    modal.bodyEl.querySelector('#nu-note-form')?.addEventListener('submit', async (evt) => {
-      evt.preventDefault();
-      const fd = new FormData(modal.bodyEl.querySelector('#nu-note-form'));
-      const errorEl = modal.bodyEl.querySelector('#nu-note-form-error');
+    const errorEl = modal.bodyEl.querySelector('#nu-note-form-error');
+    const aiBtn = modal.bodyEl.querySelector('#nu-note-ai-enhance');
+    const aiInstructionEl = modal.bodyEl.querySelector('[name="ai_instruction"]');
+    const noteForm = modal.bodyEl.querySelector('#nu-note-form');
+    let submitted = false;
+    const setFormError = (message) => {
+      if (errorEl) errorEl.textContent = message || '';
+    };
+    const buildPayload = () => {
+      const fd = new FormData(noteForm);
       const coachingDate = String(fd.get('coaching_date') || '').trim();
       const weekNumber = Number.parseInt(String(fd.get('week_number') || ''), 10);
       const progressRate = Number.parseInt(String(fd.get('progress_rate') || ''), 10);
+      return {
+        coachingDate,
+        payload: {
+          coaching_date: coachingDate,
+          week_number: Number.isNaN(weekNumber) ? null : weekNumber,
+          progress_rate: Number.isNaN(progressRate) ? null : Math.max(0, Math.min(100, progressRate)),
+          current_status: currentEditor.getHTML() || null,
+          main_issue: issueEditor.getHTML() || null,
+          next_action: actionEditor.getHTML() || null,
+        },
+      };
+    };
+    const ensureNoteIdForAi = async () => {
+      if (noteState.noteId) return noteState.noteId;
+      const { coachingDate, payload } = buildPayload();
       if (!coachingDate) {
-        if (errorEl) errorEl.textContent = '코칭일자를 입력하세요.';
+        setFormError('코칭일자를 입력하세요.');
+        return null;
+      }
+      const confirmed = confirm('AI 보완을 위해 코칭노트를 먼저 임시 저장합니다. 계속하시겠습니까?');
+      if (!confirmed) return null;
+      const created = await api(`/api/projects/${projectId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      const createdNoteId = Number.parseInt(String(created?.note_id || ''), 10);
+      if (Number.isNaN(createdNoteId)) {
+        throw new Error('임시 저장된 코칭노트 정보를 확인할 수 없습니다.');
+      }
+      noteState.noteId = createdNoteId;
+      return noteState.noteId;
+    };
+    const cleanupDraftIfNeeded = async () => {
+      if (isEdit || submitted || !noteState.noteId) return;
+      try {
+        await api(`/api/notes/${noteState.noteId}`, { method: 'DELETE' });
+      } catch {
+        // 사용자가 닫는 동작을 막지 않기 위해 정리 실패는 무시합니다.
+      } finally {
+        noteState.noteId = null;
+      }
+    };
+    const runAiEnhance = async () => {
+      if (!aiBtn) return;
+      const originalText = aiBtn.textContent || 'AI 보완';
+      aiBtn.disabled = true;
+      aiBtn.textContent = 'AI 보완 중...';
+      setFormError('');
+      try {
+        const targetNoteId = await ensureNoteIdForAi();
+        if (!targetNoteId) return;
+        const enhanced = await api(`/api/notes/${targetNoteId}/enhance`, {
+          method: 'POST',
+          body: JSON.stringify({
+            current_status: currentEditor.getHTML() || null,
+            main_issue: issueEditor.getHTML() || null,
+            next_action: actionEditor.getHTML() || null,
+            instruction: String(aiInstructionEl?.value || '').trim() || null,
+          }),
+        });
+        currentEditor.setHTML(enhanced?.current_status || '');
+        issueEditor.setHTML(enhanced?.main_issue || '');
+        actionEditor.setHTML(enhanced?.next_action || '');
+      } catch (error) {
+        setFormError(error.message || 'AI 보완 실패');
+      } finally {
+        aiBtn.disabled = false;
+        aiBtn.textContent = originalText;
+      }
+    };
+    aiBtn?.addEventListener('click', runAiEnhance);
+    if (autoEnhance) runAiEnhance();
+    const closeButton = modal.overlay?.querySelector('#nu-modal-close');
+    modal.bodyEl.querySelector('#nu-note-form-cancel')?.addEventListener('click', async () => {
+      await cleanupDraftIfNeeded();
+      modal.close();
+    });
+    closeButton?.addEventListener('click', () => {
+      cleanupDraftIfNeeded();
+    });
+    modal.overlay?.addEventListener(
+      'click',
+      (evt) => {
+        if (evt.target !== modal.overlay) return;
+        cleanupDraftIfNeeded();
+      },
+      true
+    );
+    noteForm?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const { coachingDate, payload } = buildPayload();
+      if (!coachingDate) {
+        setFormError('코칭일자를 입력하세요.');
         return;
       }
-      const payload = {
-        coaching_date: coachingDate,
-        week_number: Number.isNaN(weekNumber) ? null : weekNumber,
-        progress_rate: Number.isNaN(progressRate) ? null : Math.max(0, Math.min(100, progressRate)),
-        current_status: currentEditor.getHTML() || null,
-        main_issue: issueEditor.getHTML() || null,
-        next_action: actionEditor.getHTML() || null,
-      };
       try {
-        if (isEdit) await api(`/api/notes/${note.note_id}`, { method: 'PUT', body: JSON.stringify(payload) });
-        else await api(`/api/projects/${projectId}/notes`, { method: 'POST', body: JSON.stringify(payload) });
+        if (noteState.noteId) {
+          await api(`/api/notes/${noteState.noteId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        } else {
+          const created = await api(`/api/projects/${projectId}/notes`, { method: 'POST', body: JSON.stringify(payload) });
+          const createdNoteId = Number.parseInt(String(created?.note_id || ''), 10);
+          if (!Number.isNaN(createdNoteId)) noteState.noteId = createdNoteId;
+        }
+        submitted = true;
         renderProjectDetail._uiState[projectId] = { ...saved, forceLatestOpen: true };
         modal.close();
         await renderProjectDetail(view, projectId);
       } catch (error) {
-        if (errorEl) errorEl.textContent = error.message || '코칭노트 저장 실패';
+        setFormError(error.message || '코칭노트 저장 실패');
       }
     });
   };
@@ -5504,9 +6044,16 @@ async function renderProjectDetail(view, projectId) {
       </div>
       <button id="nu-back-projects" class="rounded-lg border nu-border px-3 py-2 nu-surface hover:nu-soft">과제 목록</button>
     </section>
+    <section class="mb-4 rounded-2xl border nu-border nu-surface p-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <button data-role="nu-project-tab" data-tab="info" class="rounded-lg border px-3 py-2 text-sm ${saved.activeTab === 'info' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">과제 정보</button>
+        <button data-role="nu-project-tab" data-tab="records" class="rounded-lg border px-3 py-2 text-sm ${saved.activeTab === 'records' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">과제 기록</button>
+        <button data-role="nu-project-tab" data-tab="notes" class="rounded-lg border px-3 py-2 text-sm ${saved.activeTab === 'notes' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">코칭 노트</button>
+      </div>
+    </section>
     <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <div class="xl:col-span-2 space-y-4">
-        <article class="rounded-2xl border nu-border nu-surface p-4 space-y-4">
+      <div class="${showSidePanel ? 'xl:col-span-2' : 'xl:col-span-3'} space-y-4">
+        <article id="nu-project-info-section" class="rounded-2xl border nu-border nu-surface p-4 space-y-4 ${saved.activeTab === 'info' ? '' : 'hidden'}">
           <div class="flex items-center justify-between gap-2">
             <h2 class="font-semibold">기본정보</h2>
             <span class="text-xs nu-text-muted">${canEditProject ? '항목별 edit 버튼으로 수정' : '읽기 전용'}</span>
@@ -5561,11 +6108,83 @@ async function renderProjectDetail(view, projectId) {
           </div>
         </article>
 
-        <article id="nu-note-section" class="rounded-2xl border nu-border nu-surface p-4">
+        <article id="nu-project-records-section" class="rounded-2xl border nu-border nu-surface p-4 ${saved.activeTab === 'records' ? '' : 'hidden'}">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 class="font-semibold">과제 기록</h2>
+            ${canManageRecords ? '<button id="nu-doc-create" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">새 기록</button>' : ''}
+          </div>
+          <div class="mb-3">
+            <div class="text-xs nu-text-muted mb-2">기록 유형</div>
+            <div class="flex flex-wrap gap-2">
+              ${docTypes
+                .map((row) => {
+                  const count = docTypeCountMap.get(row.value) || 0;
+                  return `
+                    <button
+                      type="button"
+                      data-role="nu-doc-type-item"
+                      data-doc-type="${row.value}"
+                      class="rounded-lg border px-3 py-1.5 text-sm ${row.value === selectedDocType ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}"
+                    >
+                      ${escapeHtml(row.label)} (${count})
+                    </button>
+                  `;
+                })
+                .join('')}
+            </div>
+          </div>
+          <div class="overflow-auto">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left border-b nu-border">
+                  <th class="py-2 pr-3">제목</th>
+                  <th class="py-2 pr-3">수정일</th>
+                  <th class="py-2 pr-3">첨부</th>
+                  <th class="py-2 pr-3">관리</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  selectedDocRows.length
+                    ? selectedDocRows
+                        .map((row) => {
+                          const attachments = parseAttachments(row.attachments);
+                          return `
+                            <tr class="border-b nu-border">
+                              <td class="py-2 pr-3">
+                                <button class="underline underline-offset-2 text-left" data-role="nu-doc-open" data-doc-id="${row.doc_id}">${escapeHtml(row.title || '(제목 없음)')}</button>
+                              </td>
+                              <td class="py-2 pr-3">${formatDateTime(row.updated_at || row.created_at)}</td>
+                              <td class="py-2 pr-3">${attachments.length}개</td>
+                              <td class="py-2 pr-3">
+                                <div class="flex flex-wrap items-center gap-1">
+                                  <button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-doc-open" data-doc-id="${row.doc_id}">보기</button>
+                                  ${
+                                    canManageRecords
+                                      ? `<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-doc-edit" data-doc-id="${row.doc_id}">수정</button>
+                                         <button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-doc-delete" data-doc-id="${row.doc_id}">삭제</button>`
+                                      : ''
+                                  }
+                                </div>
+                              </td>
+                            </tr>
+                          `;
+                        })
+                        .join('')
+                    : '<tr><td colspan="4" class="py-4 text-center nu-text-muted">선택한 기록 유형의 문서가 없습니다.</td></tr>'
+                }
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article id="nu-note-section" class="rounded-2xl border nu-border nu-surface p-4 ${saved.activeTab === 'notes' ? '' : 'hidden'}">
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h2 class="font-semibold">코칭노트 (${noteRows.length})</h2>
             <div class="flex items-center gap-2">
               <button id="nu-note-toggle-all" class="rounded border nu-border px-2 py-1 text-xs nu-surface">${saved.expandAllNotes ? '전체 접기' : '전체 펼치기'}</button>
+              ${canEditNotes ? '<button id="nu-note-ai-summary" class="rounded border nu-border px-2 py-1 text-xs nu-surface">AI 요약</button>' : ''}
+              ${canEditNotes ? '<button id="nu-note-ai-qa" class="rounded border nu-border px-2 py-1 text-xs nu-surface">AI Q&A</button>' : ''}
               ${canEditNotes ? '<button id="nu-note-create" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">새 코칭노트</button>' : '<span class="text-xs nu-text-muted">코칭노트 작성 권한 없음</span>'}
             </div>
           </div>
@@ -5587,7 +6206,7 @@ async function renderProjectDetail(view, projectId) {
                             </div>
                             <div class="flex items-center gap-1">
                               <button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-toggle" data-note-id="${note.note_id}">${expanded ? '접기' : '펼치기'}</button>
-                              ${canEditNotes ? `<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-edit" data-note-id="${note.note_id}">편집</button><button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-note-delete" data-note-id="${note.note_id}">삭제</button>` : ''}
+                              ${canEditNotes ? `<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-edit" data-note-id="${note.note_id}">편집</button><button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-ai-enhance" data-note-id="${note.note_id}">AI 보완</button><button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-note-delete" data-note-id="${note.note_id}">삭제</button>` : ''}
                             </div>
                           </div>
                           ${
@@ -5632,7 +6251,7 @@ async function renderProjectDetail(view, projectId) {
           </div>
         </article>
       </div>
-      <aside class="space-y-4">
+      <aside class="space-y-4 ${showSidePanel ? '' : 'hidden'}">
         <article class="rounded-2xl border nu-border nu-surface p-4">
           <div class="flex items-center justify-between gap-2">
             <h2 class="font-semibold">최근 코칭 노트</h2>
@@ -5655,7 +6274,53 @@ async function renderProjectDetail(view, projectId) {
     </section>
   `;
 
+  const switchTab = (tab) => {
+    renderProjectDetail._uiState[projectId] = { ...saved, activeTab: tab };
+    renderProjectDetail(view, projectId);
+  };
+
   document.getElementById('nu-back-projects')?.addEventListener('click', () => navigate('/projects'));
+  view.querySelectorAll('[data-role="nu-project-tab"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = String(btn.getAttribute('data-tab') || 'info');
+      switchTab(tab);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-doc-type-item"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const nextType = String(btn.getAttribute('data-doc-type') || '').trim();
+      renderProjectDetail._uiState[projectId] = { ...saved, activeTab: 'records', selectedDocType: nextType || saved.selectedDocType };
+      renderProjectDetail(view, projectId);
+    });
+  });
+  document.getElementById('nu-doc-create')?.addEventListener('click', () => openDocumentEditor());
+  view.querySelectorAll('[data-role="nu-doc-open"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const docId = Number.parseInt(btn.getAttribute('data-doc-id') || '', 10);
+      const doc = documentRows.find((row) => Number(row.doc_id) === docId);
+      if (doc) openDocumentViewer(doc);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-doc-edit"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const docId = Number.parseInt(btn.getAttribute('data-doc-id') || '', 10);
+      const doc = documentRows.find((row) => Number(row.doc_id) === docId);
+      if (doc) openDocumentEditor(doc);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-doc-delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const docId = Number.parseInt(btn.getAttribute('data-doc-id') || '', 10);
+      if (Number.isNaN(docId) || !confirm('과제 기록을 삭제하시겠습니까?')) return;
+      try {
+        await api(`/api/documents/${docId}`, { method: 'DELETE' });
+        renderProjectDetail._uiState[projectId] = { ...saved, activeTab: 'records' };
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        alert(error.message || '과제 기록 삭제 실패');
+      }
+    });
+  });
   document.getElementById('nu-member-toggle')?.addEventListener('click', () => {
     renderProjectDetail._uiState[projectId] = { ...saved, memberOpen: !saved.memberOpen };
     renderProjectDetail(view, projectId);
@@ -5681,12 +6346,23 @@ async function renderProjectDetail(view, projectId) {
   });
 
   const goToNotes = () => {
+    if (saved.activeTab !== 'notes') {
+      renderProjectDetail._uiState[projectId] = { ...saved, activeTab: 'notes' };
+      renderProjectDetail(view, projectId);
+      return;
+    }
     const target = document.getElementById('nu-note-section');
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   document.getElementById('nu-latest-note-go')?.addEventListener('click', goToNotes);
   document.getElementById('nu-latest-note-card')?.addEventListener('click', goToNotes);
   document.getElementById('nu-note-create')?.addEventListener('click', () => openNoteEditor());
+  document.getElementById('nu-note-ai-summary')?.addEventListener('click', async () => {
+    await runProjectAiGeneration('summary');
+  });
+  document.getElementById('nu-note-ai-qa')?.addEventListener('click', async () => {
+    await runProjectAiGeneration('qa');
+  });
   document.getElementById('nu-note-toggle-all')?.addEventListener('click', () => {
     const nextExpandAll = !saved.expandAllNotes;
     renderProjectDetail._uiState[projectId] = { ...saved, expandAllNotes: nextExpandAll, expandedNoteIds: nextExpandAll ? noteRows.map((row) => Number(row.note_id)) : (latestNote ? [Number(latestNote.note_id)] : []) };
@@ -5708,6 +6384,13 @@ async function renderProjectDetail(view, projectId) {
       const noteId = Number.parseInt(btn.getAttribute('data-note-id') || '', 10);
       const note = noteRows.find((row) => Number(row.note_id) === noteId);
       if (note) openNoteEditor(note);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-note-ai-enhance"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const noteId = Number.parseInt(btn.getAttribute('data-note-id') || '', 10);
+      const note = noteRows.find((row) => Number(row.note_id) === noteId);
+      if (note) openNoteEditor(note, { autoEnhance: true });
     });
   });
   view.querySelectorAll('[data-role="nu-note-delete"]').forEach((btn) => {
@@ -6169,8 +6852,8 @@ async function renderSessionDetail(view, sessionId) {
                             (row) => `
                               <tr class="border-b nu-border">
                                 <td class="py-2 pr-3">${escapeHtml(userLabel(row.user_id))}</td>
-                                <td class="py-2 pr-3">${formatDateTime(row.check_in_time)}</td>
-                                <td class="py-2 pr-3">${row.check_out_time ? formatDateTime(row.check_out_time) : '-'}</td>
+                                <td class="py-2 pr-3">${formatUtcDateTime(row.check_in_time)}</td>
+                                <td class="py-2 pr-3">${row.check_out_time ? formatUtcDateTime(row.check_out_time) : '-'}</td>
                                 <td class="py-2 pr-3 text-xs">${escapeHtml(row.check_in_ip || '-')} ${row.check_out_ip ? `→ ${escapeHtml(row.check_out_ip)}` : ''}</td>
                               </tr>
                             `
@@ -6199,8 +6882,8 @@ async function renderSessionDetail(view, sessionId) {
               : myLog
               ? `
                 <div class="space-y-1 text-sm">
-                  <p>입실: ${formatDateTime(myLog.check_in_time)}</p>
-                  <p>퇴실: ${myLog.check_out_time ? formatDateTime(myLog.check_out_time) : '-'}</p>
+                  <p>입실: ${formatUtcDateTime(myLog.check_in_time)}</p>
+                  <p>퇴실: ${myLog.check_out_time ? formatUtcDateTime(myLog.check_out_time) : '-'}</p>
                 </div>
                 ${
                   !myLog.check_out_time && status?.can_checkout
@@ -6220,7 +6903,7 @@ async function renderSessionDetail(view, sessionId) {
             canCoachTime
               ? myActiveCoaching
                 ? `
-                  <p class="text-sm">시작: ${formatDateTime(myActiveCoaching.started_at)}</p>
+                  <p class="text-sm">시작: ${formatUtcDateTime(myActiveCoaching.started_at)}</p>
                   <button id="nu-session-coaching-end" class="mt-2 rounded-lg border nu-border px-3 py-2 text-sm nu-surface">코칭 종료</button>
                 `
                 : '<button id="nu-session-coaching-start" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">코칭 시작</button>'
@@ -6240,7 +6923,7 @@ async function renderSessionDetail(view, sessionId) {
                         <div class="rounded-lg border nu-border p-2 text-sm">
                           <div class="font-medium">${escapeHtml(userLabel(row.coach_user_id))}</div>
                           <div class="text-xs nu-text-muted mt-1">
-                            ${formatDateTime(row.started_at)} ~ ${row.ended_at ? formatDateTime(row.ended_at) : '진행 중'}
+                            ${formatUtcDateTime(row.started_at)} ~ ${row.ended_at ? formatUtcDateTime(row.ended_at) : '진행 중'}
                             ${
                               row.duration_minutes !== null && row.duration_minutes !== undefined
                                 ? ` · ${Number(row.duration_minutes)}분`

@@ -83,6 +83,8 @@ Pages.admin = {
               <option value="emerald">Emerald</option>
               <option value="amber">Amber</option>
               <option value="slate">Slate</option>
+              <option value="glass">Glassmorphism</option>
+              <option value="retro">Retro</option>
             </select>
             <button id="open-new-ui-btn" class="btn btn-primary">새 UI 열기</button>
           </div>
@@ -108,7 +110,7 @@ Pages.admin = {
     openNewUiBtn?.addEventListener('click', () => {
       const theme = newUiThemeSelect?.value || 'ocean';
       localStorage.setItem('new_ui_theme', theme);
-      window.location.href = `/new-ui/?theme=${encodeURIComponent(theme)}`;
+      window.location.href = '/new-ui/';
     });
 
     const renderTab = async (tab) => {

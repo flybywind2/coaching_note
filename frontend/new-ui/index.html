@@ -70,6 +70,26 @@
       --primary: #334155;
       --primary-soft: #e2e8f0;
     }
+    :root[data-theme="glass"] {
+      --bg: linear-gradient(135deg, #dbeafe 0%, #fce7f3 45%, #fef3c7 100%);
+      --surface: rgba(255, 255, 255, 0.56);
+      --surface-soft: rgba(255, 255, 255, 0.36);
+      --text: #0f172a;
+      --muted: #334155;
+      --line: rgba(148, 163, 184, 0.45);
+      --primary: #0f766e;
+      --primary-soft: rgba(15, 118, 110, 0.16);
+    }
+    :root[data-theme="retro"] {
+      --bg: #f9f4d5;
+      --surface: #fff8e7;
+      --surface-soft: #ffe8a3;
+      --text: #2d1b00;
+      --muted: #6f4e00;
+      --line: #7a5b22;
+      --primary: #c2410c;
+      --primary-soft: #ffd29e;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -82,10 +102,138 @@
     .nu-primary-bg:hover { filter: brightness(0.95); }
     .nu-primary-soft { background: var(--primary-soft); color: var(--primary); }
     .nu-border { border-color: var(--line); }
+    .rich-content img { max-width: 100%; height: auto; border-radius: 8px; }
+    .rich-content table { border-collapse: collapse; max-width: 100%; }
+    .rich-content td, .rich-content th { border: 1px solid #cbd5e1; padding: 6px 8px; }
+    .rte {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .rte-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-soft);
+    }
+    .rte-group { display: inline-flex; align-items: center; gap: 4px; }
+    .rte-toolbar button,
+    .rte-toolbar select,
+    .rte-toolbar input[type="color"] {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      font-size: 12px;
+      padding: 4px 7px;
+    }
+    .rte-editor {
+      min-height: 140px;
+      padding: 10px;
+      outline: none;
+      line-height: 1.6;
+    }
+    .rte-source {
+      min-height: 140px;
+      width: 100%;
+      border: none;
+      outline: none;
+      padding: 10px;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+    }
+    .rte-table-picker {
+      position: absolute;
+      z-index: 30;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+    }
+    :root[data-theme="glass"] .nu-surface {
+      background: var(--surface);
+      border-color: var(--line);
+      box-shadow: 0 10px 36px rgba(15, 23, 42, 0.08);
+      backdrop-filter: blur(14px) saturate(145%);
+      -webkit-backdrop-filter: blur(14px) saturate(145%);
+    }
+    :root[data-theme="glass"] .nu-soft {
+      background: var(--surface-soft);
+    }
+    :root[data-theme="glass"] .nu-primary-bg {
+      background: linear-gradient(135deg, #0f766e 0%, #0ea5e9 100%);
+      color: #f8fafc;
+    }
+    :root[data-theme="glass"] header {
+      background: rgba(248, 250, 252, 0.5) !important;
+      backdrop-filter: blur(16px) saturate(150%);
+      -webkit-backdrop-filter: blur(16px) saturate(150%);
+      border-bottom-color: rgba(148, 163, 184, 0.35);
+    }
+    :root[data-theme="glass"] .rte {
+      background: rgba(255, 255, 255, 0.48);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    :root[data-theme="glass"] .rte-toolbar {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    :root[data-theme="glass"] .rte-toolbar button,
+    :root[data-theme="glass"] .rte-toolbar select,
+    :root[data-theme="glass"] .rte-toolbar input[type="color"] {
+      background: rgba(255, 255, 255, 0.78);
+    }
+    :root[data-theme="retro"] body {
+      background-image:
+        radial-gradient(circle at 1px 1px, rgba(122, 91, 34, 0.16) 1px, transparent 0);
+      background-size: 16px 16px;
+    }
+    :root[data-theme="retro"] .nu-surface {
+      border-width: 2px;
+      border-color: var(--line);
+      box-shadow: 3px 3px 0 rgba(45, 27, 0, 0.45);
+    }
+    :root[data-theme="retro"] .nu-primary-bg {
+      background: #c2410c;
+      color: #fffdf7;
+      border: 2px solid #7c2d12;
+      box-shadow: 2px 2px 0 rgba(45, 27, 0, 0.45);
+    }
+    :root[data-theme="retro"] .nu-primary-bg:hover {
+      filter: none;
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0 rgba(45, 27, 0, 0.45);
+    }
+    :root[data-theme="retro"] .nu-soft {
+      background: #ffe8a3;
+    }
+    :root[data-theme="retro"] .nu-primary-soft {
+      background: #ffd29e;
+      color: #9a3412;
+      border: 1px solid #c2410c;
+    }
+    :root[data-theme="retro"] header {
+      background: #fff3cc !important;
+      border-bottom-width: 2px;
+      border-bottom-color: #7a5b22;
+      box-shadow: 0 2px 0 rgba(45, 27, 0, 0.2);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    :root[data-theme="retro"] .rte-toolbar button,
+    :root[data-theme="retro"] .rte-toolbar select,
+    :root[data-theme="retro"] .rte-toolbar input[type="color"] {
+      background: #fff5d6;
+      border-width: 2px;
+    }
   </style>
 </head>
 <body class="font-sans">
   <div id="app"></div>
-  <script type="module" src="./app.js"></script>
+  <script src="/js/utils/formatter.js"></script>
+  <script src="/js/components/richEditor.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
