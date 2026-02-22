@@ -1,6 +1,6 @@
 """Board 도메인의 SQLAlchemy 모델 정의입니다."""
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -35,6 +35,7 @@ class BoardPost(Base):
     board = relationship("Board", back_populates="posts")
     author = relationship("User", back_populates="board_posts")
     comments = relationship("PostComment", back_populates="post", cascade="all, delete-orphan")
+    views = relationship("BoardPostView", back_populates="post", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("idx_post_board", "board_id", "created_at"),
@@ -55,6 +56,24 @@ class PostComment(Base):
 
     __table_args__ = (
         Index("idx_post_comment", "post_id"),
+    )
+
+
+class BoardPostView(Base):
+    __tablename__ = "board_post_view"
+
+    view_id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("board_post.post_id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    viewed_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    post = relationship("BoardPost", back_populates="views")
+    user = relationship("User", back_populates="board_post_views")
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_board_post_view_post_user"),
+        Index("idx_board_post_view_post", "post_id"),
+        Index("idx_board_post_view_user", "user_id"),
     )
 
 

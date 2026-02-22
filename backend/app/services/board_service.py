@@ -2,8 +2,9 @@
 
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func, or_
+from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
-from app.models.board import Board, BoardPost, PostComment
+from app.models.board import Board, BoardPost, PostComment, BoardPostView
 from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate, PostCommentUpdate
 from app.services import mention_service, version_service
@@ -290,6 +291,10 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     payload.pop("is_notice", None)
     if next_board_id is not None and int(next_board_id) != int(post.board_id):
         next_board = get_board(db, int(next_board_id))
+        if post.board.board_type == "notice":
+            raise HTTPException(status_code=400, detail="공지사항 게시글은 분류를 변경할 수 없습니다.")
+        if next_board.board_type == "notice":
+            raise HTTPException(status_code=400, detail="수정 화면에서 공지사항으로 분류를 변경할 수 없습니다.")
         _ensure_notice_board_admin(next_board, current_user)
         post.board_id = next_board.board_id
     for k, v in payload.items():
@@ -326,7 +331,25 @@ def delete_post(db: Session, post_id: int, current_user: User):
     db.commit()
 
 
-def increment_view(db: Session, post_id: int):
+def increment_view(db: Session, post_id: int, user_id: int):
+    if not db.query(BoardPost.post_id).filter(BoardPost.post_id == post_id).first():
+        return
+    exists = (
+        db.query(BoardPostView.view_id)
+        .filter(
+            BoardPostView.post_id == post_id,
+            BoardPostView.user_id == user_id,
+        )
+        .first()
+    )
+    if exists:
+        return
+    db.add(BoardPostView(post_id=post_id, user_id=user_id))
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        return
     db.query(BoardPost).filter(BoardPost.post_id == post_id).update(
         {"view_count": BoardPost.view_count + 1}
     )

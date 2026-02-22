@@ -27,6 +27,7 @@ class User(Base):
     project_tasks_assigned = relationship("ProjectTask", foreign_keys="ProjectTask.assigned_to", back_populates="assignee")
     session_attendances = relationship("SessionAttendee", back_populates="user")
     board_posts = relationship("BoardPost", back_populates="author")
+    board_post_views = relationship("BoardPostView", back_populates="user")
     post_comments = relationship("PostComment", back_populates="author")
     notifications = relationship("Notification", back_populates="user")
     notification_preference = relationship("NotificationPreference", back_populates="user", uselist=False)

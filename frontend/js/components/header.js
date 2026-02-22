@@ -73,19 +73,11 @@ const Header = {
       const log = status.attendance_log;
       const canCancelCheckout = !!(status.ip_allowed && log && log.check_out_time);
       if (!status.ip_allowed && !log) {
-        box.innerHTML = '<span class="attendance-hint">허용 IP에서 입실 가능</span>';
+        box.innerHTML = '<span class="attendance-hint">허용 IP에서 로그인 시 자동 입실됩니다.</span>';
         return;
       }
       if (!log) {
-        box.innerHTML = `<button id="attendance-checkin-btn" class="btn btn-xs btn-primary">입실</button>`;
-        document.getElementById('attendance-checkin-btn')?.addEventListener('click', async () => {
-          try {
-            await API.checkInToday();
-            await this._renderAttendanceQuick(user);
-          } catch (err) {
-            alert(err.message || '입실 처리 실패');
-          }
-        });
+        box.innerHTML = '<span class="attendance-hint">로그인 시 자동 입실 기록됩니다.</span>';
         return;
       }
       if (!log.check_out_time) {

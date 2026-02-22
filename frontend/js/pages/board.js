@@ -126,22 +126,30 @@ Pages.board = {
 
   _openPostModal({ boards, user, post = null, initialBoardId = null, onSaved }) {
     const isEdit = !!post;
-    const selectableBoards = user.role === 'admin'
+    let selectableBoards = user.role === 'admin'
       ? boards
       : boards.filter((b) => b.board_type !== 'notice');
+    if (isEdit && post?.board_type === 'notice') {
+      selectableBoards = boards.filter((b) => b.board_id === post.board_id);
+    } else if (isEdit) {
+      selectableBoards = selectableBoards.filter((b) => b.board_type !== 'notice');
+    }
     if (!selectableBoards.length) {
       alert('작성 가능한 게시판이 없습니다.');
       return;
     }
+    const isBoardLocked = isEdit && post?.board_type === 'notice';
     const fallbackBoardId = selectableBoards[0]?.board_id || boards[0]?.board_id;
     const defaultBoardId = post?.board_id || initialBoardId || fallbackBoardId;
     Modal.open(`<h2>${isEdit ? '게시글 수정' : '글쓰기'}</h2>
       <form id="board-post-form">
         <div class="form-group">
           <label>분류 *</label>
-          <select name="board_id" required>
+          <select name="board_id" required ${isBoardLocked ? 'disabled' : ''}>
             ${selectableBoards.map((b) => `<option value="${b.board_id}"${b.board_id === defaultBoardId ? ' selected' : ''}>${Fmt.escape(b.board_name)}</option>`).join('')}
           </select>
+          ${isBoardLocked ? '<p class="hint">공지사항 게시글은 분류를 변경할 수 없습니다.</p>' : ''}
+          ${isBoardLocked ? `<input type="hidden" name="board_id" value="${defaultBoardId}" />` : ''}
         </div>
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
         <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>

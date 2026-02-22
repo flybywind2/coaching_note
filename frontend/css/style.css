@@ -146,16 +146,25 @@ body::after {
   gap: 8px;
   margin-left: auto;
   white-space: normal;
-  flex: 1 1 320px;
-  min-width: 240px;
+  flex: 0 1 auto;
+  min-width: 260px;
+  flex-wrap: wrap;
 }
-#user-info { font-size: 13px; opacity: 0.95; }
+#user-info {
+  font-size: 13px;
+  opacity: 0.95;
+  white-space: nowrap;
+}
+#logout-btn {
+  white-space: nowrap;
+}
 .attendance-quick {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  max-width: 100%;
+  max-width: 380px;
+  min-width: 0;
   justify-content: flex-end;
 }
 .attendance-time {
@@ -170,6 +179,7 @@ body::after {
 .attendance-hint {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
 }
 
 /* Main */
@@ -1085,7 +1095,7 @@ body::after {
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
 }
 .coaching-plan-table {
   width: max-content;
@@ -1099,6 +1109,20 @@ body::after {
   height: 58px;
   padding: 6px 8px;
   vertical-align: middle;
+}
+.coaching-plan-table thead th .cp-week-label {
+  font-size: 10px;
+  color: #3f5b90;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.coaching-plan-table thead th .cp-day-label {
+  font-size: 11px;
+  color: #1f3a71;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 2px;
+  white-space: nowrap;
 }
 .cp-coach-col {
   min-width: 190px !important;

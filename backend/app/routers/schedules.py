@@ -39,6 +39,15 @@ def _validate_schedule_window(db: Session, batch_id: int, start_dt, end_dt):
     return target_day
 
 
+def _validate_schedule_time_step(start_dt, end_dt, is_all_day: bool):
+    if is_all_day:
+        return
+    if start_dt and int(start_dt.minute) % 10 != 0:
+        raise HTTPException(status_code=400, detail="시작 시간은 10분 단위로 입력하세요.")
+    if end_dt and int(end_dt.minute) % 10 != 0:
+        raise HTTPException(status_code=400, detail="종료 시간은 10분 단위로 입력하세요.")
+
+
 def _assert_global_one_per_day(
     db: Session,
     batch_id: int,
@@ -116,6 +125,7 @@ def create_schedule(
         payload.get("visibility_scope"),
     )
     target_day = _validate_schedule_window(db, payload["batch_id"], payload["start_datetime"], payload.get("end_datetime"))
+    _validate_schedule_time_step(payload["start_datetime"], payload.get("end_datetime"), bool(payload.get("is_all_day")))
     _assert_global_one_per_day(db, payload["batch_id"], target_day, payload["visibility_scope"])
 
     schedule = ProgramSchedule(**payload, created_by=current_user.user_id)
@@ -146,8 +156,10 @@ def update_schedule(
     payload = data.model_dump(exclude_none=True)
     next_start = payload.get("start_datetime", s.start_datetime)
     next_end = payload.get("end_datetime", s.end_datetime)
+    next_is_all_day = bool(payload.get("is_all_day", s.is_all_day))
     next_scope = _normalize_visibility_scope(payload.get("visibility_scope"), payload.get("schedule_type", s.schedule_type))
     target_day = _validate_schedule_window(db, s.batch_id, next_start, next_end)
+    _validate_schedule_time_step(next_start, next_end, next_is_all_day)
     _assert_global_one_per_day(db, s.batch_id, target_day, next_scope, exclude_schedule_ids=[s.schedule_id])
     if "color" in payload:
         payload["color"] = _normalize_color(
@@ -226,8 +238,10 @@ def update_schedule_series(
 
         next_start = row_payload.get("start_datetime", row.start_datetime)
         next_end = row_payload.get("end_datetime", row.end_datetime)
+        next_is_all_day = bool(row_payload.get("is_all_day", row.is_all_day))
         row_scope = normalized_scope or _normalize_visibility_scope(row.visibility_scope, row.schedule_type)
         target_day = _validate_schedule_window(db, row.batch_id, next_start, next_end)
+        _validate_schedule_time_step(next_start, next_end, next_is_all_day)
         _assert_global_one_per_day(db, row.batch_id, target_day, row_scope, exclude_schedule_ids=exclude_ids)
         _apply_schedule_update(row, row_payload)
         updated += 1

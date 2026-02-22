@@ -480,11 +480,11 @@ Pages.calendar = {
           </div>
           <div>
             <label>시작 시간 *</label>
-            <input type="time" name="start_time" value="10:00" required />
+            <input type="time" name="start_time" step="600" value="10:00" required />
           </div>
           <div>
             <label>종료 시간 *</label>
-            <input type="time" name="end_time" value="11:00" required />
+            <input type="time" name="end_time" step="600" value="11:00" required />
           </div>
         </div>
         <div class="form-group">
@@ -728,11 +728,11 @@ Pages.calendar = {
           </div>
           <div>
             <label>시작 시간 *</label>
-            <input type="time" name="start_time" value="${Fmt.escape(initialStart)}" required />
+            <input type="time" name="start_time" step="600" value="${Fmt.escape(initialStart)}" required />
           </div>
           <div>
             <label>종료 시간 *</label>
-            <input type="time" name="end_time" value="${Fmt.escape(initialEnd)}" required />
+            <input type="time" name="end_time" step="600" value="${Fmt.escape(initialEnd)}" required />
           </div>
         </div>
         ${isSchedule ? `<div class="form-group"><label><input type="checkbox" name="is_all_day" ${event.is_all_day ? 'checked' : ''} /> 종일 일정</label></div>` : ''}

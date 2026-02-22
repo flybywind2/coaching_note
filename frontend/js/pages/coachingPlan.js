@@ -50,6 +50,7 @@ Pages.coachingPlan = {
           batch_id: selectedBatchId,
           start: batch.start_date,
           end: batch.end_date,
+          coaching_start_date: batch.coaching_start_date || batch.start_date,
         };
         await this._renderGrid({
           gridEl,
@@ -100,6 +101,7 @@ Pages.coachingPlan = {
     }
 
     const todayKey = this._todayKey();
+    const weekBaseDate = payload.coaching_start_date || payload.start;
     gridEl.innerHTML = `
       <div class="cp-table-wrap">
         <table class="data-table coaching-plan-table">
@@ -107,7 +109,7 @@ Pages.coachingPlan = {
             <tr>
               <th class="cp-coach-col">코치</th>
               <th class="cp-kind-col">구분</th>
-              ${visibleDateKeys.map((dateKey) => `<th class="${dateKey === todayKey ? 'cp-today-col' : ''}" data-date="${Fmt.escape(dateKey)}">${this._dayLabel(dateKey)}</th>`).join('')}
+              ${visibleDateKeys.map((dateKey) => `<th class="${dateKey === todayKey ? 'cp-today-col' : ''}" data-date="${Fmt.escape(dateKey)}">${this._dateHeaderHtml(dateKey, weekBaseDate)}</th>`).join('')}
             </tr>
           </thead>
           <tbody>
@@ -253,6 +255,20 @@ Pages.coachingPlan = {
     const d = new Date(`${dateText}T00:00:00`);
     const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
     return `${d.getMonth() + 1}/${d.getDate()}(${weekdays[d.getDay()]})`;
+  },
+
+  _weekNumberFromBaseline(targetDateText, baselineDateText) {
+    if (!targetDateText || !baselineDateText) return 1;
+    const target = new Date(`${targetDateText}T00:00:00`);
+    const baseline = new Date(`${baselineDateText}T00:00:00`);
+    if (Number.isNaN(target.getTime()) || Number.isNaN(baseline.getTime())) return 1;
+    const deltaDays = Math.floor((target - baseline) / 86400000);
+    return deltaDays >= 0 ? Math.floor(deltaDays / 7) + 1 : 1;
+  },
+
+  _dateHeaderHtml(dateText, baselineDateText) {
+    const weekNo = this._weekNumberFromBaseline(dateText, baselineDateText);
+    return `<div class="cp-week-label">${weekNo}주차</div><div class="cp-day-label">${this._dayLabel(dateText)}</div>`;
   },
 
   _formatMinutes(minutes) {

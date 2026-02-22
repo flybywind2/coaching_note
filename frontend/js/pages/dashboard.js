@@ -29,6 +29,7 @@ Pages.dashboard = {
       const expandedProjects = State.get('dashExpandedProjects') || {};
       const data = await API.getDashboard(batchId);
       const coachingDates = this._getCoachingDates(data);
+      const coachingStartDate = data?.batch?.coaching_start_date || data?.batch?.start_date || null;
       const projects = this._getFilteredProjects(data, projectType);
 
       el.innerHTML = `
@@ -68,6 +69,7 @@ Pages.dashboard = {
               attendanceMemberRows: data.attendance_member_rows || [],
               coachPerformanceRows: data.coach_performance || [],
               expandedProjects,
+              coachingStartDate,
             })}
           </section>
         </div>
@@ -137,6 +139,7 @@ Pages.dashboard = {
     attendanceMemberRows,
     coachPerformanceRows,
     expandedProjects,
+    coachingStartDate,
   }) {
     if (mode === 'coach-performance') {
       if (!coachPerformanceRows.length) {
@@ -225,7 +228,7 @@ Pages.dashboard = {
                 <th class="sticky-col sticky-col-project">과제</th>
                 <th class="sticky-col sticky-col-people">총인원</th>
                 <th class="sticky-col sticky-col-total">합계</th>
-                ${dates.map((d) => `<th data-date="${Fmt.escape(d)}">${this._dateLabel(d)}</th>`).join('')}
+                ${dates.map((d) => `<th data-date="${Fmt.escape(d)}">${this._dateHeader(d, coachingStartDate)}</th>`).join('')}
               </tr>
             </thead>
             <tbody>
@@ -249,7 +252,7 @@ Pages.dashboard = {
             <tr>
               <th class="sticky-col sticky-col-project">과제</th>
               <th class="sticky-col sticky-col-total">합계</th>
-              ${dates.map((d) => `<th data-date="${Fmt.escape(d)}">${this._dateLabel(d)}</th>`).join('')}
+              ${dates.map((d) => `<th data-date="${Fmt.escape(d)}">${this._dateHeader(d, coachingStartDate)}</th>`).join('')}
             </tr>
           </thead>
           <tbody>
@@ -339,6 +342,20 @@ Pages.dashboard = {
     if (Number.isNaN(parsed.getTime())) return isoDate;
     const week = ['일', '월', '화', '수', '목', '금', '토'][parsed.getDay()];
     return `${parsed.getMonth() + 1}/${parsed.getDate()}(${week})`;
+  },
+
+  _weekNumberFromBaseline(targetIsoDate, baselineIsoDate) {
+    if (!targetIsoDate || !baselineIsoDate) return 1;
+    const target = new Date(`${targetIsoDate}T00:00:00`);
+    const baseline = new Date(`${baselineIsoDate}T00:00:00`);
+    if (Number.isNaN(target.getTime()) || Number.isNaN(baseline.getTime())) return 1;
+    const deltaDays = Math.floor((target - baseline) / 86400000);
+    return deltaDays >= 0 ? Math.floor(deltaDays / 7) + 1 : 1;
+  },
+
+  _dateHeader(isoDate, baselineIsoDate) {
+    const weekNo = this._weekNumberFromBaseline(isoDate, baselineIsoDate);
+    return `<div class="dash-week-label">${weekNo}주차</div><div class="dash-day-label">${this._dateLabel(isoDate)}</div>`;
   },
 
   _todayIso() {

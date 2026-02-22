@@ -1135,8 +1135,8 @@ Pages.projectDetail = {
         Modal.open(`<h2>세션 추가</h2>
           <form id="add-session-form">
             <div class="form-group"><label>날짜 *</label><input type="date" name="session_date" required /></div>
-            <div class="form-group"><label>시작 시간 *</label><input name="start_time" required placeholder="09:00" /></div>
-            <div class="form-group"><label>종료 시간 *</label><input name="end_time" required placeholder="11:00" /></div>
+            <div class="form-group"><label>시작 시간 *</label><input type="time" step="600" name="start_time" required value="09:00" /></div>
+            <div class="form-group"><label>종료 시간 *</label><input type="time" step="600" name="end_time" required value="11:00" /></div>
             <div class="form-group"><label>장소</label><input name="location" placeholder="회의실 A" /></div>
             <button type="submit" class="btn btn-primary">추가</button>
           </form>`);
