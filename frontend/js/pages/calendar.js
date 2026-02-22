@@ -10,9 +10,13 @@ Pages.calendar = {
     { value: '#4CAF50', label: '그린' },
     { value: '#00ACC1', label: '민트' },
     { value: '#2196F3', label: '블루' },
-    { value: '#FF9800', label: '오렌지' },
-    { value: '#E57373', label: '레드' },
+    { value: '#3F51B5', label: '인디고' },
     { value: '#8E24AA', label: '퍼플' },
+    { value: '#E57373', label: '레드' },
+    { value: '#FF7043', label: '코랄' },
+    { value: '#FF9800', label: '오렌지' },
+    { value: '#FDD835', label: '옐로우' },
+    { value: '#607D8B', label: '슬레이트' },
   ],
 
   async render(el) {
@@ -28,7 +32,7 @@ Pages.calendar = {
         role,
         isAdmin: role === 'admin',
         isParticipant: role === 'participant',
-        canManageProjectEvents: role === 'admin' || role === 'participant',
+        canManageProjectEvents: ['admin', 'participant', 'coach', 'internal_coach'].includes(role),
       };
 
       const batches = await API.getBatches();
@@ -380,11 +384,39 @@ Pages.calendar = {
     return found ? found.value : this._defaultScheduleColor(scope);
   },
 
-  _buildColorOptionHtml(selectedColor, scope = 'global') {
+  _buildColorPaletteHtml(selectedColor, scope = 'global', inputName = 'color') {
     const normalized = this._normalizeScheduleColor(selectedColor, scope);
-    return this.scheduleColorOptions
-      .map((opt) => `<option value="${opt.value}"${opt.value === normalized ? ' selected' : ''}>${opt.label}</option>`)
-      .join('');
+    return `
+      <input type="hidden" name="${Fmt.escape(inputName)}" value="${Fmt.escape(normalized)}" />
+      <div class="cal-color-palette" data-role="cal-color-palette" data-input-name="${Fmt.escape(inputName)}">
+        ${this.scheduleColorOptions.map((opt) => `
+          <button
+            type="button"
+            class="cal-color-swatch${opt.value === normalized ? ' active' : ''}"
+            data-color="${Fmt.escape(opt.value)}"
+            title="${Fmt.escape(opt.label)}"
+            style="background:${Fmt.escape(opt.value)}"
+            aria-label="${Fmt.escape(opt.label)}"
+          ></button>
+        `).join('')}
+      </div>
+    `;
+  },
+
+  _bindColorPalette(formEl, inputName = 'color') {
+    if (!formEl) return;
+    const hiddenInput = formEl.querySelector(`input[name="${inputName}"]`);
+    const swatches = formEl.querySelectorAll('.cal-color-swatch');
+    if (!hiddenInput || !swatches.length) return;
+    swatches.forEach((swatch) => {
+      swatch.addEventListener('click', () => {
+        const next = swatch.dataset.color || '';
+        hiddenInput.value = next;
+        swatches.forEach((node) => {
+          node.classList.toggle('active', node.dataset.color === next);
+        });
+      });
+    });
   },
 
   async _openEventCreateModal(batchId, options = {}) {
@@ -432,9 +464,7 @@ Pages.calendar = {
         </div>
         <div class="form-group" id="cal-color-row">
           <label>색상</label>
-          <select name="color">
-            ${this._buildColorOptionHtml(this._defaultScheduleColor(scopeValue), scopeValue)}
-          </select>
+          ${this._buildColorPaletteHtml(this._defaultScheduleColor(scopeValue), scopeValue)}
         </div>
         <div class="form-group">
           <label>설명</label>
@@ -489,6 +519,7 @@ Pages.calendar = {
     const allDayInput = document.querySelector('input[name="is_all_day"]');
     const startTimeInput = document.querySelector('input[name="start_time"]');
     const endTimeInput = document.querySelector('input[name="end_time"]');
+    const formEl = document.getElementById('calendar-event-form');
 
     if (!allowGlobalScope && presetProjectId == null && selectableProjects.length === 1) {
       projectSelect.value = String(selectableProjects[0].project_id);
@@ -501,10 +532,11 @@ Pages.calendar = {
       colorRow.style.display = isProject ? 'none' : '';
       repeatRow.style.display = isProject ? 'none' : '';
       if (allowGlobalScope) {
-        const colorSelect = document.querySelector('#calendar-event-form select[name="color"]');
-        if (colorSelect && !isProject) {
+        const colorRowEl = document.getElementById('cal-color-row');
+        if (colorRowEl && !isProject) {
           const nextScope = isCoaching ? 'coaching' : 'global';
-          colorSelect.innerHTML = this._buildColorOptionHtml(this._defaultScheduleColor(nextScope), nextScope);
+          colorRowEl.innerHTML = `<label>색상</label>${this._buildColorPaletteHtml(this._defaultScheduleColor(nextScope), nextScope)}`;
+          this._bindColorPalette(formEl, 'color');
         }
       }
       if (isProject && !projectSelect.value && selectableProjects.length === 1) {
@@ -524,6 +556,7 @@ Pages.calendar = {
 
     if (allowGlobalScope) scopeEl.addEventListener('change', syncScope);
     allDayInput.addEventListener('change', syncAllDay);
+    this._bindColorPalette(formEl, 'color');
     syncScope();
     syncAllDay();
 
@@ -609,9 +642,14 @@ Pages.calendar = {
   _openEventDetailModal(event, batchId, policy) {
     const coachPlans = Array.isArray(event.coach_plans) ? event.coach_plans : [];
     const coachActuals = Array.isArray(event.coach_actuals) ? event.coach_actuals : [];
+    const canManageProjectSession = (
+      policy.canManageProjectEvents
+      && event.scope === 'project'
+      && event.manage_type === 'session'
+    );
     const canEdit = (
       (policy.isAdmin && ['schedule', 'session'].includes(event.manage_type))
-      || (policy.isParticipant && event.scope === 'project' && ['session'].includes(event.manage_type))
+      || canManageProjectSession
     );
     const canDelete = canEdit;
 
@@ -681,7 +719,7 @@ Pages.calendar = {
       <form id="calendar-event-edit-form">
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(initialTitle)}" /></div>
         ${event.project_name ? `<div class="form-group"><label>과제</label><input disabled value="${Fmt.escape(event.project_name)}" /></div>` : ''}
-        ${isSchedule ? `<div class="form-group"><label>색상</label><select name="color">${this._buildColorOptionHtml(event.color, event.scope === 'coaching' ? 'coaching' : 'global')}</select></div>` : ''}
+        ${isSchedule ? `<div class="form-group"><label>색상</label>${this._buildColorPaletteHtml(event.color, event.scope === 'coaching' ? 'coaching' : 'global')}</div>` : ''}
         <div class="form-group"><label>설명</label><textarea name="description" rows="3">${Fmt.escape(initialDesc)}</textarea></div>
         <div class="form-group cal-time-row">
           <div>
@@ -716,6 +754,8 @@ Pages.calendar = {
     const allDayToggle = document.querySelector('#calendar-event-edit-form input[name="is_all_day"]');
     const startInput = document.querySelector('#calendar-event-edit-form input[name="start_time"]');
     const endInput = document.querySelector('#calendar-event-edit-form input[name="end_time"]');
+    const editFormEl = document.getElementById('calendar-event-edit-form');
+    if (isSchedule) this._bindColorPalette(editFormEl, 'color');
     const syncAllDay = () => {
       if (!allDayToggle || !startInput || !endInput) return;
       const checked = allDayToggle.checked;

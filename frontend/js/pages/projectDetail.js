@@ -70,7 +70,7 @@ Pages.projectDetail = {
         }
       };
       el.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => renderTab(btn.dataset.tab));
+        btn.addEventListener('click', () => Router.go(`/project/${projectId}?tab=${btn.dataset.tab}`));
       });
       renderTab(initialTab);
     } catch (e) {
@@ -101,6 +101,14 @@ Pages.projectDetail = {
     const coachingFeedbacks = (latestComments || []).filter((c) => resolveCommentType(c) === 'coaching_feedback' && hasCommentText(c));
     const participantMemos = (latestComments || []).filter((c) => resolveCommentType(c) === 'participant_memo' && hasCommentText(c));
 
+    const user = Auth.getUser();
+    const canManageMembers = isAdmin || (user?.role === 'participant' && !!p.is_my_project);
+    if (!this._memberPanelState) this._memberPanelState = {};
+    if (!Object.prototype.hasOwnProperty.call(this._memberPanelState, projectId)) {
+      this._memberPanelState[projectId] = false;
+    }
+    const memberExpanded = !!this._memberPanelState[projectId];
+
     const renderInfoItem = ({ label, value, field, full = false }) => `
       <div class="info-item${full ? ' full' : ''}">
         <div class="info-item-label-row">
@@ -110,13 +118,67 @@ Pages.projectDetail = {
         ${value}
       </div>
     `;
+    const renderMetaChip = ({ label, value, field }) => `
+      <div class="project-meta-chip">
+        <div class="project-meta-chip-head">
+          <label>${label}</label>
+          ${canWrite && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
+        </div>
+        <div class="project-meta-chip-body">${value}</div>
+      </div>
+    `;
 
     el.innerHTML = `<div class="project-info-layout project-info-layout-wide">
       <div class="project-info-main">
         <div class="project-title-hero">
           <h2>${Fmt.escape(p.project_name)}</h2>
         </div>
+        <div class="project-top-meta-strip">
+          ${renderMetaChip({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
+          ${renderMetaChip({ label: '과제 대표자', field: 'representative', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
+          ${renderMetaChip({ label: '과제 진행률', field: 'progress_rate', value: `<span>${progressValue}%</span>${Fmt.progress(progressValue)}` })}
+        </div>
+
         <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>팀원</h3>
+            <p>기본은 접힌 상태이며 필요 시 펼쳐서 확인합니다.</p>
+            <div class="inline-actions">
+              <button id="toggle-member-list-btn" class="btn btn-sm btn-secondary">${memberExpanded ? '팀원 접기' : '팀원 펼치기'}</button>
+              ${canManageMembers ? '<button id="add-member-btn" class="btn btn-sm btn-secondary">팀원 추가</button>' : ''}
+            </div>
+          </div>
+          <div id="project-member-list-wrap" style="display:${memberExpanded ? 'block' : 'none'};">
+            <div class="project-member-list">
+              ${members.length ? members.map((m) => `
+                <div class="project-member-item">
+                  <div class="project-member-main">
+                    <strong>${Fmt.escape(m.user_name || `사용자#${m.user_id}`)}</strong>
+                    <span>${Fmt.escape(m.user_emp_id || '-')}</span>
+                    <span class="tag">${Fmt.escape(m.role || 'member')}</span>
+                    ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
+                  </div>
+                  ${canManageMembers ? `<button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>` : ''}
+                </div>
+              `).join('') : '<p class="empty-state">등록된 팀원이 없습니다.</p>'}
+            </div>
+          </div>
+        </div>
+
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>AI 기술 정보</h3>
+          </div>
+          <div class="info-grid project-info-grid">
+            ${renderInfoItem({ label: 'AI기술 분류', field: 'ai_tech_category', value: `<span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span>` })}
+            ${renderInfoItem({ label: '사용된 AI기술', field: 'ai_tech_used', value: `<span>${Fmt.escape(p.ai_tech_used || '-')}</span>` })}
+          </div>
+        </div>
+
+        <div class="project-info-panel">
+          <div class="project-info-panel-head">
+            <h3>Github Repository</h3>
+          </div>
           <div class="info-grid project-info-grid">
             ${renderInfoItem({
               label: 'Github Repository',
@@ -128,38 +190,16 @@ Pages.projectDetail = {
                 </div>
               ` : '<span>-</span>',
             })}
-            ${renderInfoItem({ label: '과제 요약', field: 'project_summary', full: true, value: `<div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>` })}
-            ${renderInfoItem({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
-            ${renderInfoItem({ label: '과제 대표자', field: 'representative', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
-            ${renderInfoItem({ label: 'AI기술 분류', field: 'ai_tech_category', value: `<span>${Fmt.escape(p.ai_tech_category || p.category || '-')}</span>` })}
-            ${renderInfoItem({ label: '사용된 AI기술', field: 'ai_tech_used', value: `<span>${Fmt.escape(p.ai_tech_used || '-')}</span>` })}
-            ${renderInfoItem({
-              label: '전체 진행률',
-              field: 'progress_rate',
-              value: `<span>${progressValue}%</span>${Fmt.progress(progressValue)}`,
-            })}
           </div>
         </div>
 
         <div class="project-info-panel">
           <div class="project-info-panel-head">
-            <h3>팀원</h3>
-            <p>과제 팀원과 역할을 관리합니다.</p>
+            <h3>과제 요약</h3>
           </div>
-          <div class="project-member-list">
-            ${members.length ? members.map((m) => `
-              <div class="project-member-item">
-                <div class="project-member-main">
-                  <strong>${Fmt.escape(m.user_name || `사용자#${m.user_id}`)}</strong>
-                  <span>${Fmt.escape(m.user_emp_id || '-')}</span>
-                  <span class="tag">${Fmt.escape(m.role || 'member')}</span>
-                  ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
-                </div>
-                ${isAdmin ? `<button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>` : ''}
-              </div>
-            `).join('') : '<p class="empty-state">등록된 팀원이 없습니다.</p>'}
+          <div class="info-grid project-info-grid">
+            ${renderInfoItem({ label: '과제 요약', field: 'project_summary', full: true, value: `<div class="ai-summary">${Fmt.escape(p.project_summary || '-')}</div>` })}
           </div>
-          ${isAdmin ? `<div class="page-actions"><button id="add-member-btn" class="btn btn-secondary">팀원 추가</button></div>` : ''}
         </div>
       </div>
       <div class="project-info-side">
@@ -169,27 +209,37 @@ Pages.projectDetail = {
             <p>최신 코칭노트 전체 내용과 코칭 의견/메모를 확인합니다.</p>
           </div>
           ${latestNote ? `
-            <a href="${noteLink}" class="recent-note-card">
+            <a href="${noteLink}" class="recent-note-card recent-note-card-full" data-role="recent-note-link">
               <strong>${Fmt.date(latestNote.coaching_date)}${latestNote.week_number ? ` · ${latestNote.week_number}주차` : ''}</strong>
               ${hasText(latestNote.current_status) ? `<div class="note-field compact"><label>현재 상태</label><div class="field-val rich-content">${Fmt.rich(latestNote.current_status)}</div></div>` : ''}
               ${hasText(latestNote.main_issue) ? `<div class="note-field compact"><label>주요 문제</label><div class="field-val rich-content">${Fmt.rich(latestNote.main_issue)}</div></div>` : ''}
               ${hasText(latestNote.next_action) ? `<div class="note-field compact"><label>다음 작업</label><div class="field-val rich-content">${Fmt.rich(latestNote.next_action)}</div></div>` : ''}
               ${(!hasText(latestNote.current_status) && !hasText(latestNote.main_issue) && !hasText(latestNote.next_action)) ? '<p class="hint">입력된 본문이 없습니다.</p>' : ''}
+              <div class="recent-comment-wrap">
+                ${coachingFeedbacks.length ? `
+                  <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
+                  <div class="comment-list compact">
+                    ${coachingFeedbacks.map((c) => `
+                      <div class="comment-card">
+                        <div class="comment-content rich-content">${Fmt.rich(c.content)}</div>
+                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span></div>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+                ${participantMemos.length ? `
+                  <h4>참여자 메모 (${participantMemos.length})</h4>
+                  <div class="comment-list compact">
+                    ${participantMemos.map((c) => `
+                      <div class="comment-card">
+                        <div class="comment-content rich-content">${Fmt.rich(c.content)}</div>
+                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span></div>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
             </a>
-            <div class="recent-comment-wrap">
-              ${coachingFeedbacks.length ? `
-                <h4>코칭 의견 (${coachingFeedbacks.length})</h4>
-                <div class="comment-list compact">
-                  ${coachingFeedbacks.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('')}
-                </div>
-              ` : ''}
-              ${participantMemos.length ? `
-                <h4>참여자 메모 (${participantMemos.length})</h4>
-                <div class="comment-list compact">
-                  ${participantMemos.map((c) => `<div class="comment-card"><div class="comment-content rich-content">${Fmt.rich(c.content)}</div></div>`).join('')}
-                </div>
-              ` : ''}
-            </div>
           ` : '<p class="empty-state">코칭노트가 없습니다.</p>'}
         </div>
       </div>
@@ -271,7 +321,24 @@ Pages.projectDetail = {
       btn.addEventListener('click', () => openFieldEditor(btn.dataset.field));
     });
 
-    if (isAdmin) {
+    document.getElementById('toggle-member-list-btn')?.addEventListener('click', () => {
+      this._memberPanelState[projectId] = !this._memberPanelState[projectId];
+      this._renderInfo(el, p, options);
+    });
+
+    el.querySelectorAll('[data-role="recent-note-link"]').forEach((linkEl) => {
+      linkEl.addEventListener('click', (evt) => {
+        evt.preventDefault();
+        const nextPath = noteLink.replace(/^#/, '');
+        if (window.location.hash.slice(1) === nextPath) {
+          Router.resolve();
+          return;
+        }
+        Router.go(nextPath);
+      });
+    });
+
+    if (canManageMembers) {
       document.getElementById('add-member-btn')?.addEventListener('click', () => {
         this._openAddMemberModal({
           projectId,
@@ -603,14 +670,12 @@ Pages.projectDetail = {
       };
     }
     const state = this._noteFeedState[projectId];
+    state.visible = 3;
+    state.expandAll = false;
+    state.expandedIds = new Set(notes[0] ? [notes[0].note_id] : []);
     const canComment = user.role !== 'observer';
     const onChanged = options.onChanged || (async () => {});
     const batch = options.batch || null;
-    const validIds = new Set(notes.map((n) => n.note_id));
-    state.expandedIds = new Set([...state.expandedIds].filter((id) => validIds.has(id)));
-    if (!state.expandAll && state.expandedIds.size === 0 && notes[0]) {
-      state.expandedIds.add(notes[0].note_id);
-    }
 
     const hasText = (value) => Fmt.excerpt(value || '', 1).length > 0;
     const renderField = (label, value) => {
@@ -672,7 +737,7 @@ Pages.projectDetail = {
                             </div>
                             <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                             <div class="comment-meta">
-                              <span>${Fmt.datetime(c.created_at)}</span>
+                              <span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span>
                               ${(c.author_id === user.user_id || user.role === 'admin')
                                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
                                 : ''}
@@ -694,7 +759,7 @@ Pages.projectDetail = {
                             </div>
                             <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                             <div class="comment-meta">
-                              <span>${Fmt.datetime(c.created_at)}</span>
+                              <span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span>
                               ${(c.author_id === user.user_id || user.role === 'admin')
                                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
                                 : ''}
