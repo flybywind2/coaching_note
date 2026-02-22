@@ -163,6 +163,7 @@ const API = {
   createPostComment: (postId, data) => apiFetch(`/api/boards/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   updatePostComment: (commentId, data) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
+  getBoardMentionCandidates: (q, limit = 8) => apiFetch(`/api/boards/mention-candidates?q=${encodeURIComponent(q)}&limit=${Math.max(1, Math.min(20, Number(limit) || 8))}`),
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),

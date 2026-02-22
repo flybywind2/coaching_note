@@ -62,6 +62,8 @@ def get_dashboard(
             "project_daily_attendance": [],
             "project_daily_notes": [],
             "coach_activity": [],
+            "coach_performance": [],
+            "attendance_member_rows": [],
             "coaching_schedule_dates": [],
         }
 
@@ -104,6 +106,8 @@ def get_dashboard(
             "project_daily_attendance": [],
             "project_daily_notes": [],
             "coach_activity": [],
+            "coach_performance": [],
+            "attendance_member_rows": [],
             "coaching_schedule_dates": [d.isoformat() for d in coaching_schedule_dates if d in axis_set],
         }
 
@@ -145,6 +149,35 @@ def get_dashboard(
         (int(row.project_id), row.work_date): int(row.attendance_count or 0)
         for row in attendance_rows
     }
+
+    project_members = (
+        db.query(
+            ProjectMember.project_id,
+            User.user_id,
+            User.name,
+        )
+        .join(User, User.user_id == ProjectMember.user_id)
+        .filter(
+            ProjectMember.project_id.in_(project_ids),
+            User.is_active == True,  # noqa: E712
+            User.role != "observer",
+        )
+        .all()
+    )
+    member_ids = sorted({int(row.user_id) for row in project_members})
+    member_attendance_map: dict[tuple[int, date], bool] = {}
+    if member_ids:
+        member_attendance_rows = (
+            db.query(DailyAttendanceLog.user_id, DailyAttendanceLog.work_date)
+            .filter(
+                DailyAttendanceLog.user_id.in_(member_ids),
+                DailyAttendanceLog.work_date >= axis_start,
+                DailyAttendanceLog.work_date <= axis_end,
+            )
+            .all()
+        )
+        for row in member_attendance_rows:
+            member_attendance_map[(int(row.user_id), row.work_date)] = True
 
     note_rows = (
         db.query(
@@ -192,6 +225,7 @@ def get_dashboard(
     note_matrix = []
     flat_attendance = []
     flat_notes = []
+    attendance_member_rows = []
 
     for project in projects:
         expected_count = int(expected_map.get(project.project_id, 0))
@@ -241,6 +275,27 @@ def get_dashboard(
                 "total_expected": total_expected,
                 "total_rate": total_rate,
                 "cells": attendance_cells,
+            }
+        )
+
+        members = []
+        for member in [row for row in project_members if int(row.project_id) == int(project.project_id)]:
+            attendance_dates = [
+                day.isoformat()
+                for day in axis_dates
+                if member_attendance_map.get((int(member.user_id), day), False)
+            ]
+            members.append(
+                {
+                    "user_id": int(member.user_id),
+                    "user_name": member.name,
+                    "attendance_dates": attendance_dates,
+                }
+            )
+        attendance_member_rows.append(
+            {
+                "project_id": int(project.project_id),
+                "members": members,
             }
         )
 
@@ -330,6 +385,66 @@ def get_dashboard(
         )
     coach_activity.sort(key=lambda row: (row["note_count"] + row["comment_count"], row["coach_name"]), reverse=True)
 
+    coach_performance = []
+    if current_user.role == "admin":
+        coach_rows_for_perf = (
+            db.query(User.user_id, User.name)
+            .filter(User.is_active == True, User.role.in_(list(COACH_ROLES)))  # noqa: E712
+            .order_by(User.name.asc())
+            .all()
+        )
+        coach_ids_for_perf = [int(row.user_id) for row in coach_rows_for_perf]
+        checkin_by_coach: dict[int, int] = {}
+        comment_by_coach_perf: dict[int, int] = {}
+        if coach_ids_for_perf:
+            checkin_by_coach = {
+                int(row.user_id): int(row.checkin_days or 0)
+                for row in (
+                    db.query(
+                        DailyAttendanceLog.user_id,
+                        func.count(func.distinct(DailyAttendanceLog.work_date)).label("checkin_days"),
+                    )
+                    .filter(
+                        DailyAttendanceLog.user_id.in_(coach_ids_for_perf),
+                        DailyAttendanceLog.work_date >= axis_start,
+                        DailyAttendanceLog.work_date <= axis_end,
+                    )
+                    .group_by(DailyAttendanceLog.user_id)
+                    .all()
+                )
+            }
+            comment_by_coach_perf = {
+                int(row.author_id): int(row.comment_count or 0)
+                for row in (
+                    db.query(
+                        CoachingComment.author_id,
+                        func.count(CoachingComment.comment_id).label("comment_count"),
+                    )
+                    .join(CoachingNote, CoachingNote.note_id == CoachingComment.note_id)
+                    .filter(
+                        CoachingComment.author_id.in_(coach_ids_for_perf),
+                        CoachingNote.project_id.in_(project_ids),
+                        CoachingNote.coaching_date >= axis_start,
+                        CoachingNote.coaching_date <= axis_end,
+                    )
+                    .group_by(CoachingComment.author_id)
+                    .all()
+                )
+            }
+        for coach in coach_rows_for_perf:
+            coach_performance.append(
+                {
+                    "coach_user_id": int(coach.user_id),
+                    "coach_name": coach.name,
+                    "checkin_count": int(checkin_by_coach.get(int(coach.user_id), 0)),
+                    "comment_count": int(comment_by_coach_perf.get(int(coach.user_id), 0)),
+                }
+            )
+        coach_performance.sort(
+            key=lambda row: (row["checkin_count"] + row["comment_count"], row["coach_name"]),
+            reverse=True,
+        )
+
     return {
         "batch": {
             "batch_id": target_batch.batch_id,
@@ -345,5 +460,7 @@ def get_dashboard(
         "project_daily_attendance": flat_attendance,
         "project_daily_notes": flat_notes,
         "coach_activity": coach_activity,
+        "coach_performance": coach_performance,
+        "attendance_member_rows": attendance_member_rows,
         "coaching_schedule_dates": [d.isoformat() for d in coaching_schedule_dates if d in axis_set],
     }

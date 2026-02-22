@@ -12,6 +12,7 @@ from app.schemas.board import (
     PostCommentCreate,
     PostCommentUpdate,
     PostCommentOut,
+    MentionCandidateOut,
 )
 from app.schemas.version import ContentVersionOut
 from app.services import board_service
@@ -47,6 +48,16 @@ def list_all_posts(
     current_user: User = Depends(get_current_user),
 ):
     return board_service.get_all_posts(db, skip, limit, category, search_q=q)
+
+
+@router.get("/mention-candidates", response_model=List[MentionCandidateOut])
+def list_mention_candidates(
+    q: str = Query(..., min_length=1, max_length=30),
+    limit: int = Query(8, ge=1, le=20),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+):
+    return board_service.list_mention_candidates(db, q=q, limit=limit)
 
 
 @router.post("/{board_id}/posts", response_model=BoardPostOut)

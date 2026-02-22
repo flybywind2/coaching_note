@@ -2,9 +2,10 @@
 
 from datetime import date, datetime, timedelta, timezone
 
+from app.models.attendance import DailyAttendanceLog
 from app.models.project import Project
 from app.models.schedule import ProgramSchedule
-from app.models.session import AttendanceLog, CoachingSession
+from app.models.session import CoachingSession
 from tests.conftest import auth_headers
 
 
@@ -36,13 +37,13 @@ def _create_project_and_session(db, seed_users, seed_batch, work_date: date):
 
 def test_coach_grid_shows_auto_actual_from_attendance(client, db, seed_users, seed_batch):
     work_date = date.today()
-    _project, session = _create_project_and_session(db, seed_users, seed_batch, work_date)
+    _project, _session = _create_project_and_session(db, seed_users, seed_batch, work_date)
 
     check_in = datetime.now(timezone.utc) - timedelta(minutes=90)
     check_out = datetime.now(timezone.utc) - timedelta(minutes=30)
-    log = AttendanceLog(
-        session_id=session.session_id,
+    log = DailyAttendanceLog(
         user_id=seed_users["coach"].user_id,
+        work_date=work_date,
         check_in_time=check_in,
         check_in_ip="127.0.0.1",
         check_out_time=check_out,
@@ -64,6 +65,8 @@ def test_coach_grid_shows_auto_actual_from_attendance(client, db, seed_users, se
     cell = coach_row["cells"][0]
     assert cell["auto_minutes"] >= 59
     assert cell["actual_source"] == "auto"
+    assert cell["actual_start_time"] is not None
+    assert cell["actual_end_time"] is not None
 
 
 def test_coach_plan_upsert_only_for_self(client, db, seed_users, seed_batch):
