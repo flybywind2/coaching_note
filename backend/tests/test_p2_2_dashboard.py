@@ -57,6 +57,16 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
             check_out_ip="127.0.0.1",
         )
     )
+    db.add(
+        DailyAttendanceLog(
+            user_id=seed_users["coach"].user_id,
+            work_date=date(2026, 1, 1),
+            check_in_time=datetime(2026, 1, 1, 9, 30, 0),
+            check_in_ip="127.0.0.1",
+            check_out_time=datetime(2026, 1, 1, 12, 0, 0),
+            check_out_ip="127.0.0.1",
+        )
+    )
 
     note = CoachingNote(
         project_id=project.project_id,
@@ -87,6 +97,15 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
     assert "2026-01-02" in body["coaching_schedule_dates"]
     assert len(body["attendance_rows"]) == 1
     assert len(body["note_rows"]) == 1
+    assert len(body["attendance_member_rows"]) == 1
+    assert body["attendance_member_rows"][0]["project_id"] == project.project_id
+    assert any(member["user_name"] == "Participant" for member in body["attendance_member_rows"][0]["members"])
+
+    assert body["coach_performance"]
+    coach_perf = next((row for row in body["coach_performance"] if row["coach_user_id"] == seed_users["coach"].user_id), None)
+    assert coach_perf is not None
+    assert coach_perf["checkin_count"] >= 1
+    assert coach_perf["comment_count"] >= 1
 
     attendance_row = body["attendance_rows"][0]
     jan1_attendance = next(cell for cell in attendance_row["cells"] if cell["date"] == "2026-01-01")
@@ -97,3 +116,11 @@ def test_dashboard_matrix_shape_and_pre_schedule_date(client, db, seed_users, se
     jan1_note = next(cell for cell in note_row["cells"] if cell["date"] == "2026-01-01")
     assert jan1_note["note_count"] == 1
     assert jan1_note["coach_commenter_count"] == 1
+
+
+def test_dashboard_coach_performance_is_admin_only(client, db, seed_users, seed_batch):
+    coach_headers = auth_headers(client, "coach001")
+    resp = client.get(f"/api/dashboard?batch_id={seed_batch.batch_id}", headers=coach_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("coach_performance", []) == []

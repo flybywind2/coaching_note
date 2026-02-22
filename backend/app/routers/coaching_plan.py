@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.batch import Batch
+from app.models.attendance import DailyAttendanceLog
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
 from app.models.project import Project
 from app.models.schedule import ProgramSchedule
@@ -247,6 +248,36 @@ def get_coaching_plan_grid(
         for row in overrides
     }
 
+    auto_map: Dict[Tuple[int, date], Dict[str, datetime | int | None]] = {}
+
+    daily_attendance_rows = (
+        db.query(
+            DailyAttendanceLog.work_date,
+            DailyAttendanceLog.user_id,
+            DailyAttendanceLog.check_in_time,
+            DailyAttendanceLog.check_out_time,
+        )
+        .filter(
+            DailyAttendanceLog.work_date >= query_start,
+            DailyAttendanceLog.work_date <= query_end,
+            DailyAttendanceLog.user_id.in_(coach_ids),
+        )
+        .all()
+    )
+    for row in daily_attendance_rows:
+        key = (int(row.user_id), row.work_date)
+        if key not in auto_map:
+            auto_map[key] = {"minutes": 0, "actual_start": None, "actual_end": None}
+        start_at = _normalize_dt(row.check_in_time, row.work_date)
+        end_at = _normalize_dt(row.check_out_time, row.work_date)
+        if start_at and (auto_map[key]["actual_start"] is None or start_at < auto_map[key]["actual_start"]):
+            auto_map[key]["actual_start"] = start_at
+        if end_at and (auto_map[key]["actual_end"] is None or end_at > auto_map[key]["actual_end"]):
+            auto_map[key]["actual_end"] = end_at
+        auto_map[key]["minutes"] += _duration_minutes(row.check_in_time, row.check_out_time, row.work_date)
+
+    # 레거시 세션 출석 로그도 하위호환으로 집계하되,
+    # 동일 날짜에 일자 출석 로그가 있으면 일자 로그를 우선한다.
     attendance_rows = (
         db.query(
             CoachingSession.session_date,
@@ -263,10 +294,10 @@ def get_coaching_plan_grid(
         )
         .all()
     )
-
-    auto_map: Dict[Tuple[int, date], Dict[str, datetime | int | None]] = {}
     for row in attendance_rows:
-        key = (row.user_id, row.session_date)
+        key = (int(row.user_id), row.session_date)
+        if key in auto_map:
+            continue
         if key not in auto_map:
             auto_map[key] = {"minutes": 0, "actual_start": None, "actual_end": None}
         start_at = _normalize_dt(row.check_in_time, row.session_date)

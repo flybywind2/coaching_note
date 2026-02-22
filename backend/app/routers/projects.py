@@ -1,6 +1,6 @@
 """Projects 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -10,6 +10,16 @@ from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 
 router = APIRouter(tags=["projects"])
+
+
+def _ensure_member_manage_permission(db: Session, project_id: int, current_user: User):
+    from app.utils.permissions import is_admin, is_participant, is_project_member
+
+    if is_admin(current_user):
+        return
+    if is_participant(current_user) and is_project_member(db, project_id, current_user.user_id):
+        return
+    raise HTTPException(status_code=403, detail="관리자 또는 본인 과제 참여자만 팀원 관리가 가능합니다.")
 
 
 @router.get("/api/batches/{batch_id}/projects", response_model=List[ProjectOut])
@@ -68,8 +78,9 @@ def add_member(
     project_id: int,
     data: ProjectMemberCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
+    _ensure_member_manage_permission(db, project_id, current_user)
     return project_service.add_member(db, project_id, data)
 
 
@@ -78,8 +89,9 @@ def remove_member(
     project_id: int,
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
+    _ensure_member_manage_permission(db, project_id, current_user)
     project_service.remove_member(db, project_id, user_id)
     return {"message": "멤버가 제거되었습니다."}
 

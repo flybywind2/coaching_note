@@ -281,6 +281,33 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.cal-color-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cal-color-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 6px rgba(23, 40, 92, 0.18);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+
+.cal-color-swatch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(23, 40, 92, 0.2);
+}
+
+.cal-color-swatch.active {
+  border-color: #14275a;
+  box-shadow: 0 0 0 2px rgba(20, 39, 90, 0.2), 0 6px 12px rgba(23, 40, 92, 0.24);
+}
+
 .cal-coach-grid {
   display: grid;
   gap: 6px;

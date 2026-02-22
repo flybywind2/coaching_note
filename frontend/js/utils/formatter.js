@@ -60,8 +60,12 @@ const Fmt = {
     if (!str) return fallback;
     const value = String(str);
     const hasHtml = /<\/?[a-z][\s\S]*>/i.test(value);
-    if (!hasHtml) return this.escape(value).replace(/\n/g, '<br>');
-    return this.sanitizeHtml(value);
+    if (!hasHtml) {
+      const plainHtml = this.escape(value).replace(/\n/g, '<br>');
+      return this.highlightMentionsHtml(plainHtml);
+    }
+    const sanitized = this.sanitizeHtml(value);
+    return this.highlightMentionsHtml(sanitized);
   },
 
   excerpt(str, limit = 100) {
@@ -178,6 +182,47 @@ const Fmt = {
     };
 
     sanitizeNode(tpl.content);
+    return tpl.innerHTML;
+  },
+
+  highlightMentionsHtml(html) {
+    if (!html || typeof document === 'undefined') return html;
+    const mentionPattern = /(^|[^\w@])@([A-Za-z0-9가-힣._-]{2,30})/g;
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      textNodes.push(node);
+      node = walker.nextNode();
+    }
+
+    textNodes.forEach((textNode) => {
+      const text = textNode.nodeValue || '';
+      if (!text.includes('@')) return;
+      mentionPattern.lastIndex = 0;
+      let matched = false;
+      let match;
+      let last = 0;
+      const frag = document.createDocumentFragment();
+      while ((match = mentionPattern.exec(text)) !== null) {
+        matched = true;
+        const boundary = match[1] || '';
+        const token = match[2] || '';
+        const atIndex = match.index + boundary.length;
+        const prefix = text.slice(last, atIndex);
+        if (prefix) frag.appendChild(document.createTextNode(prefix));
+        const mentionNode = document.createElement('span');
+        mentionNode.className = 'mention-token';
+        mentionNode.textContent = `@${token}`;
+        frag.appendChild(mentionNode);
+        last = atIndex + token.length + 1;
+      }
+      if (!matched) return;
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      textNode.replaceWith(frag);
+    });
     return tpl.innerHTML;
   },
 };

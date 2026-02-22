@@ -33,3 +33,6 @@ feedback2.txt
 feedback3.txt
 feedback4.txt
 tasks.md
+feedback*.txt
+
+pytest-cache-files-*

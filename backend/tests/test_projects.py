@@ -169,6 +169,59 @@ def test_project_member_add_forbidden_for_non_admin(client, seed_users, seed_bat
     assert add_resp.status_code == 403
 
 
+def test_project_member_manage_allowed_for_participant_on_own_project(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Participant Member Manage", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    join_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert join_resp.status_code == 200
+
+    add_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["observer"].user_id, "role": "member", "is_representative": False},
+        headers=participant_headers,
+    )
+    assert add_resp.status_code == 200
+
+    remove_resp = client.delete(
+        f"/api/projects/{project_id}/members/{seed_users['observer'].user_id}",
+        headers=participant_headers,
+    )
+    assert remove_resp.status_code == 200
+
+
+def test_project_member_manage_forbidden_for_participant_on_other_project(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Participant Forbidden", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["observer"].user_id, "role": "member", "is_representative": False},
+        headers=participant_headers,
+    )
+    assert add_resp.status_code == 403
+
+
 def test_task_assignee_must_be_project_member_and_unassign_on_member_remove(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
 

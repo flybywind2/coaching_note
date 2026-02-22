@@ -29,6 +29,7 @@ class BoardPostUpdate(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     is_notice: Optional[bool] = None
+    board_id: Optional[int] = None
 
 
 class BoardPostOut(BoardPostBase):
@@ -43,6 +44,7 @@ class BoardPostOut(BoardPostBase):
     board_type: Optional[str] = None
     author_name: Optional[str] = None
     comment_count: Optional[int] = None
+    post_no: Optional[int] = None
 
     model_config = {"from_attributes": True}
 
@@ -64,7 +66,16 @@ class PostCommentOut(PostCommentBase):
     post_id: int
     author_id: int
     created_at: datetime
+    author_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class MentionCandidateOut(BaseModel):
+    user_id: int
+    emp_id: str
+    name: str
+    department: Optional[str] = None
+    role: str
 
 

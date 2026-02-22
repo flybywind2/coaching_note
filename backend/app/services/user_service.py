@@ -21,7 +21,7 @@ from app.models.site_content import SiteContent
 from app.models.task import ProjectTask
 from app.models.user import User
 from app.models.user import Coach
-from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH
+from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH, PARTICIPANT
 from app.schemas.user import (
     UserBulkDeleteRequest,
     UserBulkDeleteResult,
@@ -57,7 +57,13 @@ def _normalize_role_or_raise(role: str) -> str:
 
 
 def _can_have_project_scope(role: str) -> bool:
-    return _canonicalize_role(role) == EXTERNAL_COACH
+    normalized = _canonicalize_role(role)
+    return normalized in {EXTERNAL_COACH, PARTICIPANT}
+
+
+def _can_have_batch_scope(role: str) -> bool:
+    normalized = _canonicalize_role(role)
+    return normalized in {INTERNAL_COACH, EXTERNAL_COACH, PARTICIPANT}
 
 
 def _ensure_not_last_admin_change(db: Session, user: User, next_role: str, next_active: bool):
@@ -173,9 +179,10 @@ def update_user(db: Session, user_id: int, data: UserUpdate, current_user: User)
 
     for key, value in payload.items():
         setattr(user, key, value)
-    if "role" in payload and not _can_have_project_scope(user.role):
-        # 외부코치가 아닌 경우 권한 제한 스코프를 초기화한다.
-        _set_permissions(db, user.user_id, [], [])
+    if "role" in payload:
+        # 역할 변경 후 허용되지 않는 스코프는 자동 정리한다.
+        normalized_perm = get_user_permissions(db, user.user_id)
+        _set_permissions(db, user.user_id, normalized_perm.batch_ids, normalized_perm.project_ids)
     if "emp_id" in payload and ("email" not in payload or not (payload.get("email") or "").strip()):
         user.email = _default_email(user.emp_id)
     if "email" in payload and not (payload.get("email") or "").strip():
@@ -221,8 +228,8 @@ def bulk_upsert_users(db: Session, data: UserBulkUpsertRequest) -> UserBulkUpser
         existing.department = item.department or None
         existing.role = role
         existing.email = email
-        if not _can_have_project_scope(existing.role):
-            _set_permissions(db, existing.user_id, [], [])
+        normalized_perm = get_user_permissions(db, existing.user_id)
+        _set_permissions(db, existing.user_id, normalized_perm.batch_ids, normalized_perm.project_ids)
         if not existing.is_active and data.reactivate_inactive:
             existing.is_active = True
             reactivated += 1
@@ -243,21 +250,27 @@ def get_user_permissions(db: Session, user_id: int) -> UserPermissionOut:
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
-    if not _can_have_project_scope(user.role):
+    can_batch_scope = _can_have_batch_scope(user.role)
+    can_project_scope = _can_have_project_scope(user.role)
+    if not can_batch_scope and not can_project_scope:
         return UserPermissionOut(user_id=user_id, batch_ids=[], project_ids=[])
 
-    batch_ids = [
-        row[0]
-        for row in db.query(UserBatchAccess.batch_id)
-        .filter(UserBatchAccess.user_id == user_id)
-        .all()
-    ]
-    project_ids = [
-        row[0]
-        for row in db.query(UserProjectAccess.project_id)
-        .filter(UserProjectAccess.user_id == user_id)
-        .all()
-    ]
+    batch_ids = []
+    if can_batch_scope:
+        batch_ids = [
+            row[0]
+            for row in db.query(UserBatchAccess.batch_id)
+            .filter(UserBatchAccess.user_id == user_id)
+            .all()
+        ]
+    project_ids = []
+    if can_project_scope:
+        project_ids = [
+            row[0]
+            for row in db.query(UserProjectAccess.project_id)
+            .filter(UserProjectAccess.user_id == user_id)
+            .all()
+        ]
     return UserPermissionOut(user_id=user_id, batch_ids=batch_ids, project_ids=project_ids)
 
 
@@ -266,13 +279,15 @@ def update_user_permissions(db: Session, user_id: int, data: UserPermissionUpdat
     if not user:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
 
-    if not _can_have_project_scope(user.role):
+    can_batch_scope = _can_have_batch_scope(user.role)
+    can_project_scope = _can_have_project_scope(user.role)
+    if not can_batch_scope and not can_project_scope:
         _set_permissions(db, user_id, [], [])
         db.commit()
         return UserPermissionOut(user_id=user_id, batch_ids=[], project_ids=[])
 
-    batch_ids = sorted({int(v) for v in (data.batch_ids or []) if int(v) > 0})
-    project_ids = sorted({int(v) for v in (data.project_ids or []) if int(v) > 0})
+    batch_ids = sorted({int(v) for v in (data.batch_ids or []) if int(v) > 0}) if can_batch_scope else []
+    project_ids = sorted({int(v) for v in (data.project_ids or []) if int(v) > 0}) if can_project_scope else []
 
     _set_permissions(db, user_id, batch_ids, project_ids)
     db.commit()
@@ -392,11 +407,17 @@ def bulk_update_users(db: Session, data: UserBulkUpdateRequest, current_user: Us
                 user.role = payload["role"]
             if batch_ids is not None or project_ids is not None:
                 current_perm = get_user_permissions(db, user.user_id)
-                next_batch_ids = batch_ids if batch_ids is not None else current_perm.batch_ids
-                next_project_ids = project_ids if project_ids is not None else current_perm.project_ids
+                can_batch_scope = _can_have_batch_scope(user.role)
+                can_project_scope = _can_have_project_scope(user.role)
+                next_batch_ids = current_perm.batch_ids if can_batch_scope else []
+                next_project_ids = current_perm.project_ids if can_project_scope else []
+                if batch_ids is not None and can_batch_scope:
+                    next_batch_ids = batch_ids
+                if project_ids is not None and can_project_scope:
+                    next_project_ids = project_ids
                 _set_permissions(db, user.user_id, next_batch_ids, next_project_ids)
-            if not _can_have_project_scope(user.role):
-                _set_permissions(db, user.user_id, [], [])
+            normalized_perm = get_user_permissions(db, user.user_id)
+            _set_permissions(db, user.user_id, normalized_perm.batch_ids, normalized_perm.project_ids)
             updated += 1
         except HTTPException as exc:
             errors.append(f"{user.user_id}: {exc.detail}")

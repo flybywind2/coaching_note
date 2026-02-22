@@ -116,6 +116,7 @@ Pages.coachingPlan = {
               (row.cells || []).forEach((cell) => {
                 cellMap[String(cell.date).slice(0, 10)] = cell;
               });
+              const isSelfRow = row.coach_user_id === user.user_id;
               const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
               const canEditActual = isAdmin;
               const planCells = visibleDateKeys.map((dateKey) => {
@@ -154,7 +155,7 @@ Pages.coachingPlan = {
               }).join('');
 
               return `
-                <tr class="cp-row-plan">
+                <tr class="cp-row-plan${isSelfRow ? ' cp-row-self' : ''}">
                   <th class="cp-coach-col" rowspan="2">
                     <strong>${Fmt.escape(row.coach_name)}</strong>
                     <div class="hint">${Fmt.escape(row.coach_emp_id)}${row.department ? ` · ${Fmt.escape(row.department)}` : ''}</div>
@@ -162,7 +163,7 @@ Pages.coachingPlan = {
                   <th class="cp-kind-col">계획</th>
                   ${planCells}
                 </tr>
-                <tr class="cp-row-actual">
+                <tr class="cp-row-actual${isSelfRow ? ' cp-row-self' : ''}">
                   <th class="cp-kind-col">실적</th>
                   ${actualCells}
                 </tr>

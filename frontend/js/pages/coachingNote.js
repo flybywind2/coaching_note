@@ -40,7 +40,7 @@ Pages.coachingNote = {
             <div class="comment-content rich-content">${Fmt.rich(comment.content, '-')}</div>
             ${comment.code_snippet ? `<pre class="code-snippet">${Fmt.escape(comment.code_snippet)}</pre>` : ''}
             <div class="comment-meta">
-              <span>${Fmt.datetime(comment.created_at)}</span>
+              <span>${Fmt.datetime(comment.created_at)} · ${Fmt.escape(comment.author_name || '-')}</span>
               ${(comment.author_id === user.user_id || user.role === 'admin')
                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${comment.comment_id}" data-comment-type="${commentType}">삭제</button>`
                 : ''}

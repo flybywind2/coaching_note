@@ -7,6 +7,7 @@ from app.models.board import Board, BoardPost, PostComment
 from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate, PostCommentUpdate
 from app.services import mention_service, version_service
+from app.services import notification_service
 from typing import List
 from app.utils.permissions import is_admin_or_coach
 
@@ -59,6 +60,10 @@ def _board_priority_expr():
         (Board.board_type == "chat", 3),
         else_=99,
     )
+
+
+def _post_notice_order_expr():
+    return case((BoardPost.is_notice == True, 0), else_=1)  # noqa: E712
 
 
 def _sync_standard_boards(db: Session) -> List[Board]:
@@ -142,7 +147,16 @@ def _serialize_post(
         setattr(post, "author_name", author_name)
     if comment_count is not None:
         setattr(post, "comment_count", int(comment_count))
+    setattr(post, "post_no", None if bool(post.is_notice) else int(post.post_id))
     return post
+
+
+def _serialize_comment(comment: PostComment, author_name: str | None = None) -> PostComment:
+    if author_name is not None:
+        setattr(comment, "author_name", author_name)
+    elif getattr(comment, "author", None) is not None:
+        setattr(comment, "author_name", comment.author.name)
+    return comment
 
 
 def _posts_query(db: Session):
@@ -200,7 +214,7 @@ def get_all_posts(
             )
         )
     rows = (
-        query.order_by(_board_priority_expr(), BoardPost.created_at.desc())
+        query.order_by(_post_notice_order_expr(), BoardPost.post_id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -260,6 +274,8 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
         link_url=f"#/board/{post.board_id}/post/{post.post_id}",
         new_texts=[post.title, post.content],
     )
+    if post.is_notice:
+        _notify_notice_post(db, post, current_user)
     return get_post_with_meta(db, post.post_id)
 
 
@@ -270,7 +286,12 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 수정 가능합니다.")
     payload = data.model_dump(exclude_none=True)
+    next_board_id = payload.pop("board_id", None)
     payload.pop("is_notice", None)
+    if next_board_id is not None and int(next_board_id) != int(post.board_id):
+        next_board = get_board(db, int(next_board_id))
+        _ensure_notice_board_admin(next_board, current_user)
+        post.board_id = next_board.board_id
     for k, v in payload.items():
         setattr(post, k, v)
     post.is_notice = post.board.board_type == "notice"
@@ -292,6 +313,8 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
         new_texts=[post.title, post.content],
         previous_texts=before_texts,
     )
+    if post.is_notice:
+        _notify_notice_post(db, post, current_user)
     return get_post_with_meta(db, post.post_id)
 
 
@@ -311,12 +334,14 @@ def increment_view(db: Session, post_id: int):
 
 
 def get_comments(db: Session, post_id: int) -> List[PostComment]:
-    return (
-        db.query(PostComment)
+    rows = (
+        db.query(PostComment, User.name.label("author_name"))
+        .join(User, User.user_id == PostComment.author_id)
         .filter(PostComment.post_id == post_id)
         .order_by(PostComment.created_at)
         .all()
     )
+    return [_serialize_comment(comment, author_name) for comment, author_name in rows]
 
 
 def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_user: User) -> PostComment:
@@ -332,7 +357,7 @@ def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_u
         link_url=f"#/board/{comment.post.board_id}/post/{post_id}",
         new_texts=[comment.content],
     )
-    return comment
+    return _serialize_comment(comment)
 
 
 def update_comment(db: Session, comment_id: int, data: PostCommentUpdate, current_user: User) -> PostComment:
@@ -354,7 +379,7 @@ def update_comment(db: Session, comment_id: int, data: PostCommentUpdate, curren
         new_texts=[comment.content],
         previous_texts=[previous],
     )
-    return comment
+    return _serialize_comment(comment)
 
 
 def delete_comment(db: Session, comment_id: int, current_user: User):
@@ -400,6 +425,57 @@ def restore_post_version(db: Session, post_id: int, version_id: int, current_use
         change_type="restore",
         snapshot=_post_snapshot(post),
     )
-    return post
+    return get_post_with_meta(db, post.post_id)
+
+
+def list_mention_candidates(db: Session, q: str | None, limit: int = 8) -> list[dict]:
+    keyword = (q or "").strip()
+    if not keyword:
+        return []
+    if keyword.startswith("@"):
+        keyword = keyword[1:]
+    if not keyword:
+        return []
+    like = f"%{keyword}%"
+    rows = (
+        db.query(User)
+        .filter(
+            User.is_active == True,  # noqa: E712
+            or_(User.emp_id.ilike(like), User.name.ilike(like)),
+        )
+        .order_by(User.name.asc(), User.emp_id.asc())
+        .limit(max(1, min(limit, 20)))
+        .all()
+    )
+    return [
+        {
+            "user_id": int(row.user_id),
+            "emp_id": row.emp_id,
+            "name": row.name,
+            "department": row.department,
+            "role": row.role,
+        }
+        for row in rows
+    ]
+
+
+def _notify_notice_post(db: Session, post: BoardPost, actor: User):
+    targets = (
+        db.query(User.user_id)
+        .filter(
+            User.is_active == True,  # noqa: E712
+            User.user_id != actor.user_id,
+        )
+        .all()
+    )
+    for (target_user_id,) in targets:
+        notification_service.create_notification(
+            db=db,
+            user_id=int(target_user_id),
+            noti_type="board_notice",
+            title="공지사항 등록",
+            message=f"{actor.name}님이 공지사항을 등록했습니다.",
+            link_url=f"#/board/{post.board_id}/post/{post.post_id}",
+        )
 
 

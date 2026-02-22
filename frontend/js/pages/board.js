@@ -67,6 +67,7 @@ Pages.board = {
               <table class="data-table board-table">
                 <thead>
                   <tr>
+                    <th style="width:72px;">번호</th>
                     <th style="width:120px;">분류</th>
                     <th>제목</th>
                     <th style="width:130px;">작성자</th>
@@ -78,6 +79,7 @@ Pages.board = {
                 <tbody>
                   ${posts.map((p) => `
                     <tr class="board-row ${p.is_notice ? 'notice' : ''}" data-post-id="${p.post_id}">
+                      <td>${p.post_no != null ? p.post_no : ''}</td>
                       <td>${p.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
                       <td><a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a></td>
                       <td>${Fmt.escape(p.author_name || `#${p.author_id}`)}</td>
@@ -143,6 +145,12 @@ Pages.board = {
         </div>
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
         <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
+        <div class="form-group mention-picker-group">
+          <label>멘션 추가</label>
+          <input id="board-mention-input" placeholder="@이름 또는 @사번 입력" />
+          <div id="board-mention-list" class="mention-candidate-list"></div>
+          <div id="board-mention-picked" class="mention-picked-list"></div>
+        </div>
         <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
         <p class="form-error" id="board-post-err" style="display:none;"></p>
@@ -153,6 +161,11 @@ Pages.board = {
       placeholder: '게시글 본문을 입력하세요. 이미지/표 삽입이 가능합니다.',
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_post', boardId: post?.board_id || defaultBoardId }),
       onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'board_post', boardId: post?.board_id || defaultBoardId }),
+    });
+    const mentionState = this._bindMentionPicker({
+      inputId: 'board-mention-input',
+      listId: 'board-mention-list',
+      pickedId: 'board-mention-picked',
     });
 
     document.getElementById('board-post-form')?.addEventListener('submit', async (e) => {
@@ -168,21 +181,17 @@ Pages.board = {
         return;
       }
       try {
+        const content = this._mergeMentionsIntoContent(postEditor.getSanitizedHTML(), mentionState?.picked || []);
         if (isEdit) {
-          const payload = {
+          await API.updatePost(post.post_id, {
             title,
-            content: postEditor.getSanitizedHTML(),
-          };
-          if (boardId !== post.board_id) {
-            await API.createPost(boardId, payload);
-            await API.deletePost(post.post_id);
-          } else {
-            await API.updatePost(post.post_id, payload);
-          }
+            content,
+            board_id: boardId,
+          });
         } else {
           await API.createPost(boardId, {
             title,
-            content: postEditor.getSanitizedHTML(),
+            content,
           });
         }
         Modal.close();
@@ -200,6 +209,12 @@ Pages.board = {
     Modal.open(`<h2>${isEdit ? '댓글 수정' : '댓글 작성'}</h2>
       <form id="board-comment-form">
         <div id="board-comment-editor"></div>
+        <div class="form-group mention-picker-group">
+          <label>멘션 추가</label>
+          <input id="board-comment-mention-input" placeholder="@이름 또는 @사번 입력" />
+          <div id="board-comment-mention-list" class="mention-candidate-list"></div>
+          <div id="board-comment-mention-picked" class="mention-picked-list"></div>
+        </div>
         <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
         <p class="form-error" id="board-comment-err" style="display:none;"></p>
@@ -212,6 +227,11 @@ Pages.board = {
       onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'board_comment', boardId }),
       onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'board_comment', boardId }),
     });
+    const mentionState = this._bindMentionPicker({
+      inputId: 'board-comment-mention-input',
+      listId: 'board-comment-mention-list',
+      pickedId: 'board-comment-mention-picked',
+    });
 
     document.getElementById('board-comment-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -222,7 +242,7 @@ Pages.board = {
         return;
       }
       try {
-        const content = commentEditor.getSanitizedHTML();
+        const content = this._mergeMentionsIntoContent(commentEditor.getSanitizedHTML(), mentionState?.picked || []);
         if (isEdit) {
           await API.updatePostComment(comment.comment_id, { content });
         } else {
@@ -263,7 +283,7 @@ Pages.board = {
               ${post.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
             </div>
             <h2>${Fmt.escape(post.title)}</h2>
-            <div class="post-meta">${Fmt.datetime(post.created_at)} · 작성자 ${Fmt.escape(post.author_name || `#${post.author_id}`)} · 조회 ${post.view_count}</div>
+            <div class="post-meta">${Fmt.escape(post.author_name || `#${post.author_id}`)} · ${Fmt.datetime(post.created_at)} · 조회 ${post.view_count}</div>
             ${canManagePost ? `
               <div class="post-actions">
                 <button id="edit-post-btn" class="btn btn-sm btn-secondary">수정</button>
@@ -281,7 +301,7 @@ Pages.board = {
               <div class="comment-card">
                 <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                 <div class="comment-meta">
-                  <span>${Fmt.datetime(c.created_at)}</span>
+                  <span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || `#${c.author_id}`)}</span>
                   ${(user.role === 'admin' || c.author_id === user.user_id)
                     ? `<span class="inline-actions">
                         <button class="btn btn-sm btn-secondary edit-post-comment-btn" data-comment-id="${c.comment_id}">수정</button>
@@ -355,5 +375,107 @@ Pages.board = {
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
+  },
+
+  _mergeMentionsIntoContent(html, pickedUsers = []) {
+    const unique = [];
+    const seen = new Set();
+    (pickedUsers || []).forEach((row) => {
+      const empId = String(row?.emp_id || '').trim();
+      if (!empId || seen.has(empId)) return;
+      seen.add(empId);
+      unique.push(empId);
+    });
+    if (!unique.length) return html;
+    const existing = Fmt.excerpt(html || '', 5000);
+    const missing = unique.filter((empId) => !existing.includes(`@${empId}`));
+    if (!missing.length) return html;
+    const mentionHtml = missing
+      .map((empId) => `<span class="mention-token">@${Fmt.escape(empId)}</span>`)
+      .join(' ');
+    return `${html || ''}<p>${mentionHtml}</p>`;
+  },
+
+  _bindMentionPicker({ inputId, listId, pickedId }) {
+    const inputEl = document.getElementById(inputId);
+    const listEl = document.getElementById(listId);
+    const pickedEl = document.getElementById(pickedId);
+    if (!inputEl || !listEl || !pickedEl) {
+      return { picked: [] };
+    }
+    const state = { picked: [], found: [] };
+    let debounceTimer = null;
+
+    const renderPicked = () => {
+      if (!state.picked.length) {
+        pickedEl.innerHTML = '';
+        return;
+      }
+      pickedEl.innerHTML = state.picked.map((row, idx) => `
+        <button type="button" class="mention-picked-chip" data-idx="${idx}">
+          @${Fmt.escape(row.emp_id)} (${Fmt.escape(row.name)})
+          <span>×</span>
+        </button>
+      `).join('');
+      pickedEl.querySelectorAll('.mention-picked-chip').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number.parseInt(btn.dataset.idx, 10);
+          if (Number.isNaN(idx)) return;
+          state.picked.splice(idx, 1);
+          renderPicked();
+        });
+      });
+    };
+
+    const renderFound = () => {
+      if (!state.found.length) {
+        listEl.innerHTML = '';
+        return;
+      }
+      listEl.innerHTML = state.found.map((row, idx) => `
+        <button type="button" class="mention-candidate-item" data-idx="${idx}">
+          <strong>${Fmt.escape(row.name)}</strong>
+          <span>@${Fmt.escape(row.emp_id)}</span>
+          ${row.department ? `<em>${Fmt.escape(row.department)}</em>` : ''}
+        </button>
+      `).join('');
+      listEl.querySelectorAll('.mention-candidate-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const idx = Number.parseInt(btn.dataset.idx, 10);
+          const picked = state.found[idx];
+          if (!picked) return;
+          if (!state.picked.some((row) => row.user_id === picked.user_id)) {
+            state.picked.push(picked);
+            renderPicked();
+          }
+          inputEl.value = '';
+          state.found = [];
+          renderFound();
+          inputEl.focus();
+        });
+      });
+    };
+
+    const fetchCandidates = async () => {
+      const keyword = String(inputEl.value || '').trim().replace(/^@+/, '');
+      if (keyword.length < 1) {
+        state.found = [];
+        renderFound();
+        return;
+      }
+      try {
+        state.found = await API.getBoardMentionCandidates(keyword, 8);
+      } catch (_) {
+        state.found = [];
+      }
+      renderFound();
+    };
+
+    inputEl.addEventListener('input', () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(fetchCandidates, 180);
+    });
+
+    return state;
   },
 };
