@@ -70,6 +70,7 @@ const state = {
   batches: [],
   batchId: Number(localStorage.getItem(STORAGE_KEYS.batchId) || 0) || null,
   boardPage: { boardId: null, skip: 0, limit: 20 },
+  boardDeepLink: { boardId: null, postId: null },
 };
 
 applyTheme(state.theme);
@@ -335,7 +336,10 @@ async function ensureBatches() {
 }
 
 async function render() {
-  const path = hashPath();
+  const fullPath = hashPath();
+  const [pathOnly, queryString = ''] = fullPath.split('?');
+  const query = new URLSearchParams(queryString);
+  const path = pathOnly || '/';
   const needsAuth = path !== '/login';
 
   if (needsAuth && !state.token) {
@@ -370,13 +374,34 @@ async function render() {
       await renderProjectDetail(view, projectId);
       return;
     }
+    if (path === '/search') {
+      await renderSearch(view, {
+        q: query.get('q') || '',
+        types: query.get('types') || '',
+        batchId: query.get('batch_id') || '',
+        authorId: query.get('author_id') || '',
+        startDate: query.get('start_date') || '',
+        endDate: query.get('end_date') || '',
+      });
+      return;
+    }
     if (path === '/calendar') {
       if (!ROLE.canCalendar(state.user?.role || '')) return renderForbidden(view, '캘린더');
       await renderCalendar(view);
       return;
     }
     if (path === '/board') {
-      await renderBoard(view);
+      const boardId = Number.parseInt(query.get('boardId') || '', 10);
+      const postId = Number.parseInt(query.get('postId') || '', 10);
+      await renderBoard(view, {
+        boardId: Number.isNaN(boardId) ? null : boardId,
+        openPostId: Number.isNaN(postId) ? null : postId,
+      });
+      return;
+    }
+    if (path.match(/^\/sessions\/\d+$/)) {
+      const sessionId = Number(path.split('/')[2]);
+      await renderSessionDetail(view, sessionId);
       return;
     }
     if (path === '/about') {
@@ -416,6 +441,7 @@ function renderShell(path) {
   const navItems = [
     { path: '/dashboard', label: '대시보드', visible: ROLE.canDashboard(role) },
     { path: '/projects', label: '과제', visible: true },
+    { path: '/search', label: '검색', visible: true },
     { path: '/calendar', label: '캘린더', visible: ROLE.canCalendar(role) },
     { path: '/coaching-plan', label: '코칭 계획/실적', visible: ROLE.canCoachingPlan(role) },
     { path: '/about', label: 'SSP+ 소개', visible: ROLE.canAbout(role) },
@@ -4619,14 +4645,27 @@ async function renderCalendar(view) {
   draw();
 }
 
-async function renderBoard(view) {
+async function renderBoard(view, options = {}) {
   const role = normalizeRole(state.user?.role || '');
   const canWrite = canWriteBoard(role);
   const boards = await api('/api/boards').catch(() => []);
   const boardRows = Array.isArray(boards) ? boards : [];
   const writableBoards = role === 'admin' ? boardRows : boardRows.filter((row) => String(row.board_type || '').toLowerCase() !== 'notice');
-  let boardId = state.boardPage.boardId && boardRows.some((row) => Number(row.board_id) === Number(state.boardPage.boardId))
-    ? Number(state.boardPage.boardId)
+  let deepLinkBoardId = Number.parseInt(String(options?.boardId ?? state.boardDeepLink.boardId ?? ''), 10);
+  if (Number.isNaN(deepLinkBoardId)) deepLinkBoardId = null;
+  let deepLinkPostId = Number.parseInt(String(options?.openPostId ?? state.boardDeepLink.postId ?? ''), 10);
+  if (Number.isNaN(deepLinkPostId)) deepLinkPostId = null;
+  if (!deepLinkBoardId && deepLinkPostId) {
+    const post = await api(`/api/boards/posts/${deepLinkPostId}`).catch(() => null);
+    if (post?.board_id) deepLinkBoardId = Number(post.board_id);
+  }
+  state.boardDeepLink = {
+    boardId: deepLinkBoardId,
+    postId: deepLinkPostId,
+  };
+  const preferredBoardId = Number(deepLinkBoardId || state.boardPage.boardId || 0);
+  let boardId = preferredBoardId && boardRows.some((row) => Number(row.board_id) === Number(preferredBoardId))
+    ? Number(preferredBoardId)
     : Number(boardRows[0]?.board_id || 0);
   let posts = [];
   let currentKeyword = '';
@@ -5078,6 +5117,7 @@ async function renderBoard(view) {
 
   document.getElementById('nu-board-select')?.addEventListener('change', async (evt) => {
     boardId = Number(evt.target.value) || 0;
+    state.boardDeepLink = { boardId: boardId || null, postId: null };
     state.boardPage.skip = 0;
     currentKeyword = '';
     document.getElementById('nu-board-detail').innerHTML = '';
@@ -5112,6 +5152,11 @@ async function renderBoard(view) {
   });
 
   await reload();
+  if (deepLinkPostId) {
+    await renderPostDetail(deepLinkPostId);
+    document.getElementById('nu-board-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    state.boardDeepLink = { boardId: boardId || null, postId: null };
+  }
 }
 
 async function renderProjectDetail(view, projectId) {
@@ -5670,5 +5715,622 @@ async function renderProjectDetail(view, projectId) {
         alert(error.message || '의견 삭제 실패');
       }
     });
+  });
+}
+
+function p2SearchTypeLabel(type) {
+  const labels = {
+    project: '과제',
+    note: '코칭노트',
+    document: '과제기록',
+    board: '게시글',
+  };
+  return labels[type] || type || '-';
+}
+
+function p2ResolveSearchPath(row) {
+  const type = String(row?.type || '').trim();
+  const id = Number.parseInt(String(row?.id || ''), 10);
+  const projectId = Number.parseInt(String(row?.project_id || ''), 10);
+
+  if (type === 'project') {
+    if (!Number.isNaN(projectId)) return `/projects/${projectId}`;
+    if (!Number.isNaN(id)) return `/projects/${id}`;
+    return '/projects';
+  }
+  if (type === 'note' || type === 'document') {
+    if (!Number.isNaN(projectId)) return `/projects/${projectId}`;
+    return '/projects';
+  }
+  if (type === 'board') {
+    const route = String(row?.route || '');
+    const routeMatch = route.match(/#\/board\/(\d+)\/post\/(\d+)/);
+    const boardId = routeMatch ? Number.parseInt(routeMatch[1], 10) : null;
+    const postId = routeMatch ? Number.parseInt(routeMatch[2], 10) : Number.isNaN(id) ? null : id;
+    const qs = new URLSearchParams();
+    if (boardId) qs.set('boardId', String(boardId));
+    if (postId) qs.set('postId', String(postId));
+    return `/board${qs.toString() ? `?${qs.toString()}` : ''}`;
+  }
+
+  const legacyRoute = String(row?.route || '');
+  const projectMatch = legacyRoute.match(/#\/project\/(\d+)/);
+  if (projectMatch) return `/projects/${projectMatch[1]}`;
+  return '/projects';
+}
+
+async function renderSearch(view, options = {}) {
+  const role = normalizeRole(state.user?.role || '');
+  const defaultTypes = ['project', 'note', 'document', 'board'];
+  const parseTypes = (raw) => {
+    if (!raw) return [...defaultTypes];
+    const rows = String(raw)
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return rows.length ? rows : [...defaultTypes];
+  };
+
+  const initial = {
+    q: String(options.q || '').trim(),
+    types: parseTypes(options.types || ''),
+    batchId: String(options.batchId || ''),
+    authorId: String(options.authorId || ''),
+    startDate: String(options.startDate || ''),
+    endDate: String(options.endDate || ''),
+  };
+
+  const [batches, users] = await Promise.all([
+    api('/api/batches').catch(() => []),
+    role === 'admin' ? api('/api/users?include_inactive=false').catch(() => []) : Promise.resolve([]),
+  ]);
+  const batchRows = Array.isArray(batches) ? batches : [];
+  const userRows = Array.isArray(users) ? users : [];
+
+  view.innerHTML = `
+    <section class="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <h1 class="text-2xl font-bold">통합 검색</h1>
+        <p class="mt-1 text-sm nu-text-muted">과제/코칭노트/과제기록/게시글을 한번에 검색합니다.</p>
+      </div>
+      <button id="nu-search-back" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">과제 목록</button>
+    </section>
+    <section class="rounded-2xl border nu-border nu-surface p-4 space-y-4">
+      <form id="nu-search-form" class="space-y-3">
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-3">
+          <label class="text-sm block lg:col-span-2">검색어
+            <input name="q" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(initial.q)}" placeholder="2글자 이상 입력" />
+          </label>
+          <label class="text-sm block">차수
+            <select name="batch_id" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+              <option value="">전체</option>
+              ${batchRows
+                .map(
+                  (row) =>
+                    `<option value="${row.batch_id}" ${String(row.batch_id) === initial.batchId ? 'selected' : ''}>${escapeHtml(
+                      row.batch_name || `차수 ${row.batch_id}`
+                    )}</option>`
+                )
+                .join('')}
+            </select>
+          </label>
+          <label class="text-sm block">작성자
+            <select name="author_id" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+              <option value="">전체</option>
+              <option value="${state.user?.user_id || ''}" ${String(state.user?.user_id || '') === initial.authorId ? 'selected' : ''}>나</option>
+              ${
+                role === 'admin'
+                  ? userRows
+                      .map(
+                        (row) =>
+                          `<option value="${row.user_id}" ${String(row.user_id) === initial.authorId ? 'selected' : ''}>${escapeHtml(
+                            row.name || '-'
+                          )} (@${escapeHtml(row.emp_id || '-')})</option>`
+                      )
+                      .join('')
+                  : ''
+              }
+            </select>
+          </label>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-3">
+          <label class="text-sm block">시작일
+            <input type="date" name="start_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(initial.startDate)}" />
+          </label>
+          <label class="text-sm block">종료일
+            <input type="date" name="end_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(initial.endDate)}" />
+          </label>
+          <div class="lg:col-span-2 flex flex-wrap items-end gap-2">
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">검색</button>
+            <button type="button" id="nu-search-reset" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">초기화</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          ${defaultTypes
+            .map(
+              (type) => `
+                <label class="inline-flex items-center gap-1">
+                  <input type="checkbox" name="types" value="${type}" ${initial.types.includes(type) ? 'checked' : ''} />
+                  <span>${p2SearchTypeLabel(type)}</span>
+                </label>
+              `
+            )
+            .join('')}
+        </div>
+      </form>
+      <div id="nu-search-result" class="space-y-2"></div>
+    </section>
+  `;
+
+  const resultEl = document.getElementById('nu-search-result');
+  const formEl = document.getElementById('nu-search-form');
+  const readFilters = () => {
+    const fd = new FormData(formEl);
+    return {
+      q: String(fd.get('q') || '').trim(),
+      types: fd
+        .getAll('types')
+        .map((item) => String(item || '').trim())
+        .filter(Boolean),
+      batchId: String(fd.get('batch_id') || '').trim(),
+      authorId: String(fd.get('author_id') || '').trim(),
+      startDate: String(fd.get('start_date') || '').trim(),
+      endDate: String(fd.get('end_date') || '').trim(),
+    };
+  };
+  const toQueryString = (filters) => {
+    const qs = new URLSearchParams();
+    if (filters.q) qs.set('q', filters.q);
+    if (filters.types.length) qs.set('types', filters.types.join(','));
+    if (filters.batchId) qs.set('batch_id', filters.batchId);
+    if (filters.authorId) qs.set('author_id', filters.authorId);
+    if (filters.startDate) qs.set('start_date', filters.startDate);
+    if (filters.endDate) qs.set('end_date', filters.endDate);
+    return qs.toString();
+  };
+  const renderRows = (rows) => {
+    resultEl.innerHTML = `
+      <div class="text-sm nu-text-muted">검색 결과 <b>${rows.length}</b>건</div>
+      ${
+        rows.length
+          ? rows
+              .map((row, index) => {
+                const path = p2ResolveSearchPath(row);
+                return `
+                  <button type="button" class="w-full text-left rounded-xl border nu-border p-3 hover:nu-soft" data-role="nu-search-open" data-index="${index}">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-full px-2 py-1 text-xs bg-slate-100 text-slate-700">${escapeHtml(p2SearchTypeLabel(row.type))}</span>
+                      <span class="font-semibold">${escapeHtml(row.title || '-')}</span>
+                    </div>
+                    <p class="mt-2 text-sm">${escapeHtml(row.snippet || '-')}</p>
+                    <div class="mt-2 text-xs nu-text-muted flex flex-wrap items-center gap-2">
+                      ${row.project_name ? `<span>${escapeHtml(row.project_name)}</span>` : ''}
+                      ${row.author_name ? `<span>작성자 ${escapeHtml(row.author_name)}</span>` : ''}
+                      ${row.created_at ? `<span>${formatDateTime(row.created_at)}</span>` : ''}
+                      <span class="ml-auto">${escapeHtml(path)}</span>
+                    </div>
+                  </button>
+                `;
+              })
+              .join('')
+          : '<p class="text-sm nu-text-muted">검색 결과가 없습니다.</p>'
+      }
+    `;
+    resultEl.querySelectorAll('[data-role="nu-search-open"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const index = Number.parseInt(btn.getAttribute('data-index') || '', 10);
+        const row = rows[index];
+        if (!row) return;
+        navigate(p2ResolveSearchPath(row));
+      });
+    });
+  };
+  const runSearch = async (filters) => {
+    if (filters.q.length < 2) {
+      resultEl.innerHTML = '<p class="text-sm nu-text-muted">검색어를 2글자 이상 입력하세요.</p>';
+      return;
+    }
+    resultEl.innerHTML = '<p class="text-sm nu-text-muted">검색 중...</p>';
+    const qs = new URLSearchParams();
+    qs.set('q', filters.q);
+    if (filters.types.length) qs.set('types', filters.types.join(','));
+    if (filters.batchId) qs.set('batch_id', filters.batchId);
+    if (filters.authorId) qs.set('author_id', filters.authorId);
+    if (filters.startDate) qs.set('start_date', filters.startDate);
+    if (filters.endDate) qs.set('end_date', filters.endDate);
+    qs.set('limit', '80');
+    try {
+      const payload = await api(`/api/search?${qs.toString()}`);
+      const rows = Array.isArray(payload?.results) ? payload.results : [];
+      renderRows(rows);
+    } catch (error) {
+      resultEl.innerHTML = `<p class="text-sm text-red-600">${escapeHtml(error.message || '검색 실패')}</p>`;
+    }
+  };
+
+  document.getElementById('nu-search-back')?.addEventListener('click', () => navigate('/projects'));
+  document.getElementById('nu-search-reset')?.addEventListener('click', () => navigate('/search'));
+  formEl?.addEventListener('submit', (evt) => {
+    evt.preventDefault();
+    const filters = readFilters();
+    if (!filters.types.length) {
+      alert('검색 유형을 최소 1개 선택하세요.');
+      return;
+    }
+    const queryString = toQueryString(filters);
+    navigate(`/search${queryString ? `?${queryString}` : ''}`);
+  });
+
+  await runSearch(initial);
+}
+
+function p2SessionStatusLabel(status) {
+  const labels = {
+    scheduled: '예정',
+    completed: '완료',
+    cancelled: '취소',
+    rescheduled: '변경',
+  };
+  return labels[String(status || '').toLowerCase()] || String(status || '-');
+}
+
+async function renderSessionDetail(view, sessionId) {
+  const role = normalizeRole(state.user?.role || '');
+  const canUseAttendance = ['admin', 'internal_coach', 'external_coach', 'participant'].includes(role);
+  const canCoachTime = ['admin', 'internal_coach', 'external_coach'].includes(role);
+  const canManageSession = role !== 'observer';
+  const canReadAttendanceTable = ['admin', 'internal_coach', 'external_coach'].includes(role);
+
+  const session = await api(`/api/sessions/${sessionId}`);
+  const [
+    attendees,
+    attendanceResult,
+    coachingResult,
+    project,
+    projectMembers,
+    myAttendanceStatus,
+  ] = await Promise.all([
+    api(`/api/sessions/${sessionId}/attendees`).catch(() => []),
+    api(`/api/sessions/${sessionId}/attendance`)
+      .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: '' }))
+      .catch((error) => ({ rows: [], error: error.message || '출결 현황 조회 실패' })),
+    api(`/api/sessions/${sessionId}/coaching-log`)
+      .then((rows) => ({ rows: Array.isArray(rows) ? rows : [], error: '' }))
+      .catch((error) => ({ rows: [], error: error.message || '코칭 로그 조회 실패' })),
+    api(`/api/projects/${session.project_id}`).catch(() => null),
+    api(`/api/projects/${session.project_id}/members`).catch(() => []),
+    canUseAttendance
+      ? api(`/api/sessions/${sessionId}/my-attendance-status`)
+          .then((payload) => ({ payload, error: '' }))
+          .catch((error) => ({ payload: null, error: error.message || '내 출결 조회 실패' }))
+      : Promise.resolve({ payload: null, error: '' }),
+  ]);
+
+  const attendeeRows = Array.isArray(attendees) ? attendees : [];
+  const attendanceRows = Array.isArray(attendanceResult.rows) ? attendanceResult.rows : [];
+  const coachingRows = Array.isArray(coachingResult.rows) ? coachingResult.rows : [];
+  const memberRows = Array.isArray(projectMembers) ? projectMembers : [];
+
+  const memberNameMap = new Map();
+  memberRows.forEach((row) => {
+    memberNameMap.set(Number(row.user_id), String(row.user_name || ''));
+  });
+
+  const allUsers = role === 'admin' ? await api('/api/users?include_inactive=true').catch(() => []) : [];
+  const userRows = Array.isArray(allUsers) ? allUsers : [];
+  const userMap = new Map();
+  userRows.forEach((row) => userMap.set(Number(row.user_id), row));
+  const userLabel = (userId) => {
+    const fromUsers = userMap.get(Number(userId));
+    if (fromUsers?.name) return `${fromUsers.name} (@${fromUsers.emp_id || '-'})`;
+    const fromMembers = memberNameMap.get(Number(userId));
+    if (fromMembers) return `${fromMembers} (ID:${userId})`;
+    return `사용자 ${userId}`;
+  };
+
+  const status = myAttendanceStatus.payload;
+  const myLog = status?.attendance_log || null;
+  const myActiveCoaching = coachingRows.find(
+    (row) => Number(row.coach_user_id) === Number(state.user?.user_id) && !row.ended_at
+  );
+
+  view.innerHTML = `
+    <section class="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div>
+        <div class="text-sm nu-text-muted mb-1">
+          <button id="nu-session-back-project" class="underline underline-offset-2">과제 상세</button>
+          <span class="mx-1">/</span>
+          <button id="nu-session-back-calendar" class="underline underline-offset-2">캘린더</button>
+        </div>
+        <h1 class="text-2xl font-bold">코칭 세션 상세</h1>
+        <div class="mt-1 text-sm nu-text-muted flex flex-wrap items-center gap-2">
+          <span>${escapeHtml(project?.project_name || `과제 ${session.project_id}`)}</span>
+          <span>·</span>
+          <span>${formatDate(session.session_date)}</span>
+          <span>·</span>
+          <span>${escapeHtml(session.start_time || '-')} ~ ${escapeHtml(session.end_time || '-')}</span>
+          ${
+            session.location
+              ? `<span>·</span><span>${escapeHtml(session.location)}</span>`
+              : ''
+          }
+          <span class="rounded-full px-2 py-1 text-xs bg-slate-100 text-slate-700">${escapeHtml(p2SessionStatusLabel(session.session_status))}</span>
+        </div>
+      </div>
+      ${
+        canManageSession
+          ? `<div class="flex items-center gap-2">
+               <button id="nu-session-edit" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">수정</button>
+               <button id="nu-session-delete" class="rounded-lg border border-red-200 bg-red-50 text-red-600 px-3 py-2 text-sm">삭제</button>
+             </div>`
+          : ''
+      }
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <article class="xl:col-span-2 rounded-2xl border nu-border nu-surface p-4 space-y-4">
+        <div class="rounded-xl border nu-border p-3">
+          <div class="text-sm font-semibold mb-2">세션 메모</div>
+          <div class="text-sm rich-content">${renderRichContent(session.note, '-')}</div>
+          <div class="mt-2 text-xs nu-text-muted">생성자: ${escapeHtml(userLabel(session.created_by))}</div>
+        </div>
+
+        <div class="rounded-xl border nu-border p-3">
+          <div class="text-sm font-semibold mb-2">참여자 (${attendeeRows.length})</div>
+          ${
+            attendeeRows.length
+              ? `
+                <div class="overflow-auto">
+                  <table class="min-w-full text-sm">
+                    <thead>
+                      <tr class="text-left border-b nu-border">
+                        <th class="py-2 pr-3">사용자</th>
+                        <th class="py-2 pr-3">역할</th>
+                        <th class="py-2 pr-3">출석상태</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${attendeeRows
+                        .map(
+                          (row) => `
+                            <tr class="border-b nu-border">
+                              <td class="py-2 pr-3">${escapeHtml(userLabel(row.user_id))}</td>
+                              <td class="py-2 pr-3">${escapeHtml(row.attendee_role || '-')}</td>
+                              <td class="py-2 pr-3">${escapeHtml(row.attendance_status || '-')}</td>
+                            </tr>
+                          `
+                        )
+                        .join('')}
+                    </tbody>
+                  </table>
+                </div>
+              `
+              : '<p class="text-sm nu-text-muted">참여자 정보가 없습니다.</p>'
+          }
+        </div>
+
+        <div class="rounded-xl border nu-border p-3">
+          <div class="text-sm font-semibold mb-2">출결 현황</div>
+          ${
+            canReadAttendanceTable
+              ? attendanceRows.length
+                ? `
+                  <div class="overflow-auto">
+                    <table class="min-w-full text-sm">
+                      <thead>
+                        <tr class="text-left border-b nu-border">
+                          <th class="py-2 pr-3">사용자</th>
+                          <th class="py-2 pr-3">입실</th>
+                          <th class="py-2 pr-3">퇴실</th>
+                          <th class="py-2 pr-3">IP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${attendanceRows
+                          .map(
+                            (row) => `
+                              <tr class="border-b nu-border">
+                                <td class="py-2 pr-3">${escapeHtml(userLabel(row.user_id))}</td>
+                                <td class="py-2 pr-3">${formatDateTime(row.check_in_time)}</td>
+                                <td class="py-2 pr-3">${row.check_out_time ? formatDateTime(row.check_out_time) : '-'}</td>
+                                <td class="py-2 pr-3 text-xs">${escapeHtml(row.check_in_ip || '-')} ${row.check_out_ip ? `→ ${escapeHtml(row.check_out_ip)}` : ''}</td>
+                              </tr>
+                            `
+                          )
+                          .join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                `
+                : attendanceResult.error
+                ? `<p class="text-sm nu-text-muted">${escapeHtml(attendanceResult.error)}</p>`
+                : '<p class="text-sm nu-text-muted">출결 기록이 없습니다.</p>'
+              : '<p class="text-sm nu-text-muted">관리자/코치만 조회할 수 있습니다.</p>'
+          }
+        </div>
+      </article>
+
+      <aside class="space-y-4">
+        <article class="rounded-2xl border nu-border nu-surface p-4">
+          <div class="text-sm font-semibold mb-2">내 출결</div>
+          ${
+            !canUseAttendance
+              ? '<p class="text-sm nu-text-muted">참관자는 출결 기능을 사용할 수 없습니다.</p>'
+              : myAttendanceStatus.error
+              ? `<p class="text-sm text-red-600">${escapeHtml(myAttendanceStatus.error)}</p>`
+              : myLog
+              ? `
+                <div class="space-y-1 text-sm">
+                  <p>입실: ${formatDateTime(myLog.check_in_time)}</p>
+                  <p>퇴실: ${myLog.check_out_time ? formatDateTime(myLog.check_out_time) : '-'}</p>
+                </div>
+                ${
+                  !myLog.check_out_time && status?.can_checkout
+                    ? '<button id="nu-session-checkout" class="mt-2 rounded-lg border nu-border px-3 py-2 text-sm nu-surface">퇴실 체크</button>'
+                    : ''
+                }
+              `
+              : status?.can_checkin
+              ? '<button id="nu-session-checkin" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">입실 체크</button>'
+              : '<p class="text-sm nu-text-muted">허용된 네트워크(IP)에서 접속하면 버튼이 표시됩니다.</p>'
+          }
+        </article>
+
+        <article class="rounded-2xl border nu-border nu-surface p-4">
+          <div class="text-sm font-semibold mb-2">코칭 시간</div>
+          ${
+            canCoachTime
+              ? myActiveCoaching
+                ? `
+                  <p class="text-sm">시작: ${formatDateTime(myActiveCoaching.started_at)}</p>
+                  <button id="nu-session-coaching-end" class="mt-2 rounded-lg border nu-border px-3 py-2 text-sm nu-surface">코칭 종료</button>
+                `
+                : '<button id="nu-session-coaching-start" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">코칭 시작</button>'
+              : '<p class="text-sm nu-text-muted">관리자/코치만 코칭 시간을 기록할 수 있습니다.</p>'
+          }
+        </article>
+
+        <article class="rounded-2xl border nu-border nu-surface p-4">
+          <div class="text-sm font-semibold mb-2">코칭 로그 (${coachingRows.length})</div>
+          ${
+            coachingRows.length
+              ? `
+                <div class="space-y-2">
+                  ${coachingRows
+                    .map(
+                      (row) => `
+                        <div class="rounded-lg border nu-border p-2 text-sm">
+                          <div class="font-medium">${escapeHtml(userLabel(row.coach_user_id))}</div>
+                          <div class="text-xs nu-text-muted mt-1">
+                            ${formatDateTime(row.started_at)} ~ ${row.ended_at ? formatDateTime(row.ended_at) : '진행 중'}
+                            ${
+                              row.duration_minutes !== null && row.duration_minutes !== undefined
+                                ? ` · ${Number(row.duration_minutes)}분`
+                                : ''
+                            }
+                          </div>
+                        </div>
+                      `
+                    )
+                    .join('')}
+                </div>
+              `
+              : coachingResult.error
+              ? `<p class="text-sm nu-text-muted">${escapeHtml(coachingResult.error)}</p>`
+              : '<p class="text-sm nu-text-muted">코칭 로그가 없습니다.</p>'
+          }
+        </article>
+      </aside>
+    </section>
+  `;
+
+  const openSessionEditModal = () => {
+    const modal = openNuModal({
+      title: '세션 수정',
+      maxWidth: 'max-w-2xl',
+      bodyHtml: `
+        <form id="nu-session-edit-form" class="space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm block">일자
+              <input type="date" name="session_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(toDateInputValue(session.session_date) || '')}" required />
+            </label>
+            <label class="text-sm block">상태
+              <select name="session_status" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                ${['scheduled', 'completed', 'cancelled', 'rescheduled']
+                  .map((item) => `<option value="${item}" ${item === String(session.session_status || '') ? 'selected' : ''}>${escapeHtml(p2SessionStatusLabel(item))}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="text-sm block">시작시간
+              <input name="start_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(session.start_time || '')}" required />
+            </label>
+            <label class="text-sm block">종료시간
+              <input name="end_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(session.end_time || '')}" required />
+            </label>
+            <label class="text-sm block md:col-span-2">장소
+              <input name="location" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(session.location || '')}" />
+            </label>
+            <label class="text-sm block md:col-span-2">메모
+              <textarea name="note" rows="4" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">${escapeHtml(session.note || '')}</textarea>
+            </label>
+          </div>
+          <p id="nu-session-edit-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-session-edit-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">저장</button>
+          </div>
+        </form>
+      `,
+    });
+    modal.bodyEl.querySelector('#nu-session-edit-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-session-edit-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const errorEl = modal.bodyEl.querySelector('#nu-session-edit-error');
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-session-edit-form'));
+      const payload = {
+        session_date: String(fd.get('session_date') || '').trim(),
+        start_time: String(fd.get('start_time') || '').trim(),
+        end_time: String(fd.get('end_time') || '').trim(),
+        session_status: String(fd.get('session_status') || '').trim(),
+        location: String(fd.get('location') || '').trim() || null,
+        note: String(fd.get('note') || '').trim() || null,
+      };
+      if (!payload.session_date || !payload.start_time || !payload.end_time) {
+        if (errorEl) errorEl.textContent = '일자/시간을 입력하세요.';
+        return;
+      }
+      try {
+        await api(`/api/sessions/${sessionId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        modal.close();
+        await renderSessionDetail(view, sessionId);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || '세션 저장 실패';
+      }
+    });
+  };
+
+  document.getElementById('nu-session-back-project')?.addEventListener('click', () => navigate(`/projects/${session.project_id}`));
+  document.getElementById('nu-session-back-calendar')?.addEventListener('click', () => navigate('/calendar'));
+  document.getElementById('nu-session-checkin')?.addEventListener('click', async () => {
+    try {
+      await api(`/api/sessions/${sessionId}/checkin`, { method: 'POST' });
+      await renderSessionDetail(view, sessionId);
+    } catch (error) {
+      alert(error.message || '입실 체크 실패');
+    }
+  });
+  document.getElementById('nu-session-checkout')?.addEventListener('click', async () => {
+    try {
+      await api(`/api/sessions/${sessionId}/checkout`, { method: 'POST' });
+      await renderSessionDetail(view, sessionId);
+    } catch (error) {
+      alert(error.message || '퇴실 체크 실패');
+    }
+  });
+  document.getElementById('nu-session-coaching-start')?.addEventListener('click', async () => {
+    try {
+      await api(`/api/sessions/${sessionId}/coaching-start`, { method: 'POST' });
+      await renderSessionDetail(view, sessionId);
+    } catch (error) {
+      alert(error.message || '코칭 시작 실패');
+    }
+  });
+  document.getElementById('nu-session-coaching-end')?.addEventListener('click', async () => {
+    try {
+      await api(`/api/sessions/${sessionId}/coaching-end`, { method: 'POST' });
+      await renderSessionDetail(view, sessionId);
+    } catch (error) {
+      alert(error.message || '코칭 종료 실패');
+    }
+  });
+  document.getElementById('nu-session-edit')?.addEventListener('click', openSessionEditModal);
+  document.getElementById('nu-session-delete')?.addEventListener('click', async () => {
+    if (!confirm('이 세션을 삭제하시겠습니까?')) return;
+    try {
+      await api(`/api/sessions/${sessionId}`, { method: 'DELETE' });
+      navigate('/calendar');
+    } catch (error) {
+      alert(error.message || '세션 삭제 실패');
+    }
   });
 }
