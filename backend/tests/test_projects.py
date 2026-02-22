@@ -236,6 +236,80 @@ def test_project_member_manage_allowed_for_participant_on_own_project(client, se
     assert remove_resp.status_code == 200
 
 
+def test_project_member_can_update_project_basic_info(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member Edit Project", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_member_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert add_member_resp.status_code == 200
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}",
+        json={"organization": "Updated Team"},
+        headers=participant_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["organization"] == "Updated Team"
+
+
+def test_project_member_can_set_representative(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Representative Project", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_participant_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": True},
+        headers=admin_headers,
+    )
+    assert add_participant_resp.status_code == 200
+
+    add_observer_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["observer"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert add_observer_resp.status_code == 200
+
+    set_rep_resp = client.put(
+        f"/api/projects/{project_id}/members/{seed_users['observer'].user_id}/representative",
+        headers=participant_headers,
+    )
+    assert set_rep_resp.status_code == 200, set_rep_resp.text
+    assert set_rep_resp.json()["user_id"] == seed_users["observer"].user_id
+    assert set_rep_resp.json()["is_representative"] is True
+
+    members_resp = client.get(f"/api/projects/{project_id}/members", headers=admin_headers)
+    assert members_resp.status_code == 200
+    rows = members_resp.json()
+    rep_rows = [row for row in rows if row["is_representative"]]
+    assert len(rep_rows) == 1
+    assert rep_rows[0]["user_id"] == seed_users["observer"].user_id
+
+    project_resp = client.get(f"/api/projects/{project_id}", headers=admin_headers)
+    assert project_resp.status_code == 200
+    assert project_resp.json()["representative"] == seed_users["observer"].name
+
+
 def test_project_member_manage_forbidden_for_participant_on_other_project(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     participant_headers = auth_headers(client, "user001")

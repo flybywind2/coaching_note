@@ -40,9 +40,7 @@ DEFAULT_CONTENT = {
   <li>문서/코칭노트/성과를 하나의 워크스페이스에서 관리</li>
 </ul>
 """.strip(),
-    "coach_intro": """
-<p>프로그램에 참여하는 코치진의 전문 분야와 이력을 확인하세요.</p>
-""".strip(),
+    "coach_intro": "",
 }
 
 
@@ -83,6 +81,10 @@ def _validate_coach_user(db: Session, user_id: int) -> User:
     if user.role not in COACH_USER_ROLES:
         raise HTTPException(status_code=400, detail="코치 역할 사용자만 연결할 수 있습니다.")
     return user
+
+
+def _is_coach_role(user: User) -> bool:
+    return user.role in COACH_USER_ROLES
 
 
 def _get_or_default_content(db: Session, key: str) -> SiteContentOut:
@@ -277,20 +279,29 @@ def list_coaches(
 def create_coach(
     data: CoachProfileCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
+    is_admin = current_user.role == "admin"
+    if not is_admin and not _is_coach_role(current_user):
+        raise HTTPException(status_code=403, detail="코치 프로필 등록 권한이 없습니다.")
+
     if data.batch_id is None:
         raise HTTPException(status_code=400, detail="차수를 선택하세요.")
     _validate_batch(db, data.batch_id)
 
+    target_user_id = data.user_id
+    if not is_admin:
+        if target_user_id is not None and int(target_user_id) != int(current_user.user_id):
+            raise HTTPException(status_code=403, detail="본인 코치 카드만 등록할 수 있습니다.")
+        target_user_id = current_user.user_id
+
     linked_user = None
-    if data.user_id is not None:
-        linked_user = _validate_coach_user(db, data.user_id)
+    if target_user_id is not None:
+        linked_user = _validate_coach_user(db, target_user_id)
         exists = (
             db.query(Coach)
             .filter(
-                Coach.user_id == data.user_id,
+                Coach.user_id == target_user_id,
                 Coach.batch_id == data.batch_id,
                 Coach.is_active == True,  # noqa: E712
             )
@@ -306,17 +317,21 @@ def create_coach(
         raise HTTPException(status_code=400, detail="코치 이름을 입력하세요.")
 
     row = Coach(
-        user_id=data.user_id,
+        user_id=target_user_id,
         batch_id=data.batch_id,
         name=coach_name,
-        coach_type=data.coach_type or "internal",
+        coach_type=("external" if linked_user and linked_user.role == EXTERNAL_COACH else (data.coach_type or "internal")),
         department=(data.department or (linked_user.department if linked_user else None)),
         affiliation=data.affiliation,
         specialty=data.specialty,
         career=data.career,
         photo_url=data.photo_url,
-        is_visible=True if data.is_visible is None else bool(data.is_visible),
-        display_order=data.display_order if data.display_order is not None else _next_display_order(db, data.batch_id),
+        is_visible=True if (not is_admin or data.is_visible is None) else bool(data.is_visible),
+        display_order=(
+            data.display_order
+            if is_admin and data.display_order is not None
+            else _next_display_order(db, data.batch_id)
+        ),
         is_active=True,
     )
     db.add(row)
@@ -330,9 +345,8 @@ def update_coach(
     coach_id: int,
     data: CoachProfileUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("admin")),
+    current_user: User = Depends(get_current_user),
 ):
-    _ = current_user
     row = (
         db.query(Coach)
         .filter(Coach.coach_id == coach_id, Coach.is_active == True)  # noqa: E712
@@ -341,11 +355,16 @@ def update_coach(
     if not row:
         raise HTTPException(status_code=404, detail="코치 프로필을 찾을 수 없습니다.")
 
+    is_admin = current_user.role == "admin"
+    can_edit_own_profile = _is_coach_role(current_user) and row.user_id == current_user.user_id
+    if not is_admin and not can_edit_own_profile:
+        raise HTTPException(status_code=403, detail="코치 프로필 수정 권한이 없습니다.")
+
     next_batch_id = data.batch_id if data.batch_id is not None else row.batch_id
-    if next_batch_id is not None:
+    if is_admin and next_batch_id is not None:
         _validate_batch(db, next_batch_id)
 
-    if data.user_id is not None:
+    if is_admin and data.user_id is not None:
         _validate_coach_user(db, data.user_id)
         duplicate = (
             db.query(Coach)
@@ -362,6 +381,9 @@ def update_coach(
         row.user_id = data.user_id
 
     payload = data.model_dump(exclude_none=True, exclude={"user_id"})
+    if not is_admin:
+        for field in ("batch_id", "coach_type", "is_visible", "display_order"):
+            payload.pop(field, None)
     for key, value in payload.items():
         setattr(row, key, value)
 

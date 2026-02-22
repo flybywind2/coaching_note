@@ -173,6 +173,41 @@ def test_coach_profile_crud_admin_only(client, seed_users, seed_batch):
     assert all(row.get("coach_id") != coach_id for row in list_after_delete.json())
 
 
+def test_coach_can_edit_own_profile(client, seed_users, seed_batch):
+    coach_headers = auth_headers(client, "coach001")
+
+    create_resp = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "Coach",
+            "specialty": "초기 분야",
+        },
+        headers=coach_headers,
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    coach = create_resp.json()
+    assert coach["user_id"] == seed_users["coach"].user_id
+
+    update_resp = client.put(
+        f"/api/about/coaches/{coach['coach_id']}",
+        json={"specialty": "수정 분야", "career": "코칭 경력"},
+        headers=coach_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    body = update_resp.json()
+    assert body["specialty"] == "수정 분야"
+    assert body["career"] == "코칭 경력"
+
+    forbidden_update_resp = client.put(
+        f"/api/about/coaches/{coach['coach_id']}",
+        json={"is_visible": False},
+        headers=coach_headers,
+    )
+    assert forbidden_update_resp.status_code == 200, forbidden_update_resp.text
+    assert forbidden_update_resp.json()["is_visible"] is True
+
+
 def test_reorder_coaches_endpoint_not_shadowed_by_dynamic_route(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
 
