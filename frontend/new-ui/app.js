@@ -3333,3 +3333,2342 @@ function kpiCard(label, value) {
     </div>
   `;
 }
+
+// P1 parity overrides for New UI
+
+function p1DateLabel(dateKey) {
+  const dt = parseDate(`${dateKey}T00:00:00`);
+  if (!dt) return dateKey;
+  const week = ['일', '월', '화', '수', '목', '금', '토'][dt.getDay()];
+  return `${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}(${week})`;
+}
+
+function p1TodayIso() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function p1ProjectTypeLabel(value) {
+  return String(value || 'primary') === 'associate' ? '준참여과제' : '정식과제';
+}
+
+function p1HasText(value) {
+  return String((value || '').replace(/<[^>]+>/g, '').trim()).length > 0;
+}
+
+function p1MentionToken(empId) {
+  return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-blue-100 text-blue-700 border border-blue-200">@${escapeHtml(empId)}</span>`;
+}
+
+function p1MergeMentionsIntoContent(html, pickedUsers = []) {
+  const uniqueEmpIds = [];
+  const seen = new Set();
+  (pickedUsers || []).forEach((row) => {
+    const empId = String(row?.emp_id || '').trim();
+    if (!empId || seen.has(empId)) return;
+    seen.add(empId);
+    uniqueEmpIds.push(empId);
+  });
+  if (!uniqueEmpIds.length) return html || '';
+  const plainText = String(html || '').replace(/<[^>]+>/g, ' ');
+  const missing = uniqueEmpIds.filter((empId) => !new RegExp(`@${empId}(\\b|$)`).test(plainText));
+  if (!missing.length) return html || '';
+  return `${html || ''}<p>${missing.map((empId) => p1MentionToken(empId)).join(' ')}</p>`;
+}
+
+async function renderDashboard(view) {
+  if (!state.batchId) {
+    view.innerHTML = '<div class="rounded-xl border nu-border nu-surface p-4 nu-text-muted">차수 데이터가 없습니다.</div>';
+    return;
+  }
+
+  const role = normalizeRole(state.user?.role || '');
+  const isAdmin = role === 'admin';
+  const MODE_KEY = 'new_ui_dash_mode';
+  const TYPE_KEY = 'new_ui_dash_project_type';
+  const EXPAND_KEY = 'new_ui_dash_expand_projects';
+
+  let mode = localStorage.getItem(MODE_KEY) || 'progress';
+  if (!['progress', 'attendance', 'coaching', 'coach_performance'].includes(mode)) mode = 'progress';
+  if (!isAdmin && mode === 'coach_performance') mode = 'progress';
+  let projectType = localStorage.getItem(TYPE_KEY) || 'primary';
+  if (!['primary', 'associate'].includes(projectType)) projectType = 'primary';
+  let expandedProjects = {};
+  try {
+    expandedProjects = JSON.parse(localStorage.getItem(EXPAND_KEY) || '{}') || {};
+  } catch {
+    expandedProjects = {};
+  }
+
+  const data = await api(`/api/dashboard?batch_id=${state.batchId}`);
+  const allDates = Array.isArray(data?.dates) ? data.dates.map((value) => String(value).slice(0, 10)) : [];
+  const coachingDateSet = new Set(
+    (Array.isArray(data?.coaching_schedule_dates) ? data.coaching_schedule_dates : []).map((value) => String(value).slice(0, 10))
+  );
+  const dates = allDates.filter((dateKey) => coachingDateSet.has(dateKey));
+  const projects = (Array.isArray(data?.projects) ? data.projects : [])
+    .filter((row) => String(row.project_type || 'primary') === projectType)
+    .sort((a, b) => String(a.project_name || '').localeCompare(String(b.project_name || ''), 'ko'));
+  const attendanceRows = Array.isArray(data?.attendance_rows) ? data.attendance_rows : [];
+  const noteRows = Array.isArray(data?.note_rows) ? data.note_rows : [];
+  const attendanceMemberRows = Array.isArray(data?.attendance_member_rows) ? data.attendance_member_rows : [];
+  const coachPerformanceRows = Array.isArray(data?.coach_performance) ? data.coach_performance : [];
+  const attendanceRowMap = new Map(attendanceRows.map((row) => [Number(row.project_id), row]));
+  const noteRowMap = new Map(noteRows.map((row) => [Number(row.project_id), row]));
+  const memberRowMap = new Map(attendanceMemberRows.map((row) => [Number(row.project_id), Array.isArray(row.members) ? row.members : []]));
+
+  const orderedCells = (cells, fallback) => {
+    const map = new Map((Array.isArray(cells) ? cells : []).map((cell) => [String(cell.date).slice(0, 10), cell]));
+    return dates.map((dateKey) => ({ date: dateKey, ...(fallback || {}), ...(map.get(dateKey) || {}) }));
+  };
+
+  const renderProgress = () => {
+    if (!projects.length) return '<p class="text-sm nu-text-muted py-3">표시할 과제가 없습니다.</p>';
+    return `
+      <div class="overflow-auto" id="nu-dash-matrix">
+        <table class="min-w-full text-sm border-separate border-spacing-0">
+          <thead>
+            <tr>
+              <th class="sticky top-0 left-0 z-20 nu-surface border-b nu-border px-3 py-2 text-left min-w-[260px]">과제명</th>
+              <th class="sticky top-0 left-[260px] z-20 nu-surface border-b nu-border px-3 py-2 text-left min-w-[96px]">구분</th>
+              <th class="sticky top-0 left-[356px] z-20 nu-surface border-b nu-border px-3 py-2 text-left min-w-[110px]">합계</th>
+              <th class="sticky top-0 z-10 nu-surface border-b nu-border px-3 py-2 text-left min-w-[260px]">진행률</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${projects
+              .map((project) => {
+                const progress = Math.max(0, Math.min(100, Number(project.progress_rate || 0)));
+                return `
+                  <tr>
+                    <td class="sticky left-0 z-10 nu-surface border-b nu-border px-3 py-2 font-medium">
+                      <button class="underline underline-offset-2 text-left" data-role="nu-dash-open-project" data-project-id="${project.project_id}">${escapeHtml(project.project_name || '-')}</button>
+                    </td>
+                    <td class="sticky left-[260px] z-10 nu-surface border-b nu-border px-3 py-2">${escapeHtml(p1ProjectTypeLabel(project.project_type))}</td>
+                    <td class="sticky left-[356px] z-10 nu-surface border-b nu-border px-3 py-2 font-semibold">${progress.toFixed(0)}%</td>
+                    <td class="border-b nu-border px-3 py-2">
+                      <div class="h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                        <div class="h-full nu-primary-bg" style="width:${progress}%;"></div>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  const renderAttendance = () => {
+    if (!projects.length) return '<p class="text-sm nu-text-muted py-3">표시할 과제가 없습니다.</p>';
+    if (!dates.length) return '<p class="text-sm nu-text-muted py-3">코칭 일정 데이터가 없습니다.</p>';
+    return `
+      <div class="overflow-auto" id="nu-dash-matrix">
+        <table class="min-w-full text-xs md:text-sm border-separate border-spacing-0">
+          <thead>
+            <tr>
+              <th class="sticky top-0 left-0 z-30 nu-surface border-b nu-border px-3 py-2 text-left min-w-[240px]">과제명</th>
+              <th class="sticky top-0 left-[240px] z-30 nu-surface border-b nu-border px-3 py-2 text-left min-w-[120px]">총인원</th>
+              <th class="sticky top-0 left-[360px] z-30 nu-surface border-b nu-border px-3 py-2 text-left min-w-[130px]">합계</th>
+              ${dates
+                .map(
+                  (dateKey) =>
+                    `<th data-date="${escapeHtml(dateKey)}" class="sticky top-0 z-20 nu-surface border-b nu-border px-2 py-2 min-w-[118px] text-left">${escapeHtml(
+                      p1DateLabel(dateKey)
+                    )}</th>`
+                )
+                .join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${projects
+              .map((project) => {
+                const row = attendanceRowMap.get(Number(project.project_id)) || {};
+                const cells = orderedCells(row.cells, { attendance_count: 0, attendance_rate: 0 });
+                const expectedCount = Number(row.expected_count || project.expected_count || 0);
+                const attendedDays = cells.filter((cell) => Number(cell.attendance_count || 0) > 0).length;
+                const members = memberRowMap.get(Number(project.project_id)) || [];
+                const expanded = !!expandedProjects[String(project.project_id)];
+                const memberRows = expanded
+                  ? members
+                      .map((member) => {
+                        const attended = new Set((Array.isArray(member.attendance_dates) ? member.attendance_dates : []).map((d) => String(d).slice(0, 10)));
+                        return `
+                          <tr class="bg-slate-50/60">
+                            <td class="sticky left-0 z-10 nu-surface border-b nu-border px-3 py-2 pl-6 text-xs">- ${escapeHtml(member.user_name || `사용자#${member.user_id}`)}</td>
+                            <td class="sticky left-[240px] z-10 nu-surface border-b nu-border px-3 py-2"></td>
+                            <td class="sticky left-[360px] z-10 nu-surface border-b nu-border px-3 py-2"></td>
+                            ${dates.map((dateKey) => `<td class="border-b nu-border px-2 py-2 text-center">${attended.has(dateKey) ? 'V' : ''}</td>`).join('')}
+                          </tr>
+                        `;
+                      })
+                      .join('')
+                  : '';
+                return `
+                  <tr>
+                    <td class="sticky left-0 z-10 nu-surface border-b nu-border px-3 py-2">
+                      <button class="underline underline-offset-2 text-left" data-role="nu-dash-open-project" data-project-id="${project.project_id}">${escapeHtml(
+                        project.project_name || '-'
+                      )}</button>
+                    </td>
+                    <td class="sticky left-[240px] z-10 nu-surface border-b nu-border px-3 py-2">
+                      <button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-dash-toggle-members" data-project-id="${project.project_id}">
+                        대상 ${expectedCount}명 ${expanded ? '▲' : '▼'}
+                      </button>
+                    </td>
+                    <td class="sticky left-[360px] z-10 nu-surface border-b nu-border px-3 py-2 font-semibold">
+                      ${attendedDays}/${dates.length}
+                      <div class="text-[11px] nu-text-muted">한명 이상 출석</div>
+                    </td>
+                    ${cells
+                      .map(
+                        (cell) => `
+                          <td class="border-b nu-border px-2 py-2 text-center">
+                            <div>${Number(cell.attendance_count || 0)}명</div>
+                            <div class="text-[11px] nu-text-muted">${Number(cell.attendance_rate || 0).toFixed(1)}%</div>
+                          </td>
+                        `
+                      )
+                      .join('')}
+                  </tr>
+                  ${memberRows}
+                `;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  const renderCoaching = () => {
+    if (!projects.length) return '<p class="text-sm nu-text-muted py-3">표시할 과제가 없습니다.</p>';
+    if (!dates.length) return '<p class="text-sm nu-text-muted py-3">코칭 일정 데이터가 없습니다.</p>';
+    return `
+      <div class="overflow-auto" id="nu-dash-matrix">
+        <table class="min-w-full text-xs md:text-sm border-separate border-spacing-0">
+          <thead>
+            <tr>
+              <th class="sticky top-0 left-0 z-30 nu-surface border-b nu-border px-3 py-2 text-left min-w-[240px]">과제명</th>
+              <th class="sticky top-0 left-[240px] z-30 nu-surface border-b nu-border px-3 py-2 text-left min-w-[140px]">합계</th>
+              ${dates
+                .map(
+                  (dateKey) =>
+                    `<th data-date="${escapeHtml(dateKey)}" class="sticky top-0 z-20 nu-surface border-b nu-border px-2 py-2 min-w-[124px] text-left">${escapeHtml(
+                      p1DateLabel(dateKey)
+                    )}</th>`
+                )
+                .join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${projects
+              .map((project) => {
+                const row = noteRowMap.get(Number(project.project_id)) || {};
+                const cells = orderedCells(row.cells, { note_count: 0, coach_commenter_count: 0 });
+                const totalNotes = cells.reduce((acc, cell) => acc + Number(cell.note_count || 0), 0);
+                const totalCommenters = cells.reduce((acc, cell) => acc + Number(cell.coach_commenter_count || 0), 0);
+                return `
+                  <tr>
+                    <td class="sticky left-0 z-10 nu-surface border-b nu-border px-3 py-2">
+                      <button class="underline underline-offset-2 text-left" data-role="nu-dash-open-project" data-project-id="${project.project_id}">${escapeHtml(
+                        project.project_name || '-'
+                      )}</button>
+                    </td>
+                    <td class="sticky left-[240px] z-10 nu-surface border-b nu-border px-3 py-2 font-semibold">
+                      ${totalNotes}건
+                      <div class="text-[11px] nu-text-muted">코치 ${totalCommenters}명</div>
+                    </td>
+                    ${cells
+                      .map(
+                        (cell) => `
+                          <td class="border-b nu-border px-2 py-2 text-center">
+                            <div>${Number(cell.note_count || 0)}건</div>
+                            <div class="text-[11px] nu-text-muted">코치 ${Number(cell.coach_commenter_count || 0)}명</div>
+                          </td>
+                        `
+                      )
+                      .join('')}
+                  </tr>
+                `;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  const renderCoachPerformance = () => {
+    if (!coachPerformanceRows.length) return '<p class="text-sm nu-text-muted py-3">코칭 실적 데이터가 없습니다.</p>';
+    return `
+      <div class="overflow-auto">
+        <table class="min-w-full text-sm border-separate border-spacing-0">
+          <thead>
+            <tr>
+              <th class="sticky top-0 left-0 z-20 nu-surface border-b nu-border px-3 py-2 text-left min-w-[220px]">코치</th>
+              <th class="sticky top-0 left-[220px] z-20 nu-surface border-b nu-border px-3 py-2 text-left min-w-[110px]">합계</th>
+              <th class="sticky top-0 z-10 nu-surface border-b nu-border px-3 py-2 text-left min-w-[180px]">입실(코칭) 횟수</th>
+              <th class="sticky top-0 z-10 nu-surface border-b nu-border px-3 py-2 text-left min-w-[180px]">코칭의견 작성 건수</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${coachPerformanceRows
+              .map((row) => {
+                const checkinCount = Number(row.checkin_count || 0);
+                const commentCount = Number(row.comment_count || 0);
+                return `
+                  <tr>
+                    <td class="sticky left-0 z-10 nu-surface border-b nu-border px-3 py-2">${escapeHtml(row.coach_name || '-')}</td>
+                    <td class="sticky left-[220px] z-10 nu-surface border-b nu-border px-3 py-2 font-semibold">${checkinCount + commentCount}</td>
+                    <td class="border-b nu-border px-3 py-2">${checkinCount}</td>
+                    <td class="border-b nu-border px-3 py-2">${commentCount}</td>
+                  </tr>
+                `;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+
+  view.innerHTML = `
+    <section class="mb-4">
+      <h1 class="text-2xl font-bold">대시보드</h1>
+      <p class="nu-text-muted mt-1">코칭 일정 날짜축 기준으로 진행률/출석/코칭/코칭 실적을 관리합니다.</p>
+    </section>
+    <section class="rounded-2xl border nu-border nu-surface p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <button data-role="nu-dash-mode" data-mode="progress" class="rounded-lg border px-3 py-2 text-sm ${mode === 'progress' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">진행률</button>
+        <button data-role="nu-dash-mode" data-mode="attendance" class="rounded-lg border px-3 py-2 text-sm ${mode === 'attendance' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">출석</button>
+        <button data-role="nu-dash-mode" data-mode="coaching" class="rounded-lg border px-3 py-2 text-sm ${mode === 'coaching' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">코칭</button>
+        ${isAdmin ? `<button data-role="nu-dash-mode" data-mode="coach_performance" class="rounded-lg border px-3 py-2 text-sm ${mode === 'coach_performance' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">코칭 실적</button>` : ''}
+      </div>
+      ${
+        mode !== 'coach_performance'
+          ? `
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+              <button data-role="nu-dash-type" data-type="primary" class="rounded-lg border px-3 py-2 text-sm ${projectType === 'primary' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">정식과제</button>
+              <button data-role="nu-dash-type" data-type="associate" class="rounded-lg border px-3 py-2 text-sm ${projectType === 'associate' ? 'nu-primary-bg border-transparent' : 'nu-border nu-surface'}">준참여과제</button>
+            </div>
+          `
+          : ''
+      }
+      <div id="nu-dash-content">
+        ${mode === 'progress' ? renderProgress() : mode === 'attendance' ? renderAttendance() : mode === 'coaching' ? renderCoaching() : renderCoachPerformance()}
+      </div>
+    </section>
+  `;
+
+  view.querySelectorAll('[data-role="nu-dash-mode"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.getAttribute('data-mode') || 'progress';
+      localStorage.setItem(MODE_KEY, next);
+      if (next !== 'attendance') localStorage.setItem(EXPAND_KEY, JSON.stringify({}));
+      renderDashboard(view);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-dash-type"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.getAttribute('data-type') || 'primary';
+      localStorage.setItem(TYPE_KEY, next);
+      localStorage.setItem(EXPAND_KEY, JSON.stringify({}));
+      renderDashboard(view);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-dash-open-project"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const projectId = Number.parseInt(btn.getAttribute('data-project-id') || '', 10);
+      if (!Number.isNaN(projectId)) navigate(`/projects/${projectId}`);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-dash-toggle-members"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const projectId = Number.parseInt(btn.getAttribute('data-project-id') || '', 10);
+      if (Number.isNaN(projectId)) return;
+      expandedProjects = { ...expandedProjects, [String(projectId)]: !expandedProjects[String(projectId)] };
+      localStorage.setItem(EXPAND_KEY, JSON.stringify(expandedProjects));
+      renderDashboard(view);
+    });
+  });
+
+  if (mode === 'attendance' || mode === 'coaching') {
+    setTimeout(() => {
+      const wrap = document.getElementById('nu-dash-matrix');
+      if (!wrap || !dates.length) return;
+      const targetDate = dates.includes(p1TodayIso()) ? p1TodayIso() : dates[0];
+      const target = wrap.querySelector(`thead th[data-date="${targetDate}"]`);
+      if (!target) return;
+      wrap.scrollLeft = Math.max(target.offsetLeft - wrap.offsetLeft - 12, 0);
+    }, 0);
+  }
+}
+
+async function renderCalendar(view) {
+  if (!state.batchId) {
+    view.innerHTML = '<div class="rounded-xl border nu-border nu-surface p-4 nu-text-muted">차수 데이터가 없습니다.</div>';
+    return;
+  }
+
+  const role = normalizeRole(state.user?.role || '');
+  const isAdmin = role === 'admin';
+  const canManageSchedules = isAdmin;
+  const canManageSessions = ['admin', 'internal_coach', 'external_coach', 'participant'].includes(role);
+  const canCreateAnyEvent = canManageSchedules || canManageSessions;
+  const CALENDAR_VIEW_KEY = 'new_ui_calendar_view';
+  const savedViewMode = localStorage.getItem(CALENDAR_VIEW_KEY);
+  let viewMode = savedViewMode === 'list' ? 'list' : 'calendar';
+  const now = new Date();
+  let monthValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let events = [];
+  const projects = await api(`/api/batches/${state.batchId}/projects`).catch(() => []);
+  const projectRows = Array.isArray(projects) ? projects : [];
+
+  const CALENDAR_COLORS = [
+    { value: '#4CAF50', label: '초록' },
+    { value: '#00ACC1', label: '청록' },
+    { value: '#2196F3', label: '파랑' },
+    { value: '#3F51B5', label: '인디고' },
+    { value: '#FF9800', label: '주황' },
+    { value: '#FF7043', label: '코랄' },
+    { value: '#E57373', label: '레드' },
+    { value: '#FDD835', label: '옐로우' },
+    { value: '#8E24AA', label: '퍼플' },
+    { value: '#607D8B', label: '슬레이트' },
+  ];
+
+  const pad2 = (value) => String(value).padStart(2, '0');
+  const toDateKey = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const parseMonthValue = (value) => {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10);
+    if (Number.isNaN(year) || Number.isNaN(month) || month < 1 || month > 12) return null;
+    return { year, month };
+  };
+  const shiftMonthValue = (value, diff) => {
+    const parsed = parseMonthValue(value) || parseMonthValue(monthValue) || { year: now.getFullYear(), month: now.getMonth() + 1 };
+    const next = new Date(parsed.year, parsed.month - 1 + diff, 1);
+    return `${next.getFullYear()}-${pad2(next.getMonth() + 1)}`;
+  };
+  const toDateInputValueFromDateTime = (value) => {
+    const dt = parseDate(value);
+    return dt ? `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}` : '';
+  };
+  const toTimeInputValue = (value) => {
+    const dt = parseDate(value);
+    return dt ? `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}` : '';
+  };
+  const toDateTimeString = (dateStr, timeStr) => `${dateStr}T${String(timeStr || '00:00').slice(0, 5)}:00`;
+  const normalizeScope = (scope, scheduleType) => {
+    const raw = String(scope || '').trim().toLowerCase();
+    if (raw === 'coaching') return 'coaching';
+    if (raw === 'global') return 'global';
+    return String(scheduleType || '').toLowerCase() === 'coaching' ? 'coaching' : 'global';
+  };
+  const resolveEventDate = (event) => parseDate(event?.start || event?.start_time || event?.date);
+  const resolveEventSortTime = (event) => resolveEventDate(event)?.getTime() || 0;
+  const scopeLabel = (event) => {
+    if (String(event?.manage_type || '') === 'session') return '과제';
+    const scope = normalizeScope(event?.scope || event?.visibility_scope, event?.schedule_type);
+    return scope === 'coaching' ? '코칭' : '공통';
+  };
+  const typeLabel = (event) => {
+    if (String(event?.manage_type || '') === 'session') return '과제 일정';
+    const scope = normalizeScope(event?.scope || event?.visibility_scope, event?.schedule_type);
+    return scope === 'coaching' ? '코칭 일정' : '공통 일정';
+  };
+  const canEditEvent = (event) => {
+    if (!event) return false;
+    if (String(event.manage_type || '') === 'schedule') return canManageSchedules;
+    if (String(event.manage_type || '') === 'session') return canManageSessions;
+    return false;
+  };
+  const eventByKey = (id, manageType) =>
+    events.find((row) => Number(row.id) === Number(id) && String(row.manage_type || '') === String(manageType || ''));
+  const closeCalendarModal = () => {
+    document.getElementById('nu-calendar-modal')?.remove();
+    document.body.classList.remove('overflow-hidden');
+  };
+  const openCalendarOverlay = (html) => {
+    closeCalendarModal();
+    const overlay = document.createElement('div');
+    overlay.id = 'nu-calendar-modal';
+    overlay.className = 'fixed inset-0 z-50 bg-black/40 p-4 flex items-center justify-center';
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    document.body.classList.add('overflow-hidden');
+    overlay.addEventListener('click', (evt) => {
+      if (evt.target === overlay) closeCalendarModal();
+    });
+    return overlay;
+  };
+  const dateRangeInWeekly = (startDate, endDate) => {
+    const result = [];
+    const start = parseDate(`${startDate}T00:00:00`);
+    const end = parseDate(`${endDate}T00:00:00`);
+    if (!start || !end || end.getTime() < start.getTime()) return result;
+    let cursor = new Date(start);
+    while (cursor.getTime() <= end.getTime()) {
+      result.push(toDateKey(cursor));
+      cursor = new Date(cursor.getTime() + 7 * 24 * 60 * 60 * 1000);
+      if (result.length > 200) break;
+    }
+    return result;
+  };
+
+  const openCreateChooser = (presetDate) => {
+    if (!canCreateAnyEvent) return;
+    if (canManageSchedules && !canManageSessions) {
+      openScheduleModal({ mode: 'create', presetDate });
+      return;
+    }
+    if (!canManageSchedules && canManageSessions) {
+      openSessionModal({ mode: 'create', presetDate });
+      return;
+    }
+    const overlay = openCalendarOverlay(`
+      <div class="w-full max-w-md rounded-2xl border nu-border nu-surface shadow-xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b nu-border">
+          <h3 class="text-lg font-semibold">일정 유형 선택</h3>
+          <button type="button" id="nu-calendar-modal-close" class="rounded-lg border nu-border px-2 py-1 text-sm nu-surface">닫기</button>
+        </div>
+        <div class="p-4 space-y-2">
+          <button id="nu-calendar-create-schedule" class="w-full rounded-lg px-3 py-2 text-sm nu-primary-bg">공통/코칭 일정 추가</button>
+          <button id="nu-calendar-create-session" class="w-full rounded-lg border nu-border px-3 py-2 text-sm nu-surface">과제 일정 추가</button>
+        </div>
+      </div>
+    `);
+    overlay.querySelector('#nu-calendar-modal-close')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-create-schedule')?.addEventListener('click', () => {
+      closeCalendarModal();
+      openScheduleModal({ mode: 'create', presetDate });
+    });
+    overlay.querySelector('#nu-calendar-create-session')?.addEventListener('click', () => {
+      closeCalendarModal();
+      openSessionModal({ mode: 'create', presetDate });
+    });
+  };
+
+  const openScheduleModal = ({ mode = 'create', presetDate = '', event = null } = {}) => {
+    if (!canManageSchedules) return;
+    const isEdit = mode === 'edit' && !!event;
+    const hasSeries = isEdit && !!event.repeat_group_id;
+    const startDate = toDateInputValueFromDateTime(event?.start) || presetDate || `${monthValue}-01`;
+    const startTime = toTimeInputValue(event?.start) || '10:00';
+    const endTime = toTimeInputValue(event?.end) || startTime || '11:00';
+    const selectedColor = String(event?.color || (normalizeScope(event?.scope, event?.schedule_type) === 'coaching' ? '#00ACC1' : '#4CAF50')).toUpperCase();
+    const selectedScope = normalizeScope(event?.scope || event?.visibility_scope, event?.schedule_type);
+    const isAllDay = !!event?.is_all_day;
+    const overlay = openCalendarOverlay(`
+      <div class="w-full max-w-2xl rounded-2xl border nu-border nu-surface shadow-xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b nu-border">
+          <h3 class="text-lg font-semibold">${isEdit ? '일정 편집' : '일정 추가'}</h3>
+          <button type="button" id="nu-calendar-modal-close" class="rounded-lg border nu-border px-2 py-1 text-sm nu-surface">닫기</button>
+        </div>
+        <form id="nu-calendar-schedule-form" class="p-4 space-y-3">
+          ${
+            hasSeries
+              ? `
+                <div>
+                  <label class="text-sm font-medium">적용 범위</label>
+                  <select name="apply_scope" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                    <option value="single">이 일정만</option>
+                    <option value="series">반복 일정 전체</option>
+                  </select>
+                </div>
+              `
+              : ''
+          }
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm">공개 범위
+              <select name="visibility_scope" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                <option value="global" ${selectedScope === 'global' ? 'selected' : ''}>공통 일정</option>
+                <option value="coaching" ${selectedScope === 'coaching' ? 'selected' : ''}>코칭 일정</option>
+              </select>
+            </label>
+            <label class="text-sm">제목
+              <input name="title" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(event?.title || '')}" required />
+            </label>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label class="text-sm">날짜
+              <input type="date" name="event_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(startDate)}" required />
+            </label>
+            <label class="text-sm">시작 시간
+              <input type="time" name="start_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(startTime)}" required />
+            </label>
+            <label class="text-sm">종료 시간
+              <input type="time" name="end_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(endTime)}" required />
+            </label>
+          </div>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="is_all_day" ${isAllDay ? 'checked' : ''} />
+            종일 일정
+          </label>
+          <div class="space-y-2">
+            <div class="text-sm font-medium">색상</div>
+            <input type="hidden" name="color" value="${escapeHtml(selectedColor)}" />
+            <div class="flex flex-wrap items-center gap-2" id="nu-calendar-color-palette">
+              ${CALENDAR_COLORS.map((item) => `
+                <button type="button" class="w-7 h-7 rounded-full border-2 ${item.value.toUpperCase() === selectedColor ? 'ring-2 ring-offset-2 ring-slate-500' : ''}" style="background:${item.value}" data-role="nu-calendar-color-btn" data-color="${item.value}" title="${item.label}"></button>
+              `).join('')}
+            </div>
+          </div>
+          ${
+            !isEdit
+              ? `
+                <label class="flex items-center gap-2 text-sm">
+                  <input type="checkbox" name="repeat_weekly" />
+                  매주 반복
+                </label>
+                <div id="nu-calendar-repeat-wrap" class="hidden">
+                  <label class="text-sm">반복 종료일
+                    <input type="date" name="repeat_until" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" />
+                  </label>
+                </div>
+              `
+              : ''
+          }
+          <label class="text-sm block">장소
+            <input name="location" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(event?.location || '')}" />
+          </label>
+          <label class="text-sm block">설명
+            <textarea name="description" rows="4" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">${escapeHtml(event?.description || '')}</textarea>
+          </label>
+          <p id="nu-calendar-schedule-error" class="text-sm text-red-600"></p>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            ${isEdit ? '<button type="button" id="nu-calendar-schedule-delete" class="rounded-lg border border-red-200 bg-red-50 text-red-600 px-3 py-2 text-sm mr-auto">삭제</button>' : ''}
+            <button type="button" id="nu-calendar-schedule-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      </div>
+    `);
+
+    const form = overlay.querySelector('#nu-calendar-schedule-form');
+    const errorEl = overlay.querySelector('#nu-calendar-schedule-error');
+    const allDayEl = form?.querySelector('input[name="is_all_day"]');
+    const startEl = form?.querySelector('input[name="start_time"]');
+    const endEl = form?.querySelector('input[name="end_time"]');
+    const repeatEl = form?.querySelector('input[name="repeat_weekly"]');
+    const repeatWrapEl = form?.querySelector('#nu-calendar-repeat-wrap');
+    const colorInput = form?.querySelector('input[name="color"]');
+    const setError = (message) => {
+      if (errorEl) errorEl.textContent = message || '';
+    };
+    const syncAllDay = () => {
+      const checked = !!allDayEl?.checked;
+      if (!startEl || !endEl) return;
+      startEl.disabled = checked;
+      endEl.disabled = checked;
+      if (checked) {
+        startEl.value = '00:00';
+        endEl.value = '23:59';
+      } else if (!startEl.value || !endEl.value) {
+        startEl.value = startTime || '10:00';
+        endEl.value = endTime || '11:00';
+      }
+    };
+    const syncRepeat = () => {
+      if (!repeatWrapEl || !repeatEl) return;
+      repeatWrapEl.classList.toggle('hidden', !repeatEl.checked);
+    };
+
+    overlay.querySelector('#nu-calendar-modal-close')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-schedule-cancel')?.addEventListener('click', closeCalendarModal);
+    allDayEl?.addEventListener('change', syncAllDay);
+    repeatEl?.addEventListener('change', syncRepeat);
+    syncAllDay();
+    syncRepeat();
+
+    overlay.querySelectorAll('[data-role="nu-calendar-color-btn"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const color = String(btn.getAttribute('data-color') || '').toUpperCase();
+        if (!colorInput || !color) return;
+        colorInput.value = color;
+        overlay.querySelectorAll('[data-role="nu-calendar-color-btn"]').forEach((row) => {
+          row.classList.remove('ring-2', 'ring-offset-2', 'ring-slate-500');
+        });
+        btn.classList.add('ring-2', 'ring-offset-2', 'ring-slate-500');
+      });
+    });
+
+    overlay.querySelector('#nu-calendar-schedule-delete')?.addEventListener('click', async () => {
+      if (!event) return;
+      const applyScope = hasSeries ? String(form?.querySelector('[name="apply_scope"]')?.value || 'single') : 'single';
+      const endpoint = applyScope === 'series' && hasSeries ? `/api/schedules/${event.id}/series` : `/api/schedules/${event.id}`;
+      if (!confirm(applyScope === 'series' ? '반복 일정 전체를 삭제하시겠습니까?' : '이 일정을 삭제하시겠습니까?')) return;
+      try {
+        await api(endpoint, { method: 'DELETE' });
+        closeCalendarModal();
+        await draw();
+      } catch (error) {
+        setError(error.message || '일정 삭제 실패');
+      }
+    });
+
+    form?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(form);
+      const title = String(fd.get('title') || '').trim();
+      const eventDate = String(fd.get('event_date') || '').trim();
+      const isAllDayValue = fd.has('is_all_day');
+      const startTimeValue = String(fd.get('start_time') || '').trim() || '00:00';
+      const endTimeValue = String(fd.get('end_time') || '').trim() || startTimeValue;
+      const scope = normalizeScope(fd.get('visibility_scope'), null);
+      const color = String(fd.get('color') || '').trim().toUpperCase() || (scope === 'coaching' ? '#00ACC1' : '#4CAF50');
+      const description = String(fd.get('description') || '').trim() || null;
+      const location = String(fd.get('location') || '').trim() || null;
+      if (!title || !eventDate) {
+        setError('제목과 날짜를 입력하세요.');
+        return;
+      }
+      if (!isAllDayValue && endTimeValue < startTimeValue) {
+        setError('종료 시간은 시작 시간보다 빠를 수 없습니다.');
+        return;
+      }
+
+      const payload = {
+        title,
+        description,
+        schedule_type: scope === 'coaching' ? 'coaching' : 'other',
+        visibility_scope: scope,
+        start_datetime: toDateTimeString(eventDate, isAllDayValue ? '00:00' : startTimeValue),
+        end_datetime: toDateTimeString(eventDate, isAllDayValue ? '23:59' : endTimeValue),
+        location,
+        is_all_day: isAllDayValue,
+        color,
+      };
+
+      try {
+        if (isEdit && event) {
+          const applyScope = hasSeries ? String(fd.get('apply_scope') || 'single') : 'single';
+          const endpoint = applyScope === 'series' && hasSeries ? `/api/schedules/${event.id}/series` : `/api/schedules/${event.id}`;
+          await api(endpoint, { method: 'PUT', body: JSON.stringify(payload) });
+        } else {
+          const repeatWeekly = fd.has('repeat_weekly');
+          const repeatUntil = String(fd.get('repeat_until') || '').trim();
+          if (repeatWeekly) {
+            if (!repeatUntil) {
+              setError('반복 종료일을 입력하세요.');
+              return;
+            }
+            const dateKeys = dateRangeInWeekly(eventDate, repeatUntil);
+            if (!dateKeys.length) {
+              setError('반복 종료일을 다시 확인하세요.');
+              return;
+            }
+            const groupId = `grp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            for (let index = 0; index < dateKeys.length; index += 1) {
+              const dateKey = dateKeys[index];
+              await api('/api/schedules', {
+                method: 'POST',
+                body: JSON.stringify({
+                  ...payload,
+                  batch_id: Number(state.batchId),
+                  start_datetime: toDateTimeString(dateKey, isAllDayValue ? '00:00' : startTimeValue),
+                  end_datetime: toDateTimeString(dateKey, isAllDayValue ? '23:59' : endTimeValue),
+                  repeat_group_id: groupId,
+                  repeat_sequence: index + 1,
+                }),
+              });
+            }
+          } else {
+            await api('/api/schedules', {
+              method: 'POST',
+              body: JSON.stringify({
+                ...payload,
+                batch_id: Number(state.batchId),
+              }),
+            });
+          }
+        }
+        closeCalendarModal();
+        await draw();
+      } catch (error) {
+        setError(error.message || '일정 저장 실패');
+      }
+    });
+  };
+
+  const openSessionModal = ({ mode = 'create', presetDate = '', event = null } = {}) => {
+    if (!canManageSessions) return;
+    const isEdit = mode === 'edit' && !!event;
+    const startDt = parseDate(event?.start || null);
+    const endDt = parseDate(event?.end || null);
+    const startDate = toDateInputValueFromDateTime(event?.start) || presetDate || `${monthValue}-01`;
+    const startTime = startDt ? `${pad2(startDt.getHours())}:${pad2(startDt.getMinutes())}` : '10:00';
+    const endTime = endDt ? `${pad2(endDt.getHours())}:${pad2(endDt.getMinutes())}` : '11:00';
+    const selectedProjectId = Number(event?.project_id || projectRows[0]?.project_id || 0);
+    const overlay = openCalendarOverlay(`
+      <div class="w-full max-w-xl rounded-2xl border nu-border nu-surface shadow-xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b nu-border">
+          <h3 class="text-lg font-semibold">${isEdit ? '과제 일정 편집' : '과제 일정 추가'}</h3>
+          <button type="button" id="nu-calendar-modal-close" class="rounded-lg border nu-border px-2 py-1 text-sm nu-surface">닫기</button>
+        </div>
+        <form id="nu-calendar-session-form" class="p-4 space-y-3">
+          <label class="text-sm block">대상 과제
+            <select name="project_id" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" ${isEdit ? 'disabled' : ''}>
+              ${projectRows
+                .map((row) => `<option value="${row.project_id}" ${Number(row.project_id) === Number(selectedProjectId) ? 'selected' : ''}>${escapeHtml(row.project_name || `과제 ${row.project_id}`)}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label class="text-sm">날짜
+              <input type="date" name="session_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(startDate)}" required />
+            </label>
+            <label class="text-sm">시작 시간
+              <input type="time" name="start_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(startTime)}" required />
+            </label>
+            <label class="text-sm">종료 시간
+              <input type="time" name="end_time" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(endTime)}" required />
+            </label>
+          </div>
+          ${
+            isEdit
+              ? `
+                <label class="text-sm block">상태
+                  <select name="session_status" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                    ${['scheduled', 'in_progress', 'completed', 'cancelled']
+                      .map(
+                        (status) =>
+                          `<option value="${status}" ${String(event?.session_status || '').toLowerCase() === status ? 'selected' : ''}>${escapeHtml(status)}</option>`
+                      )
+                      .join('')}
+                  </select>
+                </label>
+              `
+              : ''
+          }
+          <label class="text-sm block">장소
+            <input name="location" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(event?.location || '')}" />
+          </label>
+          <label class="text-sm block">메모
+            <textarea name="note" rows="4" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">${escapeHtml(event?.description || '')}</textarea>
+          </label>
+          <p id="nu-calendar-session-error" class="text-sm text-red-600"></p>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            ${isEdit ? '<button type="button" id="nu-calendar-session-delete" class="rounded-lg border border-red-200 bg-red-50 text-red-600 px-3 py-2 text-sm mr-auto">삭제</button>' : ''}
+            <button type="button" id="nu-calendar-session-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      </div>
+    `);
+
+    const form = overlay.querySelector('#nu-calendar-session-form');
+    const errorEl = overlay.querySelector('#nu-calendar-session-error');
+    const setError = (message) => {
+      if (errorEl) errorEl.textContent = message || '';
+    };
+    overlay.querySelector('#nu-calendar-modal-close')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-session-cancel')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-session-delete')?.addEventListener('click', async () => {
+      if (!event || !confirm('과제 일정을 삭제하시겠습니까?')) return;
+      try {
+        await api(`/api/sessions/${event.id}`, { method: 'DELETE' });
+        closeCalendarModal();
+        await draw();
+      } catch (error) {
+        setError(error.message || '과제 일정 삭제 실패');
+      }
+    });
+    form?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(form);
+      const date = String(fd.get('session_date') || '').trim();
+      const startTimeValue = String(fd.get('start_time') || '').trim();
+      const endTimeValue = String(fd.get('end_time') || '').trim();
+      if (!date || !startTimeValue || !endTimeValue) {
+        setError('날짜와 시간을 입력하세요.');
+        return;
+      }
+      if (endTimeValue < startTimeValue) {
+        setError('종료 시간은 시작 시간보다 빠를 수 없습니다.');
+        return;
+      }
+      try {
+        if (isEdit && event) {
+          await api(`/api/sessions/${event.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              session_date: date,
+              start_time: startTimeValue,
+              end_time: endTimeValue,
+              location: String(fd.get('location') || '').trim() || null,
+              note: String(fd.get('note') || '').trim() || null,
+              session_status: String(fd.get('session_status') || event.session_status || '').trim() || null,
+            }),
+          });
+        } else {
+          const projectId = Number.parseInt(String(fd.get('project_id') || ''), 10);
+          if (Number.isNaN(projectId)) {
+            setError('대상 과제를 선택하세요.');
+            return;
+          }
+          await api('/api/sessions', {
+            method: 'POST',
+            body: JSON.stringify({
+              batch_id: Number(state.batchId),
+              project_id: projectId,
+              session_date: date,
+              start_time: startTimeValue,
+              end_time: endTimeValue,
+              location: String(fd.get('location') || '').trim() || null,
+              note: String(fd.get('note') || '').trim() || null,
+            }),
+          });
+        }
+        closeCalendarModal();
+        await draw();
+      } catch (error) {
+        setError(error.message || '과제 일정 저장 실패');
+      }
+    });
+  };
+
+  const openEventDetail = (event) => {
+    if (!event) return;
+    const isSession = String(event.manage_type || '') === 'session';
+    const startText = formatDateTime(event.start || event.start_time);
+    const endText = event.end ? formatDateTime(event.end) : '';
+    const timeText = event.is_all_day ? '종일 일정' : endText ? `${startText} ~ ${endText}` : startText;
+    const coachPlans = Array.isArray(event.coach_plans) ? event.coach_plans : [];
+    const coachActuals = Array.isArray(event.coach_actuals) ? event.coach_actuals : [];
+    const coachNames = Array.isArray(event.coach_names) ? event.coach_names : [];
+    const overlay = openCalendarOverlay(`
+      <div class="w-full max-w-2xl rounded-2xl border nu-border nu-surface shadow-xl">
+        <div class="flex items-center justify-between px-4 py-3 border-b nu-border">
+          <h3 class="text-lg font-semibold">${escapeHtml(event.title || '-')}</h3>
+          <button type="button" id="nu-calendar-modal-close" class="rounded-lg border nu-border px-2 py-1 text-sm nu-surface">닫기</button>
+        </div>
+        <div class="p-4 space-y-3">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="rounded-full px-2 py-1 bg-slate-100 text-slate-700">${escapeHtml(typeLabel(event))}</span>
+            <span class="rounded-full px-2 py-1 bg-blue-100 text-blue-700">${escapeHtml(scopeLabel(event))}</span>
+            ${event.project_name ? `<span class="rounded-full px-2 py-1 bg-amber-100 text-amber-700">${escapeHtml(event.project_name)}</span>` : ''}
+          </div>
+          <div class="rounded-lg border nu-border p-3 text-sm space-y-1">
+            <div><span class="nu-text-muted">일시:</span> ${escapeHtml(timeText)}</div>
+            ${event.location ? `<div><span class="nu-text-muted">장소:</span> ${escapeHtml(event.location)}</div>` : ''}
+            ${event.description ? `<div><span class="nu-text-muted">설명:</span> ${escapeHtml(event.description)}</div>` : ''}
+            ${event.repeat_group_id ? `<div><span class="nu-text-muted">반복 그룹:</span> ${escapeHtml(event.repeat_group_id)}</div>` : ''}
+          </div>
+          ${
+            coachPlans.length
+              ? `
+                <div>
+                  <h4 class="font-semibold text-sm mb-1">코치 계획</h4>
+                  <div class="rounded-lg border nu-border overflow-auto">
+                    <table class="min-w-full text-xs">
+                      <thead><tr class="border-b nu-border"><th class="px-2 py-1 text-left">코치</th><th class="px-2 py-1 text-left">계획 시간</th></tr></thead>
+                      <tbody>
+                        ${coachPlans
+                          .map(
+                            (row) => `
+                              <tr class="border-b nu-border">
+                                <td class="px-2 py-1">${escapeHtml(row.coach_name || '-')}</td>
+                                <td class="px-2 py-1">${row.is_all_day ? '종일' : `${escapeHtml(row.start_time || '--:--')} ~ ${escapeHtml(row.end_time || '--:--')}`}</td>
+                              </tr>
+                            `
+                          )
+                          .join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              `
+              : ''
+          }
+          ${
+            coachActuals.length
+              ? `
+                <div>
+                  <h4 class="font-semibold text-sm mb-1">코치 실적</h4>
+                  <div class="rounded-lg border nu-border overflow-auto">
+                    <table class="min-w-full text-xs">
+                      <thead><tr class="border-b nu-border"><th class="px-2 py-1 text-left">코치</th><th class="px-2 py-1 text-left">실적</th><th class="px-2 py-1 text-left">출처</th></tr></thead>
+                      <tbody>
+                        ${coachActuals
+                          .map(
+                            (row) => `
+                              <tr class="border-b nu-border">
+                                <td class="px-2 py-1">${escapeHtml(row.coach_name || '-')}</td>
+                                <td class="px-2 py-1">${Math.floor(Number(row.final_minutes || 0) / 60)}시간 ${Number(row.final_minutes || 0) % 60}분</td>
+                                <td class="px-2 py-1">${escapeHtml(row.actual_source === 'override' ? '보정' : '자동')}</td>
+                              </tr>
+                            `
+                          )
+                          .join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              `
+              : ''
+          }
+          ${
+            isSession && coachNames.length
+              ? `
+                <div>
+                  <h4 class="font-semibold text-sm mb-1">배정 코치</h4>
+                  <div class="flex flex-wrap gap-1">${coachNames.map((name) => `<span class="rounded-full px-2 py-1 text-xs bg-indigo-100 text-indigo-700">${escapeHtml(name)}</span>`).join('')}</div>
+                </div>
+              `
+              : ''
+          }
+          <div class="flex flex-wrap items-center justify-end gap-2 pt-1">
+            ${
+              canEditEvent(event)
+                ? `
+                  <button type="button" id="nu-calendar-detail-edit" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">편집</button>
+                `
+                : ''
+            }
+            <button type="button" id="nu-calendar-detail-close" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">확인</button>
+          </div>
+        </div>
+      </div>
+    `);
+    overlay.querySelector('#nu-calendar-modal-close')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-detail-close')?.addEventListener('click', closeCalendarModal);
+    overlay.querySelector('#nu-calendar-detail-edit')?.addEventListener('click', () => {
+      closeCalendarModal();
+      if (String(event.manage_type || '') === 'session') openSessionModal({ mode: 'edit', event });
+      else openScheduleModal({ mode: 'edit', event });
+    });
+  };
+
+  const buildEventMap = () => {
+    const grouped = new Map();
+    events.forEach((event) => {
+      const dt = resolveEventDate(event);
+      if (!dt) return;
+      const key = toDateKey(dt);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(event);
+    });
+    grouped.forEach((rows) => rows.sort((a, b) => resolveEventSortTime(a) - resolveEventSortTime(b)));
+    return grouped;
+  };
+
+  const formatEventTime = (event) => {
+    if (event?.is_all_day) return '종일';
+    const start = parseDate(event?.start || event?.start_time);
+    const end = parseDate(event?.end || null);
+    if (!start) return '';
+    const startText = `${pad2(start.getHours())}:${pad2(start.getMinutes())}`;
+    if (!end) return startText;
+    return `${startText}-${pad2(end.getHours())}:${pad2(end.getMinutes())}`;
+  };
+
+  const drawList = () => {
+    const listEl = document.getElementById('nu-calendar-list');
+    if (!listEl) return;
+    const sorted = [...events].sort((a, b) => resolveEventSortTime(a) - resolveEventSortTime(b));
+    listEl.innerHTML = `
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left border-b nu-border">
+            <th class="py-2 pr-3">일시</th>
+            <th class="py-2 pr-3">일정</th>
+            <th class="py-2 pr-3">유형</th>
+            <th class="py-2 pr-3">공개범위</th>
+            <th class="py-2 pr-3">과제</th>
+            <th class="py-2 pr-3">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            sorted.length
+              ? sorted
+                  .map(
+                    (event) => `
+                      <tr class="border-b nu-border">
+                        <td class="py-2 pr-3">${escapeHtml(event.is_all_day ? `${formatDate(event.start || event.start_time)} (종일)` : `${formatDate(event.start || event.start_time)} ${formatEventTime(event)}`)}</td>
+                        <td class="py-2 pr-3">
+                          <div class="flex items-center gap-2">
+                            <span class="inline-block w-2.5 h-2.5 rounded-full border" style="background:${escapeHtml(event.color || '#94a3b8')};border-color:${escapeHtml(event.color || '#94a3b8')};"></span>
+                            <button class="underline underline-offset-2 text-left" data-role="nu-calendar-open-detail" data-event-id="${Number(event.id)}" data-manage-type="${escapeHtml(event.manage_type || '')}">${escapeHtml(event.title || '-')}</button>
+                          </div>
+                        </td>
+                        <td class="py-2 pr-3">${escapeHtml(typeLabel(event))}</td>
+                        <td class="py-2 pr-3">${escapeHtml(scopeLabel(event))}</td>
+                        <td class="py-2 pr-3">${escapeHtml(event.project_name || '-')}</td>
+                        <td class="py-2 pr-3">
+                          <div class="flex flex-wrap items-center gap-1">
+                            <button class="rounded-lg border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-calendar-open-detail" data-event-id="${Number(event.id)}" data-manage-type="${escapeHtml(event.manage_type || '')}">상세</button>
+                            ${
+                              canEditEvent(event)
+                                ? `<button class="rounded-lg border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-calendar-edit-event" data-event-id="${Number(event.id)}" data-manage-type="${escapeHtml(event.manage_type || '')}">편집</button>`
+                                : ''
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                    `
+                  )
+                  .join('')
+              : '<tr><td colspan="6" class="py-3 nu-text-muted">선택한 월의 일정이 없습니다.</td></tr>'
+          }
+        </tbody>
+      </table>
+    `;
+  };
+
+  const drawCalendarGrid = (year, month) => {
+    const gridEl = document.getElementById('nu-calendar-grid');
+    if (!gridEl) return;
+    const eventMap = buildEventMap();
+    const firstDay = new Date(year, month - 1, 1);
+    const firstWeekday = firstDay.getDay();
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const labels = ['일', '월', '화', '수', '목', '금', '토'];
+    const cells = [];
+    for (let idx = 0; idx < 42; idx += 1) {
+      const dayNumber = idx - firstWeekday + 1;
+      if (dayNumber < 1 || dayNumber > daysInMonth) {
+        cells.push('<div class="min-h-[132px] border nu-border rounded-lg bg-slate-50/50"></div>');
+        continue;
+      }
+      const currentDate = new Date(year, month - 1, dayNumber);
+      const dateKey = toDateKey(currentDate);
+      const dayEvents = eventMap.get(dateKey) || [];
+      const visible = dayEvents.slice(0, 4);
+      const remain = Math.max(0, dayEvents.length - visible.length);
+      cells.push(`
+        <div class="min-h-[132px] border nu-border rounded-lg p-2 nu-surface flex flex-col gap-1 ${canCreateAnyEvent ? 'cursor-pointer hover:ring-1 hover:ring-slate-300' : ''}" data-role="nu-calendar-day" data-date="${dateKey}">
+          <div class="text-xs font-semibold ${idx % 7 === 0 ? 'text-rose-600' : idx % 7 === 6 ? 'text-blue-600' : 'nu-text-muted'}">${dayNumber}</div>
+          <div class="flex flex-col gap-1">
+            ${visible
+              .map(
+                (event) => `
+                  <button type="button" class="text-left text-[11px] leading-4 px-1.5 py-1 rounded border bg-white/80" style="border-left:4px solid ${escapeHtml(
+                    event.color || '#94a3b8'
+                  )};" data-role="nu-calendar-open-detail" data-event-id="${Number(event.id)}" data-manage-type="${escapeHtml(event.manage_type || '')}" title="${escapeHtml(
+                    event.title || '-'
+                  )}">
+                    ${event.is_all_day ? '<span class="font-semibold">종일</span> ' : formatEventTime(event) ? `<span class="font-semibold">${escapeHtml(formatEventTime(event))}</span> ` : ''}
+                    <span>${escapeHtml(event.title || '-')}</span>
+                  </button>
+                `
+              )
+              .join('')}
+            ${remain > 0 ? `<div class="text-[11px] nu-text-muted px-1">+${remain}개 더보기</div>` : ''}
+          </div>
+        </div>
+      `);
+    }
+    gridEl.innerHTML = `
+      <div class="grid grid-cols-7 gap-2 mb-2">
+        ${labels
+          .map(
+            (label, index) => `
+              <div class="text-xs font-semibold text-center ${index === 0 ? 'text-rose-600' : index === 6 ? 'text-blue-600' : 'nu-text-muted'}">${label}</div>
+            `
+          )
+          .join('')}
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-7 gap-2">${cells.join('')}</div>
+    `;
+  };
+
+  const renderViewMode = () => {
+    const listEl = document.getElementById('nu-calendar-list');
+    const gridEl = document.getElementById('nu-calendar-grid');
+    const listBtn = document.getElementById('nu-calendar-mode-list');
+    const calBtn = document.getElementById('nu-calendar-mode-calendar');
+    const parsed = parseMonthValue(monthValue);
+    if (!parsed) return;
+    drawList();
+    drawCalendarGrid(parsed.year, parsed.month);
+    const isCalendar = viewMode === 'calendar';
+    if (listEl) listEl.style.display = isCalendar ? 'none' : '';
+    if (gridEl) gridEl.style.display = isCalendar ? '' : 'none';
+    listBtn?.classList.toggle('nu-primary-bg', !isCalendar);
+    listBtn?.classList.toggle('nu-surface', isCalendar);
+    calBtn?.classList.toggle('nu-primary-bg', isCalendar);
+    calBtn?.classList.toggle('nu-surface', !isCalendar);
+  };
+
+  async function draw() {
+    const parsed = parseMonthValue(monthValue);
+    if (!parsed) return;
+    const start = `${parsed.year}-${pad2(parsed.month)}-01`;
+    const endDate = new Date(parsed.year, parsed.month, 0);
+    const end = `${parsed.year}-${pad2(parsed.month)}-${pad2(endDate.getDate())}`;
+    const payload = await api(`/api/calendar?batch_id=${state.batchId}&start=${start}&end=${end}`).catch(() => ({ events: [] }));
+    const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
+    events = rows.sort((a, b) => resolveEventSortTime(a) - resolveEventSortTime(b));
+    renderViewMode();
+  }
+
+  view.innerHTML = `
+    <section class="mb-4">
+      <h1 class="text-2xl font-bold">캘린더</h1>
+      <p class="nu-text-muted mt-1">공통/코칭 일정과 과제 일정을 통합 관리합니다.</p>
+    </section>
+    <section class="rounded-2xl border nu-border nu-surface p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <button id="nu-calendar-prev-month" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">이전</button>
+        <input id="nu-calendar-month" type="month" class="rounded-lg border nu-border px-3 py-2 nu-surface" value="${monthValue}" />
+        <button id="nu-calendar-next-month" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">다음</button>
+        <button id="nu-calendar-current-month" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">현재월</button>
+        <button id="nu-calendar-load" class="rounded-lg px-3 py-2 nu-primary-bg text-sm">조회</button>
+        ${canCreateAnyEvent ? '<button id="nu-calendar-create" class="rounded-lg px-3 py-2 text-sm bg-emerald-600 text-white">일정 추가</button>' : ''}
+        <button id="nu-calendar-mode-calendar" class="rounded-lg border nu-border px-3 py-2 text-sm sm:ml-auto">달력형</button>
+        <button id="nu-calendar-mode-list" class="rounded-lg border nu-border px-3 py-2 text-sm">리스트형</button>
+      </div>
+      <div id="nu-calendar-list" class="overflow-auto"></div>
+      <div id="nu-calendar-grid" class="overflow-auto"></div>
+    </section>
+  `;
+
+  const monthEl = document.getElementById('nu-calendar-month');
+  const syncMonthInput = () => {
+    if (monthEl) monthEl.value = monthValue;
+  };
+  const moveMonth = (diff) => {
+    monthValue = shiftMonthValue(monthEl?.value || monthValue, diff);
+    syncMonthInput();
+    draw();
+  };
+  const moveCurrentMonth = () => {
+    monthValue = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    syncMonthInput();
+    draw();
+  };
+  const defaultCreateDate = () => {
+    const parsed = parseMonthValue(monthEl?.value || monthValue);
+    if (!parsed) return toDateKey(now);
+    if (parsed.year === now.getFullYear() && parsed.month === now.getMonth() + 1) return toDateKey(now);
+    return `${parsed.year}-${pad2(parsed.month)}-01`;
+  };
+
+  document.getElementById('nu-calendar-load')?.addEventListener('click', () => {
+    monthValue = parseMonthValue(monthEl?.value || '') ? monthEl.value : monthValue;
+    syncMonthInput();
+    draw();
+  });
+  document.getElementById('nu-calendar-create')?.addEventListener('click', () => {
+    openCreateChooser(defaultCreateDate());
+  });
+  document.getElementById('nu-calendar-prev-month')?.addEventListener('click', () => moveMonth(-1));
+  document.getElementById('nu-calendar-next-month')?.addEventListener('click', () => moveMonth(1));
+  document.getElementById('nu-calendar-current-month')?.addEventListener('click', moveCurrentMonth);
+  document.getElementById('nu-calendar-mode-list')?.addEventListener('click', () => {
+    viewMode = 'list';
+    localStorage.setItem(CALENDAR_VIEW_KEY, viewMode);
+    renderViewMode();
+  });
+  document.getElementById('nu-calendar-mode-calendar')?.addEventListener('click', () => {
+    viewMode = 'calendar';
+    localStorage.setItem(CALENDAR_VIEW_KEY, viewMode);
+    renderViewMode();
+  });
+
+  const handleDetailOpen = (target) => {
+    const eventId = target.getAttribute('data-event-id');
+    const manageType = target.getAttribute('data-manage-type');
+    const event = eventByKey(eventId, manageType);
+    if (!event) return;
+    openEventDetail(event);
+  };
+  const handleEventEdit = (target) => {
+    const eventId = target.getAttribute('data-event-id');
+    const manageType = target.getAttribute('data-manage-type');
+    const event = eventByKey(eventId, manageType);
+    if (!event || !canEditEvent(event)) return;
+    if (String(event.manage_type || '') === 'session') openSessionModal({ mode: 'edit', event });
+    else openScheduleModal({ mode: 'edit', event });
+  };
+
+  document.getElementById('nu-calendar-list')?.addEventListener('click', (evt) => {
+    const target = evt.target instanceof Element ? evt.target : null;
+    if (!target) return;
+    const openBtn = target.closest('[data-role="nu-calendar-open-detail"]');
+    if (openBtn) {
+      handleDetailOpen(openBtn);
+      return;
+    }
+    const editBtn = target.closest('[data-role="nu-calendar-edit-event"]');
+    if (editBtn) handleEventEdit(editBtn);
+  });
+  document.getElementById('nu-calendar-grid')?.addEventListener('click', (evt) => {
+    const target = evt.target instanceof Element ? evt.target : null;
+    if (!target) return;
+    const openBtn = target.closest('[data-role="nu-calendar-open-detail"]');
+    if (openBtn) {
+      handleDetailOpen(openBtn);
+      return;
+    }
+    const dayCell = target.closest('[data-role="nu-calendar-day"]');
+    if (!dayCell || !canCreateAnyEvent) return;
+    const dateKey = String(dayCell.getAttribute('data-date') || '').trim();
+    if (!dateKey) return;
+    openCreateChooser(dateKey);
+  });
+
+  syncMonthInput();
+  draw();
+}
+
+async function renderBoard(view) {
+  const role = normalizeRole(state.user?.role || '');
+  const canWrite = canWriteBoard(role);
+  const boards = await api('/api/boards').catch(() => []);
+  const boardRows = Array.isArray(boards) ? boards : [];
+  const writableBoards = role === 'admin' ? boardRows : boardRows.filter((row) => String(row.board_type || '').toLowerCase() !== 'notice');
+  let boardId = state.boardPage.boardId && boardRows.some((row) => Number(row.board_id) === Number(state.boardPage.boardId))
+    ? Number(state.boardPage.boardId)
+    : Number(boardRows[0]?.board_id || 0);
+  let posts = [];
+  let currentKeyword = '';
+
+  const fetchPosts = async () => {
+    if (!boardId) {
+      posts = [];
+      return;
+    }
+    state.boardPage.boardId = boardId;
+    const payload = await api(`/api/boards/${boardId}/posts?skip=${state.boardPage.skip}&limit=${state.boardPage.limit}`).catch(() => []);
+    posts = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : [];
+  };
+
+  const bindMentionPicker = ({ inputEl, listEl, pickedEl }) => {
+    const mentionState = { picked: [], found: [] };
+    let timer = null;
+    const renderPicked = () => {
+      pickedEl.innerHTML = mentionState.picked.length
+        ? mentionState.picked
+            .map(
+              (row, index) => `
+                <button type="button" class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-blue-100 text-blue-700 border border-blue-200" data-role="nu-mention-picked-remove" data-index="${index}">
+                  @${escapeHtml(row.emp_id)} (${escapeHtml(row.name)}) <span>×</span>
+                </button>
+              `
+            )
+            .join('')
+        : '';
+      pickedEl.querySelectorAll('[data-role="nu-mention-picked-remove"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number.parseInt(btn.getAttribute('data-index') || '', 10);
+          if (Number.isNaN(index)) return;
+          mentionState.picked.splice(index, 1);
+          renderPicked();
+        });
+      });
+    };
+    const renderFound = () => {
+      listEl.innerHTML = mentionState.found.length
+        ? mentionState.found
+            .map(
+              (row, index) => `
+                <button type="button" class="w-full text-left rounded-lg border nu-border px-2 py-1.5 hover:nu-soft" data-role="nu-mention-candidate" data-index="${index}">
+                  <div class="font-medium">${escapeHtml(row.name)} <span class="text-xs nu-text-muted">@${escapeHtml(row.emp_id)}</span></div>
+                  <div class="text-xs nu-text-muted">${escapeHtml(row.department || '-')} · ${escapeHtml(roleLabel(row.role || '-'))}</div>
+                </button>
+              `
+            )
+            .join('')
+        : '';
+      listEl.querySelectorAll('[data-role="nu-mention-candidate"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number.parseInt(btn.getAttribute('data-index') || '', 10);
+          const selected = mentionState.found[index];
+          if (!selected) return;
+          if (!mentionState.picked.some((row) => Number(row.user_id) === Number(selected.user_id))) {
+            mentionState.picked.push(selected);
+            renderPicked();
+          }
+          inputEl.value = '';
+          mentionState.found = [];
+          renderFound();
+          inputEl.focus();
+        });
+      });
+    };
+    const fetchCandidates = async () => {
+      const keyword = String(inputEl.value || '').trim().replace(/^@+/, '');
+      if (keyword.length < 1) {
+        mentionState.found = [];
+        renderFound();
+        return;
+      }
+      try {
+        const candidates = await api(`/api/boards/mention-candidates?q=${encodeURIComponent(keyword)}&limit=8`);
+        mentionState.found = Array.isArray(candidates) ? candidates : [];
+      } catch {
+        mentionState.found = [];
+      }
+      renderFound();
+    };
+    inputEl.addEventListener('input', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchCandidates, 180);
+    });
+    return mentionState;
+  };
+
+  const openCommentEditor = ({ post, comment = null, onSaved }) => {
+    if (!canWrite) return;
+    const isEdit = !!comment;
+    const modal = openNuModal({
+      title: isEdit ? '댓글 수정' : '댓글 작성',
+      maxWidth: 'max-w-3xl',
+      bodyHtml: `
+        <form id="nu-board-comment-form" class="space-y-3">
+          <div>
+            <div class="text-sm nu-text-muted mb-1">내용</div>
+            <div id="nu-board-comment-editor"></div>
+          </div>
+          <div class="rounded-lg border nu-border p-2 space-y-2">
+            <div class="text-sm font-medium">멘션 추가</div>
+            <input id="nu-board-comment-mention-input" class="w-full rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="@이름 또는 @사번 검색" />
+            <div id="nu-board-comment-mention-list" class="space-y-1"></div>
+            <div id="nu-board-comment-mention-picked" class="flex flex-wrap gap-1"></div>
+          </div>
+          <p id="nu-board-comment-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-board-comment-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      `,
+    });
+    const editor = createRichField('nu-board-comment-editor', {
+      initialHTML: comment?.content || '',
+      placeholder: '댓글을 입력하세요.',
+      uploadOptions: { scope: 'board_comment', boardId: Number(post.board_id) || Number(boardId) || null },
+    });
+    const mentionState = bindMentionPicker({
+      inputEl: modal.bodyEl.querySelector('#nu-board-comment-mention-input'),
+      listEl: modal.bodyEl.querySelector('#nu-board-comment-mention-list'),
+      pickedEl: modal.bodyEl.querySelector('#nu-board-comment-mention-picked'),
+    });
+    modal.bodyEl.querySelector('#nu-board-comment-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-board-comment-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const errorEl = modal.bodyEl.querySelector('#nu-board-comment-error');
+      const contentRaw = editor.getHTML();
+      if (editor.isEmpty()) {
+        if (errorEl) errorEl.textContent = '댓글 내용을 입력하세요.';
+        return;
+      }
+      const content = p1MergeMentionsIntoContent(contentRaw, mentionState.picked);
+      try {
+        if (isEdit) {
+          await api(`/api/boards/comments/${comment.comment_id}`, { method: 'PUT', body: JSON.stringify({ content }) });
+        } else {
+          await api(`/api/boards/posts/${post.post_id}/comments`, { method: 'POST', body: JSON.stringify({ content }) });
+        }
+        modal.close();
+        if (typeof onSaved === 'function') await onSaved();
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || `댓글 ${isEdit ? '저장' : '등록'} 실패`;
+      }
+    });
+  };
+
+  const openPostEditor = ({ post = null, onSaved }) => {
+    if (!canWrite) return;
+    const isEdit = !!post;
+    const selectableBoards = writableBoards.length ? writableBoards : boardRows;
+    const defaultBoardId = isEdit ? Number(post.board_id) : Number(boardId || selectableBoards[0]?.board_id || 0);
+    const modal = openNuModal({
+      title: isEdit ? '게시글 수정' : '게시글 작성',
+      maxWidth: 'max-w-4xl',
+      bodyHtml: `
+        <form id="nu-board-post-form" class="space-y-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm block">게시판
+              <select name="board_id" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                ${selectableBoards
+                  .map((row) => `<option value="${row.board_id}" ${Number(row.board_id) === Number(defaultBoardId) ? 'selected' : ''}>${escapeHtml(row.board_name || row.name || '-')}</option>`)
+                  .join('')}
+              </select>
+            </label>
+            <label class="text-sm block">제목
+              <input name="title" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(post?.title || '')}" required />
+            </label>
+          </div>
+          <div>
+            <div class="text-sm nu-text-muted mb-1">내용</div>
+            <div id="nu-board-post-editor"></div>
+          </div>
+          <div class="rounded-lg border nu-border p-2 space-y-2">
+            <div class="text-sm font-medium">멘션 추가</div>
+            <input id="nu-board-post-mention-input" class="w-full rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="@이름 또는 @사번 검색" />
+            <div id="nu-board-post-mention-list" class="space-y-1"></div>
+            <div id="nu-board-post-mention-picked" class="flex flex-wrap gap-1"></div>
+          </div>
+          <p id="nu-board-post-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-board-post-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      `,
+    });
+    const editor = createRichField('nu-board-post-editor', {
+      initialHTML: post?.content || '',
+      placeholder: '게시글 내용을 입력하세요.',
+      uploadOptions: { scope: 'board_post', boardId: defaultBoardId || boardId },
+    });
+    const mentionState = bindMentionPicker({
+      inputEl: modal.bodyEl.querySelector('#nu-board-post-mention-input'),
+      listEl: modal.bodyEl.querySelector('#nu-board-post-mention-list'),
+      pickedEl: modal.bodyEl.querySelector('#nu-board-post-mention-picked'),
+    });
+    modal.bodyEl.querySelector('#nu-board-post-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-board-post-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const errorEl = modal.bodyEl.querySelector('#nu-board-post-error');
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-board-post-form'));
+      const title = String(fd.get('title') || '').trim();
+      const selectedBoardId = Number.parseInt(String(fd.get('board_id') || ''), 10);
+      if (!title || Number.isNaN(selectedBoardId)) {
+        if (errorEl) errorEl.textContent = '게시판과 제목을 입력하세요.';
+        return;
+      }
+      if (editor.isEmpty()) {
+        if (errorEl) errorEl.textContent = '내용을 입력하세요.';
+        return;
+      }
+      const content = p1MergeMentionsIntoContent(editor.getHTML(), mentionState.picked);
+      try {
+        if (isEdit) {
+          await api(`/api/boards/posts/${post.post_id}`, { method: 'PUT', body: JSON.stringify({ board_id: selectedBoardId, title, content }) });
+        } else {
+          await api(`/api/boards/${selectedBoardId}/posts`, { method: 'POST', body: JSON.stringify({ title, content }) });
+        }
+        modal.close();
+        if (typeof onSaved === 'function') await onSaved();
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || `게시글 ${isEdit ? '저장' : '등록'} 실패`;
+      }
+    });
+  };
+
+  const reload = async () => {
+    await fetchPosts();
+    renderPosts();
+  };
+
+  const renderPostDetail = async (postId) => {
+    const detailEl = document.getElementById('nu-board-detail');
+    if (!detailEl) return;
+    try {
+      const [post, comments] = await Promise.all([
+        api(`/api/boards/posts/${postId}`),
+        api(`/api/boards/posts/${postId}/comments`).catch(() => []),
+      ]);
+      const commentRows = Array.isArray(comments) ? comments : [];
+      const canManagePost = canWrite && (role === 'admin' || Number(post.author_id) === Number(state.user?.user_id));
+      detailEl.innerHTML = `
+        <article class="rounded-xl border nu-border p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div class="text-xs mb-1"><span class="rounded-full px-2 py-1 bg-slate-100 text-slate-700">${escapeHtml(post.board_type || post.board_name || '-')}</span></div>
+              <h3 class="text-lg font-semibold">${escapeHtml(post.title || '-')}</h3>
+              <p class="text-xs nu-text-muted mt-1">${escapeHtml(post.author_name || '-')} · ${formatDateTime(post.created_at)} · 조회 ${Number(post.view_count || 0)}</p>
+            </div>
+            ${
+              canManagePost
+                ? `<div class="flex items-center gap-2">
+                     <button id="nu-board-detail-edit" class="rounded-lg border nu-border px-3 py-1.5 text-xs nu-surface">수정</button>
+                     <button id="nu-board-detail-delete" class="rounded-lg border border-red-200 bg-red-50 text-red-600 px-3 py-1.5 text-xs">삭제</button>
+                   </div>`
+                : ''
+            }
+          </div>
+          <div class="mt-3 rich-content">${renderRichContent(post.content, '-')}</div>
+          <div class="mt-4 border-t nu-border pt-4">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <h4 class="font-semibold text-sm">댓글 (${commentRows.length})</h4>
+              ${canWrite ? '<button id="nu-board-comment-create" class="rounded-lg px-3 py-1.5 text-xs nu-primary-bg">댓글 작성</button>' : ''}
+            </div>
+            <div class="space-y-2">
+              ${
+                commentRows.length
+                  ? commentRows
+                      .map((comment) => {
+                        const canManageComment = canWrite && (role === 'admin' || Number(comment.author_id) === Number(state.user?.user_id));
+                        return `
+                          <div class="rounded-lg border nu-border p-2 text-sm">
+                            <div class="rich-content">${renderRichContent(comment.content, '-')}</div>
+                            <div class="mt-1 text-xs nu-text-muted flex items-center justify-between gap-2">
+                              <span>${formatDateTime(comment.created_at)} · ${escapeHtml(comment.author_name || '-')}</span>
+                              ${
+                                canManageComment
+                                  ? `<span class="flex items-center gap-1">
+                                       <button class="rounded border nu-border px-2 py-0.5 text-[11px] nu-surface" data-role="nu-board-comment-edit" data-comment-id="${comment.comment_id}">수정</button>
+                                       <button class="rounded border border-red-200 px-2 py-0.5 text-[11px] bg-red-50 text-red-600" data-role="nu-board-comment-delete" data-comment-id="${comment.comment_id}">삭제</button>
+                                     </span>`
+                                  : ''
+                              }
+                            </div>
+                          </div>
+                        `;
+                      })
+                      .join('')
+                  : '<p class="text-sm nu-text-muted">댓글이 없습니다.</p>'
+              }
+            </div>
+          </div>
+        </article>
+      `;
+      document.getElementById('nu-board-detail-edit')?.addEventListener('click', () => {
+        openPostEditor({ post, onSaved: async () => { await reload(); await renderPostDetail(post.post_id); } });
+      });
+      document.getElementById('nu-board-detail-delete')?.addEventListener('click', async () => {
+        if (!confirm('게시글을 삭제하시겠습니까?')) return;
+        try {
+          await api(`/api/boards/posts/${post.post_id}`, { method: 'DELETE' });
+          detailEl.innerHTML = '';
+          await reload();
+        } catch (error) {
+          alert(error.message || '게시글 삭제 실패');
+        }
+      });
+      document.getElementById('nu-board-comment-create')?.addEventListener('click', () => {
+        openCommentEditor({ post, onSaved: async () => { await reload(); await renderPostDetail(post.post_id); } });
+      });
+      detailEl.querySelectorAll('[data-role="nu-board-comment-edit"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const commentId = Number.parseInt(btn.getAttribute('data-comment-id') || '', 10);
+          const comment = commentRows.find((row) => Number(row.comment_id) === commentId);
+          if (!comment) return;
+          openCommentEditor({ post, comment, onSaved: async () => { await reload(); await renderPostDetail(post.post_id); } });
+        });
+      });
+      detailEl.querySelectorAll('[data-role="nu-board-comment-delete"]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const commentId = Number.parseInt(btn.getAttribute('data-comment-id') || '', 10);
+          if (Number.isNaN(commentId) || !confirm('댓글을 삭제하시겠습니까?')) return;
+          try {
+            await api(`/api/boards/comments/${commentId}`, { method: 'DELETE' });
+            await reload();
+            await renderPostDetail(post.post_id);
+          } catch (error) {
+            alert(error.message || '댓글 삭제 실패');
+          }
+        });
+      });
+    } catch (error) {
+      detailEl.innerHTML = `<p class="text-sm text-red-600">${escapeHtml(error.message || '게시글 조회 실패')}</p>`;
+    }
+  };
+
+  const renderPosts = () => {
+    const postEl = document.getElementById('nu-board-posts');
+    if (!postEl) return;
+    const keyword = currentKeyword.toLowerCase().trim();
+    const rows = keyword ? posts.filter((row) => `${row.title || ''} ${row.content || ''}`.toLowerCase().includes(keyword)) : posts;
+    postEl.innerHTML = `
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left border-b nu-border">
+            <th class="py-2 pr-3">분류</th>
+            <th class="py-2 pr-3">제목</th>
+            <th class="py-2 pr-3">작성자</th>
+            <th class="py-2 pr-3">작성일</th>
+            <th class="py-2 pr-3">조회</th>
+            <th class="py-2 pr-3">댓글</th>
+            <th class="py-2 pr-3">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            rows.length
+              ? rows
+                  .map((row) => {
+                    const canManagePost = canWrite && (role === 'admin' || Number(row.author_id) === Number(state.user?.user_id));
+                    return `
+                      <tr class="border-b nu-border">
+                        <td class="py-2 pr-3">${escapeHtml(row.board_name || row.board_type || '-')}</td>
+                        <td class="py-2 pr-3"><button class="underline underline-offset-2 text-left" data-role="nu-board-open" data-post-id="${row.post_id}">${escapeHtml(row.title || '-')}</button></td>
+                        <td class="py-2 pr-3">${escapeHtml(row.author_name || '-')}</td>
+                        <td class="py-2 pr-3">${formatDateTime(row.created_at)}</td>
+                        <td class="py-2 pr-3">${Number(row.view_count || 0)}</td>
+                        <td class="py-2 pr-3">${Number(row.comment_count || 0)}</td>
+                        <td class="py-2 pr-3">
+                          <div class="flex flex-wrap items-center gap-1">
+                            <button class="rounded-lg border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-board-open" data-post-id="${row.post_id}">보기</button>
+                            ${
+                              canManagePost
+                                ? `<button class="rounded-lg border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-board-edit" data-post-id="${row.post_id}">수정</button>
+                                   <button class="rounded-lg border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-board-delete" data-post-id="${row.post_id}">삭제</button>`
+                                : ''
+                            }
+                          </div>
+                        </td>
+                      </tr>
+                    `;
+                  })
+                  .join('')
+              : '<tr><td colspan="7" class="py-3 nu-text-muted">게시글이 없습니다.</td></tr>'
+          }
+        </tbody>
+      </table>
+    `;
+    postEl.querySelectorAll('[data-role="nu-board-open"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const postId = Number.parseInt(btn.getAttribute('data-post-id') || '', 10);
+        if (!Number.isNaN(postId)) renderPostDetail(postId);
+      });
+    });
+    postEl.querySelectorAll('[data-role="nu-board-edit"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const postId = Number.parseInt(btn.getAttribute('data-post-id') || '', 10);
+        if (Number.isNaN(postId)) return;
+        try {
+          const post = await api(`/api/boards/posts/${postId}`);
+          openPostEditor({ post, onSaved: async () => { await reload(); await renderPostDetail(postId); } });
+        } catch (error) {
+          alert(error.message || '게시글 불러오기 실패');
+        }
+      });
+    });
+    postEl.querySelectorAll('[data-role="nu-board-delete"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const postId = Number.parseInt(btn.getAttribute('data-post-id') || '', 10);
+        if (Number.isNaN(postId) || !confirm('게시글을 삭제하시겠습니까?')) return;
+        try {
+          await api(`/api/boards/posts/${postId}`, { method: 'DELETE' });
+          await reload();
+          document.getElementById('nu-board-detail').innerHTML = '';
+        } catch (error) {
+          alert(error.message || '게시글 삭제 실패');
+        }
+      });
+    });
+  };
+
+  view.innerHTML = `
+    <section class="mb-4">
+      <h1 class="text-2xl font-bold">게시판</h1>
+      <p class="nu-text-muted mt-1">게시글/댓글 작성과 멘션(@이름, @사번) 기능을 New UI에서 제공합니다.</p>
+    </section>
+    <section class="rounded-2xl border nu-border nu-surface p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <select id="nu-board-select" class="rounded-lg border nu-border px-3 py-2 nu-surface">
+          ${
+            boardRows.length
+              ? boardRows.map((row) => `<option value="${row.board_id}" ${Number(row.board_id) === Number(boardId) ? 'selected' : ''}>${escapeHtml(row.board_name || row.name || `게시판 ${row.board_id}`)}</option>`).join('')
+              : '<option value="">게시판 없음</option>'
+          }
+        </select>
+        <input id="nu-board-search" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="제목/내용 검색" />
+        <button id="nu-board-search-btn" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">검색</button>
+        ${canWrite ? '<button id="nu-board-new-btn" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">새 글쓰기</button>' : ''}
+        <button id="nu-board-prev" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">이전</button>
+        <button id="nu-board-next" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">다음</button>
+      </div>
+      <div id="nu-board-posts" class="overflow-auto"></div>
+      <div id="nu-board-detail" class="mt-4"></div>
+    </section>
+  `;
+
+  document.getElementById('nu-board-select')?.addEventListener('change', async (evt) => {
+    boardId = Number(evt.target.value) || 0;
+    state.boardPage.skip = 0;
+    currentKeyword = '';
+    document.getElementById('nu-board-detail').innerHTML = '';
+    await reload();
+  });
+  document.getElementById('nu-board-prev')?.addEventListener('click', async () => {
+    state.boardPage.skip = Math.max(0, state.boardPage.skip - state.boardPage.limit);
+    document.getElementById('nu-board-detail').innerHTML = '';
+    await reload();
+  });
+  document.getElementById('nu-board-next')?.addEventListener('click', async () => {
+    state.boardPage.skip += state.boardPage.limit;
+    document.getElementById('nu-board-detail').innerHTML = '';
+    await reload();
+  });
+  document.getElementById('nu-board-search-btn')?.addEventListener('click', () => {
+    currentKeyword = String(document.getElementById('nu-board-search')?.value || '').trim();
+    renderPosts();
+  });
+  document.getElementById('nu-board-search')?.addEventListener('keydown', (evt) => {
+    if (evt.key !== 'Enter') return;
+    evt.preventDefault();
+    currentKeyword = String(document.getElementById('nu-board-search')?.value || '').trim();
+    renderPosts();
+  });
+  document.getElementById('nu-board-new-btn')?.addEventListener('click', () => {
+    if (!writableBoards.length) {
+      alert('작성 가능한 게시판이 없습니다.');
+      return;
+    }
+    openPostEditor({ onSaved: async () => { await reload(); } });
+  });
+
+  await reload();
+}
+
+async function renderProjectDetail(view, projectId) {
+  const role = normalizeRole(state.user?.role || '');
+  const [project, members, notes] = await Promise.all([
+    api(`/api/projects/${projectId}`),
+    api(`/api/projects/${projectId}/members`).catch(() => []),
+    api(`/api/projects/${projectId}/notes`).catch(() => []),
+  ]);
+  const memberRows = Array.isArray(members) ? members : [];
+  const noteRows = (Array.isArray(notes) ? notes : []).sort((a, b) => {
+    const aDate = parseDate(a.coaching_date || a.created_at)?.getTime() || 0;
+    const bDate = parseDate(b.coaching_date || b.created_at)?.getTime() || 0;
+    return bDate - aDate;
+  });
+  const latestNote = noteRows[0] || null;
+  const canEditProject = canEditProjectBasicInfo(role, project);
+  const canEditNotes = canWriteCoachingNote(role);
+  const canComment = role !== 'observer';
+  const canManageMembers = role === 'admin' || (role === 'participant' && !!project?.is_my_project);
+
+  if (!renderProjectDetail._uiState) renderProjectDetail._uiState = {};
+  const saved = renderProjectDetail._uiState[projectId] || { memberOpen: false, expandAllNotes: false, expandedNoteIds: [] };
+  if (!saved.initialized || saved.forceLatestOpen) {
+    saved.expandedNoteIds = latestNote ? [Number(latestNote.note_id)] : [];
+    saved.expandAllNotes = false;
+    saved.forceLatestOpen = false;
+    saved.initialized = true;
+  }
+  renderProjectDetail._uiState[projectId] = saved;
+  const expandedSet = new Set((saved.expandedNoteIds || []).map((value) => Number(value)));
+
+  const noteCommentsEntries = await Promise.all(
+    noteRows.map(async (note) => {
+      const rows = await api(`/api/notes/${note.note_id}/comments`).catch(() => []);
+      return [Number(note.note_id), Array.isArray(rows) ? rows : []];
+    })
+  );
+  const commentsByNote = new Map(noteCommentsEntries);
+  const latestComments = latestNote ? commentsByNote.get(Number(latestNote.note_id)) || [] : [];
+  const latestFeedbacks = latestComments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'coaching_feedback' && p1HasText(comment.content));
+  const latestMemos = latestComments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'participant_memo' && p1HasText(comment.content));
+
+  const openFieldEditor = (field) => {
+    const current = {
+      progress_rate: String(Number(project.progress_rate || 0)),
+      ai_tech_category: String(project.ai_tech_category || project.category || ''),
+      ai_tech_used: String(project.ai_tech_used || ''),
+      project_summary: String(project.project_summary || ''),
+      github_repos: (Array.isArray(project.github_repos) ? project.github_repos : []).join('\n'),
+    };
+    const labels = {
+      progress_rate: '진행률',
+      ai_tech_category: 'AI기술 분류',
+      ai_tech_used: '사용된 AI기술',
+      project_summary: '과제 요약',
+      github_repos: 'Github Repository',
+    };
+    const isNumber = field === 'progress_rate';
+    const isTextarea = field === 'github_repos';
+    const modal = openNuModal({
+      title: `${labels[field] || field} 편집`,
+      maxWidth: field === 'project_summary' || isTextarea ? 'max-w-3xl' : 'max-w-xl',
+      bodyHtml: `
+        <form id="nu-project-field-form" class="space-y-3">
+          <label class="text-sm block">
+            ${labels[field] || field}
+            ${
+              field === 'project_summary'
+                ? '<div id="nu-project-summary-editor" class="mt-1"></div>'
+                : isTextarea
+                ? `<textarea name="value" rows="8" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">${escapeHtml(current[field] || '')}</textarea>`
+                : `<input name="value" ${isNumber ? 'type="number" min="0" max="100"' : ''} class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${escapeHtml(current[field] || '')}" />`
+            }
+          </label>
+          <p id="nu-project-field-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-project-field-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">저장</button>
+          </div>
+        </form>
+      `,
+    });
+    const summaryEditor =
+      field === 'project_summary'
+        ? createRichField('nu-project-summary-editor', {
+            initialHTML: current.project_summary || '',
+            placeholder: '과제 요약을 입력하세요.',
+            uploadOptions: { scope: 'project_summary', projectId },
+          })
+        : null;
+    modal.bodyEl.querySelector('#nu-project-field-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-project-field-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-project-field-form'));
+      const value = String(fd.get('value') || '').trim();
+      const payload = {};
+      if (field === 'project_summary') payload.project_summary = summaryEditor?.getHTML() || null;
+      else if (field === 'github_repos') payload.github_repos = value.split('\n').map((row) => row.trim()).filter(Boolean);
+      else if (field === 'progress_rate') payload.progress_rate = Number.isNaN(Number.parseInt(value, 10)) ? null : Math.max(0, Math.min(100, Number.parseInt(value, 10)));
+      else payload[field] = value || null;
+      const errorEl = modal.bodyEl.querySelector('#nu-project-field-error');
+      try {
+        await api(`/api/projects/${projectId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        modal.close();
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || '저장 실패';
+      }
+    });
+  };
+
+  const openAddMemberModal = () => {
+    const modal = openNuModal({
+      title: '팀원 추가',
+      maxWidth: 'max-w-3xl',
+      bodyHtml: `
+        <form id="nu-member-add-form" class="space-y-3">
+          <div class="rounded-lg border nu-border p-3 space-y-2">
+            <div class="text-sm font-medium">사용자 검색</div>
+            <input id="nu-member-search" class="w-full rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="이름 또는 사번 검색" />
+            <div id="nu-member-candidates" class="max-h-44 overflow-auto space-y-1"></div>
+            <div id="nu-member-picked" class="flex flex-wrap gap-1"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <label class="text-sm block">역할
+              <select name="member_role" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface">
+                <option value="member">member</option>
+                <option value="leader">leader</option>
+              </select>
+            </label>
+            <label class="text-sm flex items-center gap-2 pt-7">
+              <input type="checkbox" name="is_representative" />
+              대표자 지정(첫 사용자 적용)
+            </label>
+          </div>
+          <p id="nu-member-add-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-member-add-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">추가</button>
+          </div>
+        </form>
+      `,
+    });
+    const searchEl = modal.bodyEl.querySelector('#nu-member-search');
+    const candidateEl = modal.bodyEl.querySelector('#nu-member-candidates');
+    const pickedEl = modal.bodyEl.querySelector('#nu-member-picked');
+    const errorEl = modal.bodyEl.querySelector('#nu-member-add-error');
+    const localState = { found: [], picked: [] };
+    let timer = null;
+    const existingUserIds = new Set(memberRows.map((row) => Number(row.user_id)));
+
+    const renderPicked = () => {
+      pickedEl.innerHTML = localState.picked.length
+        ? localState.picked.map((row, index) => `<button type="button" class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs bg-blue-100 text-blue-700 border border-blue-200" data-role="nu-member-picked-remove" data-index="${index}">${escapeHtml(row.name)} (@${escapeHtml(row.emp_id)}) <span>×</span></button>`).join('')
+        : '<p class="text-xs nu-text-muted">선택된 팀원이 없습니다.</p>';
+      pickedEl.querySelectorAll('[data-role="nu-member-picked-remove"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number.parseInt(btn.getAttribute('data-index') || '', 10);
+          if (Number.isNaN(index)) return;
+          localState.picked.splice(index, 1);
+          renderPicked();
+        });
+      });
+    };
+    const renderCandidates = () => {
+      candidateEl.innerHTML = localState.found.length
+        ? localState.found.map((row, index) => `<button type="button" class="w-full text-left rounded-lg border nu-border px-2 py-1.5 hover:nu-soft" data-role="nu-member-candidate" data-index="${index}"><div class="font-medium">${escapeHtml(row.name)} <span class="text-xs nu-text-muted">@${escapeHtml(row.emp_id)}</span></div><div class="text-xs nu-text-muted">${escapeHtml(row.department || '-')} · ${escapeHtml(roleLabel(row.role || '-'))}</div></button>`).join('')
+        : '<p class="text-xs nu-text-muted">검색 결과가 없습니다.</p>';
+      candidateEl.querySelectorAll('[data-role="nu-member-candidate"]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const index = Number.parseInt(btn.getAttribute('data-index') || '', 10);
+          const selected = localState.found[index];
+          if (!selected) return;
+          if (!localState.picked.some((row) => Number(row.user_id) === Number(selected.user_id))) {
+            localState.picked.push(selected);
+            renderPicked();
+          }
+        });
+      });
+    };
+    const fetchCandidates = async () => {
+      const keyword = String(searchEl.value || '').trim();
+      if (keyword.length < 1) {
+        localState.found = [];
+        renderCandidates();
+        return;
+      }
+      try {
+        const rows = await api(`/api/boards/mention-candidates?q=${encodeURIComponent(keyword)}&limit=20`);
+        localState.found = (Array.isArray(rows) ? rows : []).filter((row) => !existingUserIds.has(Number(row.user_id)));
+      } catch {
+        localState.found = [];
+      }
+      renderCandidates();
+    };
+    searchEl.addEventListener('input', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchCandidates, 180);
+    });
+    modal.bodyEl.querySelector('#nu-member-add-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-member-add-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!localState.picked.length) {
+        if (errorEl) errorEl.textContent = '추가할 팀원을 선택하세요.';
+        return;
+      }
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-member-add-form'));
+      const memberRole = String(fd.get('member_role') || 'member');
+      const representative = fd.has('is_representative');
+      try {
+        for (let index = 0; index < localState.picked.length; index += 1) {
+          const user = localState.picked[index];
+          await api(`/api/projects/${projectId}/members`, {
+            method: 'POST',
+            body: JSON.stringify({ user_id: Number(user.user_id), role: memberRole, is_representative: representative && index === 0 }),
+          });
+        }
+        modal.close();
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || '팀원 추가 실패';
+      }
+    });
+    renderPicked();
+    renderCandidates();
+  };
+
+  const openNoteEditor = (note = null) => {
+    if (!canEditNotes) return;
+    const isEdit = !!note;
+    const today = toDateInputValue(new Date()) || '';
+    const modal = openNuModal({
+      title: isEdit ? '코칭노트 편집' : '코칭노트 작성',
+      maxWidth: 'max-w-5xl',
+      bodyHtml: `
+        <form id="nu-note-form" class="space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div><div class="text-xs nu-text-muted">과제</div><div class="font-semibold">${escapeHtml(project.project_name || '-')}</div></div>
+            <label class="text-sm w-36">진행률 (%)
+              <input type="number" min="0" max="100" name="progress_rate" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${Number(note?.progress_rate ?? project.progress_rate ?? 0)}" />
+            </label>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label class="text-sm">코칭일자
+              <input type="date" name="coaching_date" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${toDateInputValue(note?.coaching_date) || today}" required />
+            </label>
+            <label class="text-sm">주차
+              <input type="number" min="1" name="week_number" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" value="${note?.week_number || ''}" />
+            </label>
+          </div>
+          <div><div class="text-sm nu-text-muted mb-1">현재 상태</div><div id="nu-note-current-editor"></div></div>
+          <div><div class="text-sm nu-text-muted mb-1">주요 문제</div><div id="nu-note-issue-editor"></div></div>
+          <div><div class="text-sm nu-text-muted mb-1">다음 작업</div><div id="nu-note-action-editor"></div></div>
+          <p id="nu-note-form-error" class="text-sm text-red-600"></p>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" id="nu-note-form-cancel" class="rounded-lg border nu-border px-3 py-2 text-sm nu-surface">취소</button>
+            <button type="submit" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">${isEdit ? '저장' : '등록'}</button>
+          </div>
+        </form>
+      `,
+    });
+    const currentEditor = createRichField('nu-note-current-editor', { initialHTML: note?.current_status || '', placeholder: '현재 상태를 입력하세요.', uploadOptions: { scope: 'note', projectId } });
+    const issueEditor = createRichField('nu-note-issue-editor', { initialHTML: note?.main_issue || '', placeholder: '주요 문제를 입력하세요.', uploadOptions: { scope: 'note', projectId } });
+    const actionEditor = createRichField('nu-note-action-editor', { initialHTML: note?.next_action || '', placeholder: '다음 작업을 입력하세요.', uploadOptions: { scope: 'note', projectId } });
+    modal.bodyEl.querySelector('#nu-note-form-cancel')?.addEventListener('click', modal.close);
+    modal.bodyEl.querySelector('#nu-note-form')?.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const fd = new FormData(modal.bodyEl.querySelector('#nu-note-form'));
+      const errorEl = modal.bodyEl.querySelector('#nu-note-form-error');
+      const coachingDate = String(fd.get('coaching_date') || '').trim();
+      const weekNumber = Number.parseInt(String(fd.get('week_number') || ''), 10);
+      const progressRate = Number.parseInt(String(fd.get('progress_rate') || ''), 10);
+      if (!coachingDate) {
+        if (errorEl) errorEl.textContent = '코칭일자를 입력하세요.';
+        return;
+      }
+      const payload = {
+        coaching_date: coachingDate,
+        week_number: Number.isNaN(weekNumber) ? null : weekNumber,
+        progress_rate: Number.isNaN(progressRate) ? null : Math.max(0, Math.min(100, progressRate)),
+        current_status: currentEditor.getHTML() || null,
+        main_issue: issueEditor.getHTML() || null,
+        next_action: actionEditor.getHTML() || null,
+      };
+      try {
+        if (isEdit) await api(`/api/notes/${note.note_id}`, { method: 'PUT', body: JSON.stringify(payload) });
+        else await api(`/api/projects/${projectId}/notes`, { method: 'POST', body: JSON.stringify(payload) });
+        renderProjectDetail._uiState[projectId] = { ...saved, forceLatestOpen: true };
+        modal.close();
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        if (errorEl) errorEl.textContent = error.message || '코칭노트 저장 실패';
+      }
+    });
+  };
+
+  view.innerHTML = `
+    <section class="mb-4 flex items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold">${escapeHtml(project.project_name || '과제 상세')}</h1>
+        <div class="mt-1 text-sm nu-text-muted flex flex-wrap items-center gap-3">
+          <span>부서 ${escapeHtml(project.organization || '-')}</span>
+          <span>대표 ${escapeHtml(project.representative || '-')}</span>
+          <span>진행률 <b>${Number(project.progress_rate || 0)}%</b></span>
+        </div>
+      </div>
+      <button id="nu-back-projects" class="rounded-lg border nu-border px-3 py-2 nu-surface hover:nu-soft">과제 목록</button>
+    </section>
+    <section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div class="xl:col-span-2 space-y-4">
+        <article class="rounded-2xl border nu-border nu-surface p-4 space-y-4">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="font-semibold">기본정보</h2>
+            <span class="text-xs nu-text-muted">${canEditProject ? '항목별 edit 버튼으로 수정' : '읽기 전용'}</span>
+          </div>
+          <div class="rounded-xl border nu-border p-3">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="font-semibold text-sm">팀원 리스트 (${memberRows.length})</h3>
+              <div class="flex items-center gap-2">
+                <button id="nu-member-toggle" class="rounded border nu-border px-2 py-1 text-xs nu-surface">${saved.memberOpen ? '접기' : '펼치기'}</button>
+                ${canManageMembers ? '<button id="nu-member-add" class="rounded border nu-border px-2 py-1 text-xs nu-surface">팀원 추가</button>' : ''}
+              </div>
+            </div>
+            <div id="nu-member-list" class="mt-2 ${saved.memberOpen ? '' : 'hidden'} space-y-1">
+              ${
+                memberRows.length
+                  ? memberRows
+                      .map(
+                        (member) => `
+                          <div class="flex items-center justify-between gap-2 rounded-lg border nu-border px-2 py-1.5 text-sm">
+                            <div>
+                              <span class="font-medium">${escapeHtml(member.user_name || '-')}</span>
+                              <span class="nu-text-muted ml-1">@${escapeHtml(member.user_emp_id || '-')}</span>
+                              <span class="nu-text-muted ml-1">${escapeHtml(member.role || 'member')}</span>
+                              ${member.is_representative ? '<span class="ml-1 text-xs rounded-full px-1.5 py-0.5 bg-emerald-100 text-emerald-700">대표</span>' : ''}
+                            </div>
+                            ${canManageMembers ? `<button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-member-remove" data-user-id="${member.user_id}">제거</button>` : ''}
+                          </div>
+                        `
+                      )
+                      .join('')
+                  : '<p class="text-sm nu-text-muted">등록된 팀원이 없습니다.</p>'
+              }
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="rounded-xl border nu-border p-3">
+              <div class="flex items-center justify-between gap-2"><div class="text-sm font-medium">AI기술 분류</div>${canEditProject ? '<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-project-edit-field" data-field="ai_tech_category">edit</button>' : ''}</div>
+              <div class="mt-2 text-sm">${escapeHtml(project.ai_tech_category || project.category || '-')}</div>
+            </div>
+            <div class="rounded-xl border nu-border p-3">
+              <div class="flex items-center justify-between gap-2"><div class="text-sm font-medium">사용된 AI기술</div>${canEditProject ? '<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-project-edit-field" data-field="ai_tech_used">edit</button>' : ''}</div>
+              <div class="mt-2 text-sm">${escapeHtml(project.ai_tech_used || '-')}</div>
+            </div>
+          </div>
+          <div class="rounded-xl border nu-border p-3">
+            <div class="flex items-center justify-between gap-2"><div class="text-sm font-medium">Github Repository</div>${canEditProject ? '<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-project-edit-field" data-field="github_repos">edit</button>' : ''}</div>
+            <div class="mt-2 text-sm space-y-1">${(Array.isArray(project.github_repos) ? project.github_repos : []).length ? project.github_repos.map((url) => `<div><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2">${escapeHtml(url)}</a></div>`).join('') : '<span class="nu-text-muted">-</span>'}</div>
+          </div>
+          <div class="rounded-xl border nu-border p-3">
+            <div class="flex items-center justify-between gap-2"><div class="text-sm font-medium">과제 요약</div>${canEditProject ? '<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-project-edit-field" data-field="project_summary">edit</button>' : ''}</div>
+            <div class="mt-2 text-sm rich-content">${renderRichContent(project.project_summary, '-')}</div>
+          </div>
+        </article>
+
+        <article id="nu-note-section" class="rounded-2xl border nu-border nu-surface p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 class="font-semibold">코칭노트 (${noteRows.length})</h2>
+            <div class="flex items-center gap-2">
+              <button id="nu-note-toggle-all" class="rounded border nu-border px-2 py-1 text-xs nu-surface">${saved.expandAllNotes ? '전체 접기' : '전체 펼치기'}</button>
+              ${canEditNotes ? '<button id="nu-note-create" class="rounded-lg px-3 py-2 text-sm nu-primary-bg">새 코칭노트</button>' : '<span class="text-xs nu-text-muted">코칭노트 작성 권한 없음</span>'}
+            </div>
+          </div>
+          <div class="space-y-3">
+            ${
+              noteRows.length
+                ? noteRows
+                    .map((note) => {
+                      const expanded = saved.expandAllNotes || expandedSet.has(Number(note.note_id));
+                      const comments = commentsByNote.get(Number(note.note_id)) || [];
+                      const validFeedbacks = comments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'coaching_feedback' && p1HasText(comment.content));
+                      const validMemos = comments.filter((comment) => String(comment.comment_type || '').toLowerCase() === 'participant_memo' && p1HasText(comment.content));
+                      return `
+                        <article class="rounded-xl border nu-border p-3">
+                          <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div class="font-semibold">${escapeHtml(toDateInputValue(note.coaching_date) || '-')} ${note.week_number ? `· ${note.week_number}주차` : ''}</div>
+                              <div class="text-xs nu-text-muted">${formatDateTime(note.created_at)} · ${escapeHtml(note.author_name || '-')} · 진행률 ${Number(note.progress_rate ?? project.progress_rate ?? 0)}%</div>
+                            </div>
+                            <div class="flex items-center gap-1">
+                              <button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-toggle" data-note-id="${note.note_id}">${expanded ? '접기' : '펼치기'}</button>
+                              ${canEditNotes ? `<button class="rounded border nu-border px-2 py-1 text-xs nu-surface" data-role="nu-note-edit" data-note-id="${note.note_id}">편집</button><button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-1 text-xs" data-role="nu-note-delete" data-note-id="${note.note_id}">삭제</button>` : ''}
+                            </div>
+                          </div>
+                          ${
+                            expanded
+                              ? `
+                                <div class="mt-3 space-y-3 text-sm">
+                                  ${p1HasText(note.current_status) ? `<div><div class="text-xs nu-text-muted mb-1">현재 상태</div><div class="rich-content">${renderRichContent(note.current_status, '-')}</div></div>` : ''}
+                                  ${p1HasText(note.main_issue) ? `<div><div class="text-xs nu-text-muted mb-1">주요 문제</div><div class="rich-content">${renderRichContent(note.main_issue, '-')}</div></div>` : ''}
+                                  ${p1HasText(note.next_action) ? `<div><div class="text-xs nu-text-muted mb-1">다음 작업</div><div class="rich-content">${renderRichContent(note.next_action, '-')}</div></div>` : ''}
+                                  ${
+                                    !p1HasText(note.current_status) && !p1HasText(note.main_issue) && !p1HasText(note.next_action)
+                                      ? '<p class="text-xs nu-text-muted">입력된 본문이 없습니다.</p>'
+                                      : ''
+                                  }
+                                  <div class="border-t nu-border pt-2 space-y-2">
+                                    ${
+                                      validFeedbacks.length
+                                        ? `<div><div class="text-xs font-semibold mb-1">코칭 의견 (${validFeedbacks.length})</div>${validFeedbacks.map((comment) => `<div class="rounded-lg border nu-border p-2 mb-1"><div class="rich-content text-sm">${renderRichContent(comment.content, '-')}</div><div class="text-xs nu-text-muted mt-1 flex items-center justify-between gap-2"><span>${formatDateTime(comment.created_at)} · ${escapeHtml(comment.author_name || '-')}</span>${Number(comment.author_id) === Number(state.user?.user_id) || role === 'admin' ? `<button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-0.5 text-[11px]" data-role="nu-note-comment-delete" data-comment-id="${comment.comment_id}">삭제</button>` : ''}</div></div>`).join('')}</div>`
+                                        : ''
+                                    }
+                                    ${
+                                      validMemos.length
+                                        ? `<div><div class="text-xs font-semibold mb-1">참여자 메모 (${validMemos.length})</div>${validMemos.map((comment) => `<div class="rounded-lg border nu-border p-2 mb-1"><div class="rich-content text-sm">${renderRichContent(comment.content, '-')}</div><div class="text-xs nu-text-muted mt-1 flex items-center justify-between gap-2"><span>${formatDateTime(comment.created_at)} · ${escapeHtml(comment.author_name || '-')}</span>${Number(comment.author_id) === Number(state.user?.user_id) || role === 'admin' ? `<button class="rounded border border-red-200 bg-red-50 text-red-600 px-2 py-0.5 text-[11px]" data-role="nu-note-comment-delete" data-comment-id="${comment.comment_id}">삭제</button>` : ''}</div></div>`).join('')}</div>`
+                                        : ''
+                                    }
+                                    ${
+                                      canComment
+                                        ? `<form class="rounded-lg border nu-border p-2 space-y-2" data-role="nu-note-comment-form" data-note-id="${note.note_id}"><textarea name="content" rows="3" class="w-full rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="${canEditNotes ? '코칭 의견을 입력하세요.' : '참여자 메모를 입력하세요.'}"></textarea><div class="flex items-center justify-between gap-2">${canEditNotes ? '<label class="text-xs flex items-center gap-1"><input type="checkbox" name="is_coach_only" /> 코치들에게만 공유</label>' : '<span></span>'}<button type="submit" class="rounded px-2.5 py-1 text-xs nu-primary-bg">등록</button></div></form>`
+                                        : '<p class="text-xs nu-text-muted">참관자는 의견을 작성할 수 없습니다.</p>'
+                                    }
+                                  </div>
+                                </div>
+                              `
+                              : ''
+                          }
+                        </article>
+                      `;
+                    })
+                    .join('')
+                : '<p class="text-sm nu-text-muted">코칭노트가 없습니다.</p>'
+            }
+          </div>
+        </article>
+      </div>
+      <aside class="space-y-4">
+        <article class="rounded-2xl border nu-border nu-surface p-4">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="font-semibold">최근 코칭 노트</h2>
+            <button id="nu-latest-note-go" class="rounded border nu-border px-2 py-1 text-xs nu-surface">목록 이동</button>
+          </div>
+          ${
+            latestNote
+              ? `<button id="nu-latest-note-card" class="mt-3 w-full text-left rounded-xl border nu-border p-3 hover:nu-soft">
+                   <div class="font-semibold">${escapeHtml(toDateInputValue(latestNote.coaching_date) || '-')} ${latestNote.week_number ? `· ${latestNote.week_number}주차` : ''}</div>
+                   ${p1HasText(latestNote.current_status) ? `<div class="mt-2"><div class="text-xs nu-text-muted mb-1">현재 상태</div><div class="rich-content text-sm">${renderRichContent(latestNote.current_status, '-')}</div></div>` : ''}
+                   ${p1HasText(latestNote.main_issue) ? `<div class="mt-2"><div class="text-xs nu-text-muted mb-1">주요 문제</div><div class="rich-content text-sm">${renderRichContent(latestNote.main_issue, '-')}</div></div>` : ''}
+                   ${p1HasText(latestNote.next_action) ? `<div class="mt-2"><div class="text-xs nu-text-muted mb-1">다음 작업</div><div class="rich-content text-sm">${renderRichContent(latestNote.next_action, '-')}</div></div>` : ''}
+                   ${latestFeedbacks.length ? `<div class="mt-2"><div class="text-xs font-semibold">코칭 의견 (${latestFeedbacks.length})</div>${latestFeedbacks.map((comment) => `<div class="text-xs rounded border nu-border p-1.5 mt-1"><div class="rich-content">${renderRichContent(comment.content, '-')}</div><div class="nu-text-muted mt-1">${formatDateTime(comment.created_at)} · ${escapeHtml(comment.author_name || '-')}</div></div>`).join('')}</div>` : ''}
+                   ${latestMemos.length ? `<div class="mt-2"><div class="text-xs font-semibold">참여자 메모 (${latestMemos.length})</div>${latestMemos.map((comment) => `<div class="text-xs rounded border nu-border p-1.5 mt-1"><div class="rich-content">${renderRichContent(comment.content, '-')}</div><div class="nu-text-muted mt-1">${formatDateTime(comment.created_at)} · ${escapeHtml(comment.author_name || '-')}</div></div>`).join('')}</div>` : ''}
+                 </button>`
+              : '<p class="mt-3 text-sm nu-text-muted">코칭노트가 없습니다.</p>'
+          }
+        </article>
+      </aside>
+    </section>
+  `;
+
+  document.getElementById('nu-back-projects')?.addEventListener('click', () => navigate('/projects'));
+  document.getElementById('nu-member-toggle')?.addEventListener('click', () => {
+    renderProjectDetail._uiState[projectId] = { ...saved, memberOpen: !saved.memberOpen };
+    renderProjectDetail(view, projectId);
+  });
+  document.getElementById('nu-member-add')?.addEventListener('click', openAddMemberModal);
+  view.querySelectorAll('[data-role="nu-member-remove"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const userId = Number.parseInt(btn.getAttribute('data-user-id') || '', 10);
+      if (Number.isNaN(userId) || !confirm('팀원을 제거하시겠습니까?')) return;
+      try {
+        await api(`/api/projects/${projectId}/members/${userId}`, { method: 'DELETE' });
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        alert(error.message || '팀원 제거 실패');
+      }
+    });
+  });
+  view.querySelectorAll('[data-role="nu-project-edit-field"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const field = btn.getAttribute('data-field');
+      if (field) openFieldEditor(field);
+    });
+  });
+
+  const goToNotes = () => {
+    const target = document.getElementById('nu-note-section');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  document.getElementById('nu-latest-note-go')?.addEventListener('click', goToNotes);
+  document.getElementById('nu-latest-note-card')?.addEventListener('click', goToNotes);
+  document.getElementById('nu-note-create')?.addEventListener('click', () => openNoteEditor());
+  document.getElementById('nu-note-toggle-all')?.addEventListener('click', () => {
+    const nextExpandAll = !saved.expandAllNotes;
+    renderProjectDetail._uiState[projectId] = { ...saved, expandAllNotes: nextExpandAll, expandedNoteIds: nextExpandAll ? noteRows.map((row) => Number(row.note_id)) : (latestNote ? [Number(latestNote.note_id)] : []) };
+    renderProjectDetail(view, projectId);
+  });
+  view.querySelectorAll('[data-role="nu-note-toggle"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const noteId = Number.parseInt(btn.getAttribute('data-note-id') || '', 10);
+      if (Number.isNaN(noteId)) return;
+      const nextSet = new Set(expandedSet);
+      if (nextSet.has(noteId)) nextSet.delete(noteId);
+      else nextSet.add(noteId);
+      renderProjectDetail._uiState[projectId] = { ...saved, expandAllNotes: false, expandedNoteIds: [...nextSet] };
+      renderProjectDetail(view, projectId);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-note-edit"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const noteId = Number.parseInt(btn.getAttribute('data-note-id') || '', 10);
+      const note = noteRows.find((row) => Number(row.note_id) === noteId);
+      if (note) openNoteEditor(note);
+    });
+  });
+  view.querySelectorAll('[data-role="nu-note-delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const noteId = Number.parseInt(btn.getAttribute('data-note-id') || '', 10);
+      if (Number.isNaN(noteId) || !confirm('코칭노트를 삭제하시겠습니까?')) return;
+      try {
+        await api(`/api/notes/${noteId}`, { method: 'DELETE' });
+        renderProjectDetail._uiState[projectId] = { ...saved, forceLatestOpen: true };
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        alert(error.message || '코칭노트 삭제 실패');
+      }
+    });
+  });
+  view.querySelectorAll('[data-role="nu-note-comment-form"]').forEach((form) => {
+    form.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      const noteId = Number.parseInt(form.getAttribute('data-note-id') || '', 10);
+      if (Number.isNaN(noteId)) return;
+      const fd = new FormData(form);
+      const content = String(fd.get('content') || '').trim();
+      if (!content) {
+        alert('내용을 입력하세요.');
+        return;
+      }
+      try {
+        await api(`/api/notes/${noteId}/comments`, { method: 'POST', body: JSON.stringify({ content, is_coach_only: fd.has('is_coach_only') }) });
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        alert(error.message || '의견 등록 실패');
+      }
+    });
+  });
+  view.querySelectorAll('[data-role="nu-note-comment-delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const commentId = Number.parseInt(btn.getAttribute('data-comment-id') || '', 10);
+      if (Number.isNaN(commentId) || !confirm('해당 의견을 삭제하시겠습니까?')) return;
+      try {
+        await api(`/api/comments/${commentId}`, { method: 'DELETE' });
+        await renderProjectDetail(view, projectId);
+      } catch (error) {
+        alert(error.message || '의견 삭제 실패');
+      }
+    });
+  });
+}
