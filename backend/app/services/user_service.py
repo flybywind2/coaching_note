@@ -85,6 +85,43 @@ def _validate_permission_ids(db: Session, batch_ids: list[int], project_ids: lis
             raise HTTPException(status_code=400, detail="유효하지 않은 과제가 포함되어 있습니다.")
 
 
+def _sync_participant_project_memberships(db: Session, user_id: int, project_ids: list[int]):
+    target_project_ids = sorted({int(v) for v in project_ids if int(v) > 0})
+    target_set = set(target_project_ids)
+
+    current_rows = (
+        db.query(ProjectMember)
+        .filter(ProjectMember.user_id == user_id)
+        .all()
+    )
+    current_by_project: dict[int, ProjectMember] = {}
+    for row in current_rows:
+        pid = int(row.project_id)
+        # 중복 멤버십은 첫 행만 유지하고 나머지는 정리한다.
+        if pid in current_by_project:
+            db.delete(row)
+            continue
+        current_by_project[pid] = row
+
+    current_set = set(current_by_project.keys())
+    for project_id in sorted(current_set - target_set):
+        db.query(ProjectTask).filter(
+            ProjectTask.project_id == project_id,
+            ProjectTask.assigned_to == user_id,
+        ).update({"assigned_to": None})
+        db.delete(current_by_project[project_id])
+
+    for project_id in sorted(target_set - current_set):
+        db.add(
+            ProjectMember(
+                project_id=project_id,
+                user_id=user_id,
+                role="member",
+                is_representative=False,
+            )
+        )
+
+
 def _set_permissions(db: Session, user_id: int, batch_ids: list[int], project_ids: list[int]):
     _validate_permission_ids(db, batch_ids, project_ids)
     db.query(UserBatchAccess).filter(UserBatchAccess.user_id == user_id).delete()
@@ -93,6 +130,9 @@ def _set_permissions(db: Session, user_id: int, batch_ids: list[int], project_id
         db.add(UserBatchAccess(user_id=user_id, batch_id=batch_id))
     for project_id in project_ids:
         db.add(UserProjectAccess(user_id=user_id, project_id=project_id))
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user and _canonicalize_role(user.role) == PARTICIPANT:
+        _sync_participant_project_memberships(db, user_id, project_ids)
 
 
 def _collect_hard_delete_references(db: Session, user_id: int) -> list[str]:

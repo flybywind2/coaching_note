@@ -9,8 +9,10 @@ from app.models.project_profile import ProjectProfile
 from app.models.task import ProjectTask
 from app.models.session import CoachingSession
 from app.models.user import User
+from app.models.access_scope import UserProjectAccess
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberCreate
 from app.utils.permissions import can_view_project, can_view_batch
+from app.utils.permissions import PARTICIPANT
 from typing import List, Optional
 
 
@@ -145,6 +147,18 @@ def add_member(db: Session, project_id: int, data: ProjectMemberCreate) -> Proje
         raise HTTPException(status_code=400, detail="이미 과제 멤버입니다.")
     member = ProjectMember(project_id=project_id, **data.model_dump())
     db.add(member)
+    user = db.query(User).filter(User.user_id == data.user_id).first()
+    if user and user.role == PARTICIPANT:
+        exists_access = (
+            db.query(UserProjectAccess)
+            .filter(
+                UserProjectAccess.user_id == data.user_id,
+                UserProjectAccess.project_id == project_id,
+            )
+            .first()
+        )
+        if not exists_access:
+            db.add(UserProjectAccess(user_id=data.user_id, project_id=project_id))
     db.commit()
     db.refresh(member)
     return member
@@ -165,6 +179,12 @@ def remove_member(db: Session, project_id: int, user_id: int):
         ProjectTask.project_id == project_id,
         ProjectTask.assigned_to == user_id,
     ).update({"assigned_to": None})
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user and user.role == PARTICIPANT:
+        db.query(UserProjectAccess).filter(
+            UserProjectAccess.user_id == user_id,
+            UserProjectAccess.project_id == project_id,
+        ).delete()
     db.delete(member)
     db.commit()
 

@@ -325,7 +325,7 @@ def create_coach(
     return _coach_to_out(row)
 
 
-@router.put("/coaches/{coach_id}", response_model=CoachProfileOut)
+@router.put("/coaches/{coach_id:int}", response_model=CoachProfileOut)
 def update_coach(
     coach_id: int,
     data: CoachProfileUpdate,
@@ -415,7 +415,7 @@ def reorder_coaches(
     )
 
 
-@router.delete("/coaches/{coach_id}")
+@router.delete("/coaches/{coach_id:int}")
 def delete_coach(
     coach_id: int,
     db: Session = Depends(get_db),

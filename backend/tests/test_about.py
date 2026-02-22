@@ -171,3 +171,42 @@ def test_coach_profile_crud_admin_only(client, seed_users, seed_batch):
     list_after_delete = client.get("/api/about/coaches", headers=admin_headers)
     assert list_after_delete.status_code == 200
     assert all(row.get("coach_id") != coach_id for row in list_after_delete.json())
+
+
+def test_reorder_coaches_endpoint_not_shadowed_by_dynamic_route(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+
+    first = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "코치 A",
+            "coach_type": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "코치 B",
+            "coach_type": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert second.status_code == 200, second.text
+
+    first_id = first.json()["coach_id"]
+    second_id = second.json()["coach_id"]
+    reorder_resp = client.put(
+        "/api/about/coaches/reorder",
+        json={"batch_id": seed_batch.batch_id, "coach_ids": [second_id, first_id]},
+        headers=admin_headers,
+    )
+    assert reorder_resp.status_code == 200, reorder_resp.text
+    rows = reorder_resp.json()
+    visible_rows = [row for row in rows if row.get("coach_id")]
+    assert visible_rows[0]["coach_id"] == second_id
+    assert visible_rows[1]["coach_id"] == first_id

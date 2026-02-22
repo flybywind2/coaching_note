@@ -123,7 +123,7 @@ def get_dashboard(
         .filter(
             ProjectMember.project_id.in_(project_ids),
             User.is_active == True,  # noqa: E712
-            User.role != "observer",
+            User.role == "participant",
         )
         .group_by(ProjectMember.project_id)
         .all()
@@ -137,10 +137,13 @@ def get_dashboard(
             func.count(func.distinct(DailyAttendanceLog.user_id)).label("attendance_count"),
         )
         .join(DailyAttendanceLog, DailyAttendanceLog.user_id == ProjectMember.user_id)
+        .join(User, User.user_id == ProjectMember.user_id)
         .filter(
             ProjectMember.project_id.in_(project_ids),
             DailyAttendanceLog.work_date >= axis_start,
             DailyAttendanceLog.work_date <= axis_end,
+            User.is_active == True,  # noqa: E712
+            User.role == "participant",
         )
         .group_by(ProjectMember.project_id, DailyAttendanceLog.work_date)
         .all()
@@ -160,7 +163,7 @@ def get_dashboard(
         .filter(
             ProjectMember.project_id.in_(project_ids),
             User.is_active == True,  # noqa: E712
-            User.role != "observer",
+            User.role == "participant",
         )
         .all()
     )

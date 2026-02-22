@@ -149,6 +149,40 @@ def test_project_member_management_admin(client, seed_users, seed_batch):
     assert len(list_resp.json()) == 0
 
 
+def test_project_member_changes_sync_to_user_project_permissions(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_id = seed_users["participant"].user_id
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member/Permission Sync", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    add_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": participant_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert add_resp.status_code == 200
+
+    perm_after_add = client.get(f"/api/users/{participant_id}/permissions", headers=admin_headers)
+    assert perm_after_add.status_code == 200
+    assert project_id in perm_after_add.json()["project_ids"]
+
+    remove_resp = client.delete(
+        f"/api/projects/{project_id}/members/{participant_id}",
+        headers=admin_headers,
+    )
+    assert remove_resp.status_code == 200
+
+    perm_after_remove = client.get(f"/api/users/{participant_id}/permissions", headers=admin_headers)
+    assert perm_after_remove.status_code == 200
+    assert project_id not in perm_after_remove.json()["project_ids"]
+
+
 def test_project_member_add_forbidden_for_non_admin(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     coach_headers = auth_headers(client, "coach001")
