@@ -97,6 +97,7 @@ def get_dashboard(
                 "batch_name": target_batch.batch_name,
                 "start_date": target_batch.start_date,
                 "end_date": target_batch.end_date,
+                "coaching_start_date": target_batch.coaching_start_date,
             },
             "dates": [d.isoformat() for d in axis_dates],
             "pre_schedule_dates": [d.isoformat() for d in pre_schedule_dates if d in axis_set],
@@ -123,7 +124,7 @@ def get_dashboard(
         .filter(
             ProjectMember.project_id.in_(project_ids),
             User.is_active == True,  # noqa: E712
-            User.role != "observer",
+            User.role == "participant",
         )
         .group_by(ProjectMember.project_id)
         .all()
@@ -137,10 +138,13 @@ def get_dashboard(
             func.count(func.distinct(DailyAttendanceLog.user_id)).label("attendance_count"),
         )
         .join(DailyAttendanceLog, DailyAttendanceLog.user_id == ProjectMember.user_id)
+        .join(User, User.user_id == ProjectMember.user_id)
         .filter(
             ProjectMember.project_id.in_(project_ids),
             DailyAttendanceLog.work_date >= axis_start,
             DailyAttendanceLog.work_date <= axis_end,
+            User.is_active == True,  # noqa: E712
+            User.role == "participant",
         )
         .group_by(ProjectMember.project_id, DailyAttendanceLog.work_date)
         .all()
@@ -160,7 +164,7 @@ def get_dashboard(
         .filter(
             ProjectMember.project_id.in_(project_ids),
             User.is_active == True,  # noqa: E712
-            User.role != "observer",
+            User.role == "participant",
         )
         .all()
     )
@@ -451,6 +455,7 @@ def get_dashboard(
             "batch_name": target_batch.batch_name,
             "start_date": target_batch.start_date,
             "end_date": target_batch.end_date,
+            "coaching_start_date": target_batch.coaching_start_date,
         },
         "dates": [d.isoformat() for d in axis_dates],
         "pre_schedule_dates": [d.isoformat() for d in pre_schedule_dates if d in axis_set],

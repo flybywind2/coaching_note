@@ -171,3 +171,77 @@ def test_coach_profile_crud_admin_only(client, seed_users, seed_batch):
     list_after_delete = client.get("/api/about/coaches", headers=admin_headers)
     assert list_after_delete.status_code == 200
     assert all(row.get("coach_id") != coach_id for row in list_after_delete.json())
+
+
+def test_coach_can_edit_own_profile(client, seed_users, seed_batch):
+    coach_headers = auth_headers(client, "coach001")
+
+    create_resp = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "Coach",
+            "specialty": "초기 분야",
+        },
+        headers=coach_headers,
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    coach = create_resp.json()
+    assert coach["user_id"] == seed_users["coach"].user_id
+
+    update_resp = client.put(
+        f"/api/about/coaches/{coach['coach_id']}",
+        json={"specialty": "수정 분야", "career": "코칭 경력"},
+        headers=coach_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    body = update_resp.json()
+    assert body["specialty"] == "수정 분야"
+    assert body["career"] == "코칭 경력"
+
+    forbidden_update_resp = client.put(
+        f"/api/about/coaches/{coach['coach_id']}",
+        json={"is_visible": False},
+        headers=coach_headers,
+    )
+    assert forbidden_update_resp.status_code == 200, forbidden_update_resp.text
+    assert forbidden_update_resp.json()["is_visible"] is True
+
+
+def test_reorder_coaches_endpoint_not_shadowed_by_dynamic_route(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+
+    first = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "코치 A",
+            "coach_type": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        "/api/about/coaches",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "name": "코치 B",
+            "coach_type": "internal",
+        },
+        headers=admin_headers,
+    )
+    assert second.status_code == 200, second.text
+
+    first_id = first.json()["coach_id"]
+    second_id = second.json()["coach_id"]
+    reorder_resp = client.put(
+        "/api/about/coaches/reorder",
+        json={"batch_id": seed_batch.batch_id, "coach_ids": [second_id, first_id]},
+        headers=admin_headers,
+    )
+    assert reorder_resp.status_code == 200, reorder_resp.text
+    rows = reorder_resp.json()
+    visible_rows = [row for row in rows if row.get("coach_id")]
+    assert visible_rows[0]["coach_id"] == second_id
+    assert visible_rows[1]["coach_id"] == first_id

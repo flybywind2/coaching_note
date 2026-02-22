@@ -72,7 +72,7 @@ def create_post(
 
 @router.get("/posts/{post_id}", response_model=BoardPostOut)
 def get_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    board_service.increment_view(db, post_id)
+    board_service.increment_view(db, post_id, current_user.user_id)
     return board_service.get_post_with_meta(db, post_id)
 
 

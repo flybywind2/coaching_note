@@ -13,13 +13,13 @@ router = APIRouter(tags=["projects"])
 
 
 def _ensure_member_manage_permission(db: Session, project_id: int, current_user: User):
-    from app.utils.permissions import is_admin, is_participant, is_project_member
+    from app.utils.permissions import is_admin, is_project_member
 
     if is_admin(current_user):
         return
-    if is_participant(current_user) and is_project_member(db, project_id, current_user.user_id):
+    if is_project_member(db, project_id, current_user.user_id):
         return
-    raise HTTPException(status_code=403, detail="관리자 또는 본인 과제 참여자만 팀원 관리가 가능합니다.")
+    raise HTTPException(status_code=403, detail="관리자 또는 과제 팀원만 팀원 관리가 가능합니다.")
 
 
 @router.get("/api/batches/{batch_id}/projects", response_model=List[ProjectOut])
@@ -49,13 +49,13 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.utils.permissions import is_admin, is_participant, is_project_member
+    from app.utils.permissions import is_admin, is_project_member
     from fastapi import HTTPException
     if is_admin(current_user):
         return project_service.update_project(db, project_id, data, current_user)
-    if is_participant(current_user) and is_project_member(db, project_id, current_user.user_id):
+    if is_project_member(db, project_id, current_user.user_id):
         return project_service.update_project(db, project_id, data, current_user)
-    raise HTTPException(status_code=403, detail="관리자 또는 본인 과제 참여자만 수정 가능합니다.")
+    raise HTTPException(status_code=403, detail="관리자 또는 과제 팀원만 수정 가능합니다.")
 
 
 @router.delete("/api/projects/{project_id}")
@@ -94,5 +94,16 @@ def remove_member(
     _ensure_member_manage_permission(db, project_id, current_user)
     project_service.remove_member(db, project_id, user_id)
     return {"message": "멤버가 제거되었습니다."}
+
+
+@router.put("/api/projects/{project_id}/members/{user_id}/representative", response_model=ProjectMemberOut)
+def set_representative(
+    project_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_member_manage_permission(db, project_id, current_user)
+    return project_service.set_representative(db, project_id, user_id)
 
 

@@ -28,19 +28,16 @@ Pages.coachingNote = {
         : '메모를 입력하세요. 이미지/표 삽입이 가능합니다.';
       const renderCommentCard = (comment) => {
         const commentType = resolveCommentType(comment);
-        const typeBadge = commentType === 'participant_memo'
-          ? '<span class="comment-type-badge memo">참여자 메모</span>'
-          : '<span class="comment-type-badge feedback">코칭 의견</span>';
         return `
           <div class="comment-card ${comment.is_coach_only ? 'coach-only' : ''}">
             <div class="comment-head">
-              ${typeBadge}
+              <span class="comment-author-badge">${Fmt.escape(comment.author_name || '-')}</span>
               ${comment.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
             </div>
             <div class="comment-content rich-content">${Fmt.rich(comment.content, '-')}</div>
             ${comment.code_snippet ? `<pre class="code-snippet">${Fmt.escape(comment.code_snippet)}</pre>` : ''}
             <div class="comment-meta">
-              <span>${Fmt.datetime(comment.created_at)} · ${Fmt.escape(comment.author_name || '-')}</span>
+              <span>${Fmt.datetime(comment.created_at)}</span>
               ${(comment.author_id === user.user_id || user.role === 'admin')
                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${comment.comment_id}" data-comment-type="${commentType}">삭제</button>`
                 : ''}

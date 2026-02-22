@@ -3,7 +3,7 @@
 from datetime import date
 
 from app.models.batch import Batch
-from app.models.project import Project
+from app.models.project import Project, ProjectMember
 from tests.conftest import auth_headers
 
 
@@ -264,5 +264,42 @@ def test_user_permissions_internal_coach_stores_batch_only(client, db, seed_user
     assert get_resp.status_code == 200
     assert get_resp.json()["batch_ids"] == [seed_batch.batch_id]
     assert get_resp.json()["project_ids"] == []
+
+
+def test_participant_project_permissions_sync_with_project_member_list(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant = seed_users["participant"]
+
+    p1 = Project(batch_id=seed_batch.batch_id, project_name="Sync P1", organization="Org", visibility="public")
+    p2 = Project(batch_id=seed_batch.batch_id, project_name="Sync P2", organization="Org", visibility="public")
+    db.add_all([p1, p2])
+    db.commit()
+    db.refresh(p1)
+    db.refresh(p2)
+
+    db.add(
+        ProjectMember(
+            project_id=p1.project_id,
+            user_id=participant.user_id,
+            role="member",
+            is_representative=False,
+        )
+    )
+    db.commit()
+
+    update_resp = client.put(
+        f"/api/users/{participant.user_id}/permissions",
+        headers=admin_headers,
+        json={"batch_ids": [seed_batch.batch_id], "project_ids": [p2.project_id]},
+    )
+    assert update_resp.status_code == 200, update_resp.text
+
+    p1_members = client.get(f"/api/projects/{p1.project_id}/members", headers=admin_headers)
+    assert p1_members.status_code == 200
+    assert all(row["user_id"] != participant.user_id for row in p1_members.json())
+
+    p2_members = client.get(f"/api/projects/{p2.project_id}/members", headers=admin_headers)
+    assert p2_members.status_code == 200
+    assert any(row["user_id"] == participant.user_id for row in p2_members.json())
 
 

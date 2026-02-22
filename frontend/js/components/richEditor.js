@@ -244,13 +244,13 @@ const RichEditor = {
         <div class="rte-inline-modal-overlay">
           <div class="rte-inline-modal-box">
             <h4>${Fmt.escape(title || '안내')}</h4>
-            <form class="rte-inline-modal-form">
+            <div class="rte-inline-modal-form">
               <div class="rte-inline-modal-body">${bodyHtml || ''}</div>
               <div class="rte-inline-modal-actions">
                 <button type="button" class="btn btn-sm btn-secondary" data-role="rte-inline-cancel">취소</button>
                 <button type="button" class="btn btn-sm btn-primary" data-role="rte-inline-submit">${Fmt.escape(submitLabel)}</button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       `;
@@ -259,7 +259,7 @@ const RichEditor = {
       const box = inlineModalHost.querySelector('.rte-inline-modal-box');
       const cancel = inlineModalHost.querySelector('[data-role="rte-inline-cancel"]');
       const submit = inlineModalHost.querySelector('[data-role="rte-inline-submit"]');
-      const form = inlineModalHost.querySelector('.rte-inline-modal-form');
+      const modalWrap = inlineModalHost.querySelector('.rte-inline-modal-form');
       const stopPropagation = (e) => e.stopPropagation();
       overlay?.addEventListener('mousedown', stopPropagation);
       overlay?.addEventListener('click', (e) => {
@@ -276,12 +276,37 @@ const RichEditor = {
           e.preventDefault();
           e.stopPropagation();
         }
+        const collectData = () => {
+          const fd = new FormData();
+          if (!modalWrap) return fd;
+          modalWrap.querySelectorAll('[name]').forEach((field) => {
+            if (!(field instanceof HTMLElement)) return;
+            const name = field.getAttribute('name');
+            if (!name) return;
+            if (field instanceof HTMLInputElement) {
+              if (field.disabled) return;
+              if ((field.type === 'checkbox' || field.type === 'radio') && !field.checked) return;
+              fd.append(name, field.value ?? '');
+              return;
+            }
+            if (field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+              if (field.disabled) return;
+              fd.append(name, field.value ?? '');
+            }
+          });
+          return fd;
+        };
         if (!onSubmit) {
           closeInlineModal();
           return;
         }
-        const keepOpen = await onSubmit(new FormData(form));
-        if (!keepOpen) closeInlineModal();
+        try {
+          const formData = collectData();
+          const keepOpen = await onSubmit(formData);
+          if (!keepOpen) closeInlineModal();
+        } catch (err) {
+          openInlineMessage(err?.message || '처리 중 오류가 발생했습니다.');
+        }
       };
       cancel?.addEventListener('click', (e) => {
         e.preventDefault();
@@ -290,8 +315,14 @@ const RichEditor = {
         if (onCancel) onCancel();
       });
       submit?.addEventListener('click', submitInlineModal);
-      form?.addEventListener('submit', submitInlineModal);
-      form?.addEventListener('keydown', (e) => {
+      modalWrap?.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          closeInlineModal();
+          if (onCancel) onCancel();
+          return;
+        }
         if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
         const target = e.target instanceof HTMLElement ? e.target : null;
         if (target && (target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
@@ -307,6 +338,8 @@ const RichEditor = {
       });
       const cancel = inlineModalHost?.querySelector('[data-role="rte-inline-cancel"]');
       if (cancel) cancel.style.display = 'none';
+      const submit = inlineModalHost?.querySelector('[data-role="rte-inline-submit"]');
+      if (submit) submit.textContent = '확인';
     };
 
     const buildTableHTML = (rows, cols, options = {}) => {

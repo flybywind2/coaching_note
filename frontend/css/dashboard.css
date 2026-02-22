@@ -86,7 +86,8 @@
 }
 
 .dash-matrix-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   width: 100%;
   border: 1px solid rgba(205, 218, 252, 0.72);
   border-radius: 12px;
@@ -120,6 +121,20 @@
   z-index: 2;
   background: rgba(240, 246, 255, 0.94);
   color: #24396e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.dash-week-label {
+  font-size: 10px;
+  color: #4d6290;
+  line-height: 1.2;
+  font-weight: 700;
+}
+.dash-day-label {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #24396e;
+  line-height: 1.2;
   font-weight: 700;
   white-space: nowrap;
 }

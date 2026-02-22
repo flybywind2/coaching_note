@@ -19,6 +19,7 @@ Pages.projectDetail = {
       const user = Auth.getUser();
       const canWrite = user.role === 'admin' || Auth.isCoach();
       const isAdmin = user.role === 'admin';
+      const canEditInfo = isAdmin || !!project.is_my_project;
       const noteCount = sortedNotes.length;
       const initialTab = ['info', 'records', 'notes'].includes(params.tab) ? params.tab : 'info';
       const refreshView = async (tab = 'info') => {
@@ -45,6 +46,7 @@ Pages.projectDetail = {
           case 'info':
             this._renderInfo(tabContent, project, {
               canWrite,
+              canEditInfo,
               isAdmin,
               members,
               projectId,
@@ -81,6 +83,7 @@ Pages.projectDetail = {
   _renderInfo(el, p, options) {
     const {
       canWrite,
+      canEditInfo,
       isAdmin,
       members,
       projectId,
@@ -102,7 +105,7 @@ Pages.projectDetail = {
     const participantMemos = (latestComments || []).filter((c) => resolveCommentType(c) === 'participant_memo' && hasCommentText(c));
 
     const user = Auth.getUser();
-    const canManageMembers = isAdmin || (user?.role === 'participant' && !!p.is_my_project);
+    const canManageMembers = isAdmin || !!p.is_my_project;
     if (!this._memberPanelState) this._memberPanelState = {};
     if (!Object.prototype.hasOwnProperty.call(this._memberPanelState, projectId)) {
       this._memberPanelState[projectId] = false;
@@ -113,7 +116,7 @@ Pages.projectDetail = {
       <div class="info-item${full ? ' full' : ''}">
         <div class="info-item-label-row">
           <label>${label}</label>
-          ${canWrite && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
+          ${canEditInfo && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
         </div>
         ${value}
       </div>
@@ -122,7 +125,7 @@ Pages.projectDetail = {
       <div class="project-meta-chip">
         <div class="project-meta-chip-head">
           <label>${label}</label>
-          ${canWrite && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
+          ${canEditInfo && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
         </div>
         <div class="project-meta-chip-body">${value}</div>
       </div>
@@ -158,7 +161,12 @@ Pages.projectDetail = {
                     <span class="tag">${Fmt.escape(m.role || 'member')}</span>
                     ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
                   </div>
-                  ${canManageMembers ? `<button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>` : ''}
+                  ${canManageMembers ? `
+                    <div class="inline-actions">
+                      ${!m.is_representative ? `<button class="btn btn-sm btn-secondary set-representative-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">대표로 지정</button>` : ''}
+                      <button class="btn btn-sm btn-danger remove-member-btn" data-user-id="${m.user_id}" data-user-name="${Fmt.escape(m.user_name || '')}">제거</button>
+                    </div>
+                  ` : ''}
                 </div>
               `).join('') : '<p class="empty-state">등록된 팀원이 없습니다.</p>'}
             </div>
@@ -221,8 +229,12 @@ Pages.projectDetail = {
                   <div class="comment-list compact">
                     ${coachingFeedbacks.map((c) => `
                       <div class="comment-card">
+                        <div class="comment-head">
+                          <span class="comment-author-badge">${Fmt.escape(c.author_name || '-')}</span>
+                          ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                        </div>
                         <div class="comment-content rich-content">${Fmt.rich(c.content)}</div>
-                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span></div>
+                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)}</span></div>
                       </div>
                     `).join('')}
                   </div>
@@ -232,8 +244,12 @@ Pages.projectDetail = {
                   <div class="comment-list compact">
                     ${participantMemos.map((c) => `
                       <div class="comment-card">
+                        <div class="comment-head">
+                          <span class="comment-author-badge">${Fmt.escape(c.author_name || '-')}</span>
+                          ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
+                        </div>
                         <div class="comment-content rich-content">${Fmt.rich(c.content)}</div>
-                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span></div>
+                        <div class="comment-meta"><span>${Fmt.datetime(c.created_at)}</span></div>
                       </div>
                     `).join('')}
                   </div>
@@ -356,6 +372,18 @@ Pages.projectDetail = {
           if (onMemberChanged) onMemberChanged();
         } catch (err) {
           alert(err.message || '팀원 제거 실패');
+        }
+      }));
+
+      el.querySelectorAll('.set-representative-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const userId = +btn.dataset.userId;
+        const userName = btn.dataset.userName || '해당 사용자';
+        if (!confirm(`${userName}님을 과제 대표자로 지정하시겠습니까?`)) return;
+        try {
+          await API.setMemberRepresentative(projectId, userId);
+          if (onMemberChanged) onMemberChanged();
+        } catch (err) {
+          alert(err.message || '대표자 지정 실패');
         }
       }));
     }
@@ -732,12 +760,12 @@ Pages.projectDetail = {
                         ${coachingFeedbacks.map((c) => `
                           <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
                             <div class="comment-head">
-                              <span class="comment-type-badge feedback">코칭 의견</span>
+                              <span class="comment-author-badge">${Fmt.escape(c.author_name || '-')}</span>
                               ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
                             </div>
                             <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                             <div class="comment-meta">
-                              <span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span>
+                              <span>${Fmt.datetime(c.created_at)}</span>
                               ${(c.author_id === user.user_id || user.role === 'admin')
                                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="coaching_feedback">삭제</button>`
                                 : ''}
@@ -754,12 +782,12 @@ Pages.projectDetail = {
                         ${participantMemos.map((c) => `
                           <div class="comment-card ${c.is_coach_only ? 'coach-only' : ''}">
                             <div class="comment-head">
-                              <span class="comment-type-badge memo">참여자 메모</span>
+                              <span class="comment-author-badge">${Fmt.escape(c.author_name || '-')}</span>
                               ${c.is_coach_only ? '<span class="coach-only-badge">코치들에게만 공유</span>' : ''}
                             </div>
                             <div class="comment-content rich-content">${Fmt.rich(c.content, '-')}</div>
                             <div class="comment-meta">
-                              <span>${Fmt.datetime(c.created_at)} · ${Fmt.escape(c.author_name || '-')}</span>
+                              <span>${Fmt.datetime(c.created_at)}</span>
                               ${(c.author_id === user.user_id || user.role === 'admin')
                                 ? `<button class="btn btn-sm btn-danger delete-comment-btn" data-comment-id="${c.comment_id}" data-comment-type="participant_memo">삭제</button>`
                                 : ''}
@@ -1107,8 +1135,8 @@ Pages.projectDetail = {
         Modal.open(`<h2>세션 추가</h2>
           <form id="add-session-form">
             <div class="form-group"><label>날짜 *</label><input type="date" name="session_date" required /></div>
-            <div class="form-group"><label>시작 시간 *</label><input name="start_time" required placeholder="09:00" /></div>
-            <div class="form-group"><label>종료 시간 *</label><input name="end_time" required placeholder="11:00" /></div>
+            <div class="form-group"><label>시작 시간 *</label><input type="time" step="600" name="start_time" required value="09:00" /></div>
+            <div class="form-group"><label>종료 시간 *</label><input type="time" step="600" name="end_time" required value="11:00" /></div>
             <div class="form-group"><label>장소</label><input name="location" placeholder="회의실 A" /></div>
             <button type="submit" class="btn btn-primary">추가</button>
           </form>`);

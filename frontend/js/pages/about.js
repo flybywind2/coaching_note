@@ -8,6 +8,8 @@ Pages.about = {
     try {
       const user = Auth.getUser();
       const isAdmin = user.role === 'admin';
+      const isCoach = Auth.isCoach();
+      const currentUserId = user?.user_id || null;
       const initialTab = params.tab === 'coach' ? 'coach' : 'intro';
 
       const [introContent, coachContent, batches] = await Promise.all([
@@ -90,7 +92,6 @@ Pages.about = {
           <div class="page-container about-page">
             <div class="page-header">
               <h1>SSP+ 소개</h1>
-              <p class="search-sub">프로그램 개요와 코치진 정보를 확인할 수 있습니다.</p>
               <div class="tabs">
                 <button class="tab-btn${isIntroTab ? ' active' : ''}" data-tab="intro">SSP+ 소개</button>
                 <button class="tab-btn${!isIntroTab ? ' active' : ''}" data-tab="coach">코치 소개</button>
@@ -119,6 +120,7 @@ Pages.about = {
                   <div class="about-coach-grid" id="about-coach-grid">
                     ${state.coaches.length ? state.coaches.map((coach) => {
                       const hasProfile = !!coach.coach_id;
+                      const canEditCoach = isAdmin || (isCoach && !!coach.user_id && Number(coach.user_id) === Number(currentUserId));
                       const hiddenBadge = isAdmin && !coach.is_visible ? '<span class="tag tag-danger">숨김</span>' : '';
                       const dragHint = isAdmin && hasProfile ? '<span class="about-drag-hint">드래그 정렬</span>' : '';
                       return `
@@ -144,11 +146,11 @@ Pages.about = {
                             ${renderCoachField('경력:', coach.career)}
                             ${!coach.affiliation && !coach.department && !coach.specialty && !coach.career ? '<p class="hint">등록된 상세 정보가 없습니다.</p>' : ''}
                           </div>
-                          ${isAdmin ? `
+                          ${(isAdmin || canEditCoach) ? `
                             <div class="page-actions">
                               <button class="btn btn-sm btn-secondary edit-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}">편집</button>
-                              <button class="btn btn-sm ${coach.is_visible ? 'btn-danger' : 'btn-secondary'} toggle-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}" data-visible="${coach.is_visible ? '1' : '0'}">${coach.is_visible ? '숨김' : '표시'}</button>
-                              ${coach.coach_id && !coach.user_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
+                              ${isAdmin ? `<button class="btn btn-sm ${coach.is_visible ? 'btn-danger' : 'btn-secondary'} toggle-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}" data-visible="${coach.is_visible ? '1' : '0'}">${coach.is_visible ? '숨김' : '표시'}</button>` : ''}
+                              ${isAdmin && coach.coach_id && !coach.user_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
                             </div>
                           ` : ''}
                         </article>

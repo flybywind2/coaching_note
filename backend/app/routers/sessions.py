@@ -21,6 +21,37 @@ from app.utils.permissions import COACH_ROLES, can_view_project, is_coach
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
+def _validate_session_time_value(text: str | None, field_name: str, allow_2359: bool = False) -> None:
+    if text is None:
+        raise HTTPException(status_code=400, detail=f"{field_name}이 필요합니다.")
+    value = str(text).strip()
+    if len(value) >= 5 and value[2] == ":":
+        value = value[:5]
+    if len(value) != 5 or value[2] != ":":
+        raise HTTPException(status_code=400, detail=f"{field_name} 형식이 올바르지 않습니다. (HH:MM)")
+    hh, mm = value.split(":")
+    if not (hh.isdigit() and mm.isdigit()):
+        raise HTTPException(status_code=400, detail=f"{field_name} 형식이 올바르지 않습니다. (HH:MM)")
+    hour = int(hh)
+    minute = int(mm)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise HTTPException(status_code=400, detail=f"{field_name} 값이 올바르지 않습니다.")
+    if allow_2359 and hour == 23 and minute == 59:
+        return
+    if minute % 10 != 0:
+        raise HTTPException(status_code=400, detail=f"{field_name}은 10분 단위로 입력하세요.")
+
+
+def _validate_session_time_range(start_time: str, end_time: str) -> None:
+    normalized_start = str(start_time).strip()[:5]
+    normalized_end = str(end_time).strip()[:5]
+    allow_end_2359 = normalized_start == "00:00" and normalized_end == "23:59"
+    _validate_session_time_value(normalized_start, "start_time")
+    _validate_session_time_value(normalized_end, "end_time", allow_2359=allow_end_2359)
+    if normalized_end < normalized_start:
+        raise HTTPException(status_code=400, detail="종료 시간은 시작 시간보다 빠를 수 없습니다.")
+
+
 def _ensure_project_session_manage_permission(db: Session, project_id: int, current_user: User) -> Project:
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
@@ -71,6 +102,7 @@ def create_session(
     project = _ensure_project_session_manage_permission(db, data.project_id, current_user)
     if project.batch_id != data.batch_id:
         raise HTTPException(status_code=400, detail="과제와 차수가 일치하지 않습니다.")
+    _validate_session_time_range(data.start_time, data.end_time)
     session = CoachingSession(**data.model_dump(), created_by=current_user.user_id)
     db.add(session)
     db.commit()
@@ -112,6 +144,9 @@ def update_session(
     if not s:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
     _ensure_project_session_manage_permission(db, s.project_id, current_user)
+    next_start_time = data.start_time if data.start_time is not None else s.start_time
+    next_end_time = data.end_time if data.end_time is not None else s.end_time
+    _validate_session_time_range(str(next_start_time), str(next_end_time))
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(s, k, v)
     db.commit()

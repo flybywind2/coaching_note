@@ -124,3 +124,32 @@ def test_dashboard_coach_performance_is_admin_only(client, db, seed_users, seed_
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("coach_performance", []) == []
+
+
+def test_dashboard_expected_count_reflects_permission_driven_member_sync(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_id = seed_users["participant"].user_id
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="권한 연동 출석 대상",
+        organization="DX",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    perm_resp = client.put(
+        f"/api/users/{participant_id}/permissions",
+        headers=admin_headers,
+        json={"batch_ids": [seed_batch.batch_id], "project_ids": [project.project_id]},
+    )
+    assert perm_resp.status_code == 200, perm_resp.text
+
+    dash_resp = client.get(f"/api/dashboard?batch_id={seed_batch.batch_id}", headers=admin_headers)
+    assert dash_resp.status_code == 200, dash_resp.text
+    rows = dash_resp.json()["attendance_rows"]
+    target = next((row for row in rows if row["project_id"] == project.project_id), None)
+    assert target is not None
+    assert target["expected_count"] == 1

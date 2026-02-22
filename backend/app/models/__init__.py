@@ -10,7 +10,7 @@ from app.models.session import CoachingSession, SessionAttendee, AttendanceLog, 
 from app.models.allowed_ip import AllowedIPRange
 from app.models.task import ProjectTask
 from app.models.schedule import ProgramSchedule
-from app.models.board import Board, BoardPost, PostComment
+from app.models.board import Board, BoardPost, PostComment, BoardPostView
 from app.models.notification import Notification, NotificationPreference
 from app.models.ai_content import AIGeneratedContent
 from app.models.content_version import ContentVersion
@@ -31,7 +31,7 @@ __all__ = [
     "AllowedIPRange",
     "ProjectTask",
     "ProgramSchedule",
-    "Board", "BoardPost", "PostComment",
+    "Board", "BoardPost", "PostComment", "BoardPostView",
     "Notification", "NotificationPreference",
     "AIGeneratedContent",
     "ContentVersion",
