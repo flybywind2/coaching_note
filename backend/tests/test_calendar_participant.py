@@ -281,7 +281,7 @@ def test_participant_calendar_hides_coaching_scope_schedule(client, db, seed_use
     assert all(ev.get("scope") != "coaching" for ev in schedule_events)
 
 
-def test_observer_calendar_sees_allowed_project_and_coaching_schedule(client, db, seed_users, seed_batch):
+def test_observer_calendar_sees_all_projects_and_coaching_schedule(client, db, seed_users, seed_batch):
     headers = auth_headers(client, "obs001")
     allowed_project = Project(
         batch_id=seed_batch.batch_id,
@@ -346,5 +346,7 @@ def test_observer_calendar_sees_allowed_project_and_coaching_schedule(client, db
     events = resp.json()["events"]
     session_events = [ev for ev in events if ev.get("event_type") == "session"]
     assert session_events
-    assert all(ev.get("project_id") == allowed_project.project_id for ev in session_events)
+    session_project_ids = {ev.get("project_id") for ev in session_events}
+    assert allowed_project.project_id in session_project_ids
+    assert blocked_project.project_id in session_project_ids
     assert any(ev.get("manage_type") == "schedule" and ev.get("scope") == "coaching" for ev in events)

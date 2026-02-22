@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession
 from app.models.user import User
+from app.utils.permissions import INTERNAL_COACH_ROLES, can_access_coaching_plan, is_internal_coach
 from app.schemas.coaching_plan import (
     CoachingActualOverrideUpsert,
     CoachingPlanGridOut,
@@ -27,14 +28,27 @@ router = APIRouter(prefix="/api/coaching-plan", tags=["coaching_plan"])
 
 
 def _ensure_admin_or_coach(current_user: User) -> None:
-    if current_user.role not in ("admin", "coach"):
+    if not can_access_coaching_plan(current_user):
         raise HTTPException(status_code=403, detail="관리자/코치만 접근 가능합니다.")
 
 
-def _resolve_coach_id(current_user: User, coach_user_id: int | None) -> int | None:
-    if current_user.role == "coach":
+def _ensure_admin(current_user: User) -> None:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="실적 보정은 관리자만 가능합니다.")
+
+
+def _resolve_grid_coach_filter(coach_user_id: int | None) -> int | None:
+    if coach_user_id is None:
+        return None
+    if int(coach_user_id) <= 0:
+        raise HTTPException(status_code=400, detail="coach_user_id가 올바르지 않습니다.")
+    return int(coach_user_id)
+
+
+def _resolve_plan_coach_id(current_user: User, coach_user_id: int | None) -> int | None:
+    if is_internal_coach(current_user):
         if coach_user_id and coach_user_id != current_user.user_id:
-            raise HTTPException(status_code=403, detail="코치는 본인 계획만 조회/수정할 수 있습니다.")
+            raise HTTPException(status_code=403, detail="코치는 본인 계획만 수정할 수 있습니다.")
         return current_user.user_id
     return coach_user_id
 
@@ -51,6 +65,8 @@ def _validate_hhmm(text: str | None, field_name: str) -> None:
     minute = int(mm)
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
         raise HTTPException(status_code=400, detail=f"{field_name} 값이 유효하지 않습니다.")
+    if minute % 10 != 0:
+        raise HTTPException(status_code=400, detail=f"{field_name}은 10분 단위로 입력하세요.")
 
 
 def _normalize_dt(value: datetime | None, work_date: date) -> datetime | None:
@@ -155,7 +171,7 @@ def get_coaching_plan_grid(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_admin_or_coach(current_user)
-    target_coach_user_id = _resolve_coach_id(current_user, coach_user_id)
+    target_coach_user_id = _resolve_grid_coach_filter(coach_user_id)
 
     batch = db.query(Batch).filter(Batch.batch_id == batch_id).first()
     if not batch:
@@ -168,10 +184,15 @@ def get_coaching_plan_grid(
     if (query_end - query_start).days > 550:
         raise HTTPException(status_code=400, detail="조회 기간이 너무 깁니다.")
 
-    coach_q = db.query(User).filter(User.is_active == True, User.role.in_(["admin", "coach"]))  # noqa: E712
+    coach_q = db.query(User).filter(User.is_active == True, User.role.in_(["admin", *INTERNAL_COACH_ROLES]))  # noqa: E712
     if target_coach_user_id:
         coach_q = coach_q.filter(User.user_id == target_coach_user_id)
     coaches = coach_q.order_by(User.name.asc()).all()
+    if is_internal_coach(current_user):
+        coaches = sorted(
+            coaches,
+            key=lambda row: (0 if row.user_id == current_user.user_id else 1, row.name or "", row.emp_id or ""),
+        )
     coach_ids = [c.user_id for c in coaches]
 
     dates: List[date] = []
@@ -360,12 +381,12 @@ def upsert_coaching_plan(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_admin_or_coach(current_user)
-    target_coach_user_id = _resolve_coach_id(current_user, data.coach_user_id)
+    target_coach_user_id = _resolve_plan_coach_id(current_user, data.coach_user_id)
     if target_coach_user_id is None:
         raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
 
     coach_user = db.query(User).filter(User.user_id == target_coach_user_id, User.is_active == True).first()  # noqa: E712
-    if not coach_user or coach_user.role not in ("admin", "coach"):
+    if not coach_user or coach_user.role not in ("admin", *INTERNAL_COACH_ROLES):
         raise HTTPException(status_code=404, detail="코치 사용자를 찾을 수 없습니다.")
 
     _validate_hhmm(data.start_time, "start_time")
@@ -415,7 +436,7 @@ def delete_coaching_plan(
     current_user: User = Depends(get_current_user),
 ):
     _ensure_admin_or_coach(current_user)
-    target_coach_user_id = _resolve_coach_id(current_user, coach_user_id)
+    target_coach_user_id = _resolve_plan_coach_id(current_user, coach_user_id)
     if target_coach_user_id is None:
         raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
 
@@ -442,8 +463,8 @@ def upsert_actual_override(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_admin_or_coach(current_user)
-    target_coach_user_id = _resolve_coach_id(current_user, data.coach_user_id)
+    _ensure_admin(current_user)
+    target_coach_user_id = data.coach_user_id
     if target_coach_user_id is None:
         raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
 
@@ -498,8 +519,8 @@ def delete_actual_override(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_admin_or_coach(current_user)
-    target_coach_user_id = _resolve_coach_id(current_user, coach_user_id)
+    _ensure_admin(current_user)
+    target_coach_user_id = coach_user_id
     if target_coach_user_id is None:
         raise HTTPException(status_code=400, detail="coach_user_id가 필요합니다.")
 

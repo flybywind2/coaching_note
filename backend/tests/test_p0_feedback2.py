@@ -27,6 +27,14 @@ def test_daily_attendance_checkin_checkout_without_session(client, seed_users):
     assert checkout_resp.status_code == 200, checkout_resp.text
     assert checkout_resp.json()["check_out_time"] is not None
 
+    cancel_resp = client.post("/api/attendance/checkout-cancel", headers=participant_headers)
+    assert cancel_resp.status_code == 200, cancel_resp.text
+    assert cancel_resp.json()["check_out_time"] is None
+
+    status_after_cancel = client.get("/api/attendance/my-status", headers=participant_headers)
+    assert status_after_cancel.status_code == 200
+    assert status_after_cancel.json()["can_checkout"] is True
+
 
 def test_bulk_upsert_auto_generates_email(client, seed_users):
     admin_headers = auth_headers(client, "admin001")
@@ -112,4 +120,3 @@ def test_note_week_number_uses_batch_coaching_start_date(client, db, seed_users,
     )
     assert note_resp.status_code == 200, note_resp.text
     assert note_resp.json()["week_number"] == 2
-

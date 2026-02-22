@@ -7,6 +7,11 @@ Pages.coachingPlan = {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
+      if (!Auth.isAdminOrInternalCoach()) {
+        el.innerHTML = '<div class="error-state">코칭 계획/실적 접근 권한이 없습니다.</div>';
+        return;
+      }
+
       const isAdmin = user.role === 'admin';
       const batches = await API.getBatches();
       if (!batches.length) {
@@ -15,35 +20,18 @@ Pages.coachingPlan = {
       }
 
       const batchId = State.get('currentBatchId') || batches[0].batch_id;
-      const viewMode = State.get('cpViewMode') || 'monthly';
-      let dateFilter = State.get('cpDateFilter') || 'coaching';
-      const coaches = isAdmin ? await API.getUsers().then((rows) => rows.filter((u) => ['admin', 'coach'].includes(u.role))) : [];
+      State.set('currentBatchId', batchId);
 
       el.innerHTML = `
         <div class="page-container coaching-plan-page">
           <div class="page-header">
             <h1>코칭 계획/실적</h1>
-            <p class="search-sub">기본은 코칭일정 날짜만 표시하며, 필요 시 전체 날짜 보기로 전환할 수 있습니다.</p>
+            <p class="search-sub">코칭 일정 날짜만 표시됩니다.</p>
             <div class="cp-controls">
               <select id="cp-batch">
                 ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === batchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
               </select>
-              <select id="cp-view-mode">
-                <option value="monthly"${viewMode === 'monthly' ? ' selected' : ''}>월별 코치관리</option>
-                <option value="grid"${viewMode === 'grid' ? ' selected' : ''}>전체 그리드(기존)</option>
-              </select>
-              <select id="cp-month"></select>
-              <div class="cp-date-filter">
-                <button type="button" class="btn btn-sm cp-date-filter-btn${dateFilter === 'coaching' ? ' btn-primary' : ' btn-secondary'}" data-filter="coaching">코칭일정만</button>
-                <button type="button" class="btn btn-sm cp-date-filter-btn${dateFilter === 'all' ? ' btn-primary' : ' btn-secondary'}" data-filter="all">전체</button>
-              </div>
-              ${isAdmin ? `
-                <select id="cp-coach-filter">
-                  <option value="">전체 코치</option>
-                  ${coaches.map((c) => `<option value="${c.user_id}">${Fmt.escape(c.name)} (${Fmt.escape(c.emp_id)})</option>`).join('')}
-                </select>
-              ` : ''}
-              <button id="cp-today" class="btn btn-sm">오늘/이번달</button>
+              <button id="cp-today" class="btn btn-sm">오늘 위치로 이동</button>
               <span id="cp-range-label" class="cal-month"></span>
             </div>
           </div>
@@ -51,145 +39,205 @@ Pages.coachingPlan = {
         </div>
       `;
 
-      const monthSelect = document.getElementById('cp-month');
-      const rangeLabelEl = document.getElementById('cp-range-label');
       const gridEl = document.getElementById('cp-grid');
-      const dateFilterButtons = Array.from(document.querySelectorAll('.cp-date-filter-btn'));
+      const rangeLabelEl = document.getElementById('cp-range-label');
+      const batchSelectEl = document.getElementById('cp-batch');
 
-      const syncDateFilterButtons = () => {
-        dateFilterButtons.forEach((btn) => {
-          const isActive = btn.dataset.filter === dateFilter;
-          btn.classList.toggle('btn-primary', isActive);
-          btn.classList.toggle('btn-secondary', !isActive);
-        });
-      };
-
-      const syncMonthVisibility = () => {
-        const isCoachingOnly = dateFilter === 'coaching';
-        monthSelect.style.display = isCoachingOnly ? 'none' : '';
-        monthSelect.disabled = isCoachingOnly;
-      };
-
-      const syncMonthOptions = (batch, forceCurrentMonth = false) => {
-        const options = this._buildMonthOptions(batch.start_date, batch.end_date);
-        if (!options.length) {
-          monthSelect.innerHTML = '';
-          return;
-        }
-        const todayMonthKey = this._todayKey().slice(0, 7);
-        const currentValue = monthSelect.value;
-        const savedMonth = State.get('cpMonthKey');
-        const hasToday = options.some((opt) => opt.value === todayMonthKey);
-        const selectedMonth = forceCurrentMonth && hasToday
-          ? todayMonthKey
-          : (currentValue && options.some((opt) => opt.value === currentValue)
-            ? currentValue
-            : (savedMonth && options.some((opt) => opt.value === savedMonth)
-              ? savedMonth
-              : options[options.length - 1].value));
-        monthSelect.innerHTML = options
-          .map((opt) => `<option value="${opt.value}"${opt.value === selectedMonth ? ' selected' : ''}>${opt.label}</option>`)
-          .join('');
-        State.set('cpMonthKey', selectedMonth);
-      };
-
-      const loadView = async ({ forceCurrentMonth = false, autoFocusToday = true } = {}) => {
-        const selectedBatchId = Number.parseInt(document.getElementById('cp-batch').value, 10);
+      const loadView = async (focusDate = null) => {
+        const selectedBatchId = Number.parseInt(batchSelectEl.value, 10);
         const batch = await API.getBatch(selectedBatchId);
-        syncMonthOptions(batch, forceCurrentMonth);
-        syncMonthVisibility();
-        const currentMode = document.getElementById('cp-view-mode').value;
         const payload = {
           batch_id: selectedBatchId,
+          start: batch.start_date,
+          end: batch.end_date,
         };
-        const coachFilter = document.getElementById('cp-coach-filter')?.value;
-        if (coachFilter) payload.coach_user_id = Number.parseInt(coachFilter, 10);
-
-        if (currentMode === 'monthly') {
-          if (dateFilter === 'coaching') {
-            payload.start = batch.start_date;
-            payload.end = batch.end_date;
-            rangeLabelEl.textContent = `코칭일정 전체 (${payload.start} ~ ${payload.end})`;
-            await this._renderMonthlyView(gridEl, payload, user, dateFilter, autoFocusToday);
-            return;
-          }
-          const monthKey = monthSelect.value;
-          if (!monthKey) {
-            rangeLabelEl.textContent = '-';
-            gridEl.innerHTML = '<p class="empty-state">표시할 월 데이터가 없습니다.</p>';
-            return;
-          }
-          const monthRange = this._resolveMonthRange(monthKey, batch.start_date, batch.end_date);
-          payload.start = monthRange.start;
-          payload.end = monthRange.end;
-          rangeLabelEl.textContent = `${monthRange.label} (${payload.start} ~ ${payload.end})`;
-          await this._renderMonthlyView(gridEl, payload, user, dateFilter, autoFocusToday);
-          return;
-        }
-
-        payload.start = batch.start_date;
-        payload.end = batch.end_date;
-        rangeLabelEl.textContent = `${batch.start_date} ~ ${batch.end_date}`;
-        await this._renderGrid(gridEl, payload, user, dateFilter, autoFocusToday);
+        await this._renderGrid({
+          gridEl,
+          payload,
+          user,
+          isAdmin,
+          rangeLabelEl,
+          focusDate,
+        });
       };
 
-      document.getElementById('cp-batch').addEventListener('change', async (e) => {
-        State.set('currentBatchId', Number.parseInt(e.target.value, 10));
-        await loadView({ forceCurrentMonth: true });
-      });
-      document.getElementById('cp-view-mode').addEventListener('change', async (e) => {
-        State.set('cpViewMode', e.target.value);
-        await loadView();
-      });
-      monthSelect.addEventListener('change', async (e) => {
-        State.set('cpMonthKey', e.target.value);
-        if (document.getElementById('cp-view-mode').value === 'monthly') {
-          await loadView();
-        }
-      });
-      document.getElementById('cp-coach-filter')?.addEventListener('change', loadView);
-      dateFilterButtons.forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const next = btn.dataset.filter === 'all' ? 'all' : 'coaching';
-          if (dateFilter === next) return;
-          dateFilter = next;
-          State.set('cpDateFilter', dateFilter);
-          syncDateFilterButtons();
-          syncMonthVisibility();
-          await loadView({ autoFocusToday: false });
-        });
-      });
-      document.getElementById('cp-today').addEventListener('click', async () => {
-        const currentMode = document.getElementById('cp-view-mode').value;
-        if (currentMode === 'monthly') {
-          if (dateFilter === 'coaching') {
-            this._focusTodayInMonthly(gridEl);
-            return;
-          }
-          const todayMonthKey = this._todayKey().slice(0, 7);
-          if ([...monthSelect.options].some((opt) => opt.value === todayMonthKey)) {
-            monthSelect.value = todayMonthKey;
-            State.set('cpMonthKey', todayMonthKey);
-            await loadView();
-          }
-          this._focusTodayInMonthly(gridEl);
-          return;
-        }
-        const wrap = gridEl.querySelector('.cp-table-wrap');
-        if (!wrap) return;
-        const todayKey = this._todayKey();
-        const target = wrap.querySelector(`[data-date="${todayKey}"]`);
-        if (!target) return;
-        const coachWidth = wrap.querySelector('.cp-coach-col')?.offsetWidth || 180;
-        wrap.scrollLeft = Math.max(0, target.offsetLeft - coachWidth - 24);
+      batchSelectEl.addEventListener('change', async (e) => {
+        const nextBatchId = Number.parseInt(e.target.value, 10);
+        State.set('currentBatchId', nextBatchId);
+        State.set('cpFocusDate', null);
+        await loadView(this._todayKey());
       });
 
-      syncDateFilterButtons();
-      syncMonthVisibility();
-      await loadView({ forceCurrentMonth: true });
+      document.getElementById('cp-today')?.addEventListener('click', () => {
+        const todayKey = this._todayKey();
+        State.set('cpFocusDate', todayKey);
+        this._focusDate(gridEl, todayKey);
+      });
+
+      await loadView(State.get('cpFocusDate') || this._todayKey());
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
+  },
+
+  async _renderGrid({ gridEl, payload, user, isAdmin, rangeLabelEl, focusDate = null }) {
+    gridEl.innerHTML = '<div class="loading">로딩 중...</div>';
+    const data = await API.getCoachingPlanGrid(payload);
+    const coachingDateSet = new Set((data.coaching_schedule_dates || []).map((d) => String(d).slice(0, 10)));
+    const visibleDateKeys = (data.dates || [])
+      .map((dt) => String(dt).slice(0, 10))
+      .filter((dateKey) => coachingDateSet.has(dateKey));
+
+    rangeLabelEl.textContent = `코칭일정 ${visibleDateKeys.length}일 (${payload.start} ~ ${payload.end})`;
+
+    if (!data.rows || !data.rows.length) {
+      gridEl.innerHTML = '<p class="empty-state">표시할 코치 데이터가 없습니다.</p>';
+      return;
+    }
+    if (!visibleDateKeys.length) {
+      gridEl.innerHTML = '<p class="empty-state">선택한 기간에 코칭 일정이 없습니다.</p>';
+      return;
+    }
+
+    const todayKey = this._todayKey();
+    gridEl.innerHTML = `
+      <div class="cp-table-wrap">
+        <table class="data-table coaching-plan-table">
+          <thead>
+            <tr>
+              <th class="cp-coach-col">코치</th>
+              <th class="cp-kind-col">구분</th>
+              ${visibleDateKeys.map((dateKey) => `<th class="${dateKey === todayKey ? 'cp-today-col' : ''}" data-date="${Fmt.escape(dateKey)}">${this._dayLabel(dateKey)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${data.rows.map((row) => {
+              const cellMap = {};
+              (row.cells || []).forEach((cell) => {
+                cellMap[String(cell.date).slice(0, 10)] = cell;
+              });
+              const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
+              const canEditActual = isAdmin;
+              const planCells = visibleDateKeys.map((dateKey) => {
+                const cell = cellMap[dateKey] || { date: dateKey };
+                const cellJson = this._escapeAttrJson(cell);
+                const classes = [
+                  'cp-plan-cell',
+                  dateKey === todayKey ? 'cp-today-col' : '',
+                  canEditPlan ? 'cp-editable' : '',
+                ].filter(Boolean).join(' ');
+                return `
+                  <td class="${classes}" data-date="${Fmt.escape(dateKey)}" data-coach="${row.coach_user_id}" data-cell="${cellJson}">
+                    <div class="cp-cell cp-cell-compact">
+                      <div class="cp-line">${Fmt.escape(this._formatPlanTime(cell))}</div>
+                    </div>
+                  </td>
+                `;
+              }).join('');
+
+              const actualCells = visibleDateKeys.map((dateKey) => {
+                const cell = cellMap[dateKey] || { date: dateKey };
+                const cellJson = this._escapeAttrJson(cell);
+                const classes = [
+                  'cp-actual-cell',
+                  dateKey === todayKey ? 'cp-today-col' : '',
+                  canEditActual ? 'cp-editable' : '',
+                  cell.actual_source === 'override' ? 'cp-actual-override' : '',
+                ].filter(Boolean).join(' ');
+                return `
+                  <td class="${classes}" data-date="${Fmt.escape(dateKey)}" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-cell="${cellJson}">
+                    <div class="cp-cell cp-cell-compact">
+                      <div class="cp-line">${Fmt.escape(this._formatActualRange(cell))}</div>
+                    </div>
+                  </td>
+                `;
+              }).join('');
+
+              return `
+                <tr class="cp-row-plan">
+                  <th class="cp-coach-col" rowspan="2">
+                    <strong>${Fmt.escape(row.coach_name)}</strong>
+                    <div class="hint">${Fmt.escape(row.coach_emp_id)}${row.department ? ` · ${Fmt.escape(row.department)}` : ''}</div>
+                  </th>
+                  <th class="cp-kind-col">계획</th>
+                  ${planCells}
+                </tr>
+                <tr class="cp-row-actual">
+                  <th class="cp-kind-col">실적</th>
+                  ${actualCells}
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    gridEl.querySelectorAll('.cp-plan-cell.cp-editable').forEach((cellEl) => {
+      cellEl.addEventListener('click', async () => {
+        const coachUserId = Number.parseInt(cellEl.dataset.coach, 10);
+        const workDate = cellEl.dataset.date;
+        const cell = JSON.parse(cellEl.dataset.cell || '{}');
+        await this._openPlanModal({
+          payload,
+          coachUserId,
+          workDate,
+          cell,
+          reload: async (nextFocusDate) => {
+            State.set('cpFocusDate', nextFocusDate || workDate);
+            await this._renderGrid({
+              gridEl,
+              payload,
+              user,
+              isAdmin,
+              rangeLabelEl,
+              focusDate: nextFocusDate || workDate,
+            });
+          },
+        });
+      });
+    });
+
+    if (isAdmin) {
+      gridEl.querySelectorAll('.cp-actual-cell.cp-editable').forEach((cellEl) => {
+        cellEl.addEventListener('click', async () => {
+          const coachUserId = Number.parseInt(cellEl.dataset.coach, 10);
+          const coachName = cellEl.dataset.name || '';
+          const workDate = cellEl.dataset.date;
+          const cell = JSON.parse(cellEl.dataset.cell || '{}');
+          await this._openActualModal({
+            payload,
+            coachUserId,
+            coachName,
+            workDate,
+            cell,
+            reload: async (nextFocusDate) => {
+              State.set('cpFocusDate', nextFocusDate || workDate);
+              await this._renderGrid({
+                gridEl,
+                payload,
+                user,
+                isAdmin,
+                rangeLabelEl,
+                focusDate: nextFocusDate || workDate,
+              });
+            },
+          });
+        });
+      });
+    }
+
+    this._focusDate(gridEl, focusDate || State.get('cpFocusDate') || todayKey);
+  },
+
+  _focusDate(gridEl, focusDate) {
+    const wrap = gridEl.querySelector('.cp-table-wrap');
+    if (!wrap || !focusDate) return;
+    const target = wrap.querySelector(`[data-date="${focusDate}"]`);
+    if (!target) return;
+    const coachWidth = wrap.querySelector('.cp-coach-col')?.offsetWidth || 180;
+    const kindWidth = wrap.querySelector('.cp-kind-col')?.offsetWidth || 68;
+    wrap.scrollLeft = Math.max(0, target.offsetLeft - coachWidth - kindWidth - 24);
   },
 
   _todayKey() {
@@ -216,6 +264,13 @@ Pages.coachingPlan = {
     return `${h}시간${m}분`;
   },
 
+  _formatPlanTime(cell) {
+    if (!cell.plan_id) return '-';
+    if (cell.is_all_day) return '종일';
+    if (cell.start_time && cell.end_time) return `${cell.start_time} ~ ${cell.end_time}`;
+    return '-';
+  },
+
   _formatActualRange(cell) {
     const minutes = Number(cell.final_minutes || 0);
     if (!minutes) return '-';
@@ -229,355 +284,14 @@ Pages.coachingPlan = {
     return durationText;
   },
 
-  _formatActualProjectNames(cell) {
-    const raw = Array.isArray(cell.actual_project_names) ? cell.actual_project_names : [];
-    const names = raw.map((name) => String(name || '').trim()).filter(Boolean);
-    return names.join(', ');
-  },
-
-  _formatPlanTime(cell) {
-    if (!cell.plan_id) return '-';
-    if (cell.is_all_day) return '종일';
-    if (cell.start_time && cell.end_time) return `${cell.start_time} ~ ${cell.end_time}`;
-    return '-';
-  },
-
-  _parseDateText(text) {
-    const [year, month, day] = String(text).split('-').map((n) => Number.parseInt(n, 10));
-    return new Date(year, (month || 1) - 1, day || 1);
-  },
-
-  _toDateKey(dateObj) {
-    return `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(dateObj.getDate()).padStart(2, '0')}`;
-  },
-
-  _buildMonthOptions(startText, endText) {
-    const start = this._parseDateText(startText);
-    const end = this._parseDateText(endText);
-    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-    const options = [];
-    while (cursor <= endMonth) {
-      const value = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
-      options.push({ value, label: `${cursor.getFullYear()}년 ${cursor.getMonth() + 1}월` });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-    return options;
-  },
-
-  _resolveMonthRange(monthKey, batchStartText, batchEndText) {
-    const [yearText, monthText] = String(monthKey || '').split('-');
-    const batchStart = this._parseDateText(batchStartText);
-    const batchEnd = this._parseDateText(batchEndText);
-    const fallbackYear = batchStart.getFullYear();
-    const fallbackMonth = batchStart.getMonth() + 1;
-    const year = Number.parseInt(yearText, 10) || fallbackYear;
-    const month = Number.parseInt(monthText, 10) || fallbackMonth;
-    const monthStart = new Date(year, Math.max(0, (month || 1) - 1), 1);
-    const monthEnd = new Date(year, (month || 1), 0);
-    const start = monthStart < batchStart ? batchStart : monthStart;
-    const end = monthEnd > batchEnd ? batchEnd : monthEnd;
-    return {
-      start: this._toDateKey(start),
-      end: this._toDateKey(end),
-      label: `${start.getFullYear()}년 ${start.getMonth() + 1}월`,
-    };
-  },
-
-  _focusTodayInMonthly(gridEl) {
-    const todayTarget = gridEl.querySelector(`.cp-month-row[data-date="${this._todayKey()}"]`);
-    if (!todayTarget) return;
-    todayTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  },
-
-  async _renderMonthlyView(gridEl, payload, user, dateFilter = 'coaching', autoFocusToday = true) {
-    gridEl.innerHTML = '<div class="loading">로딩 중...</div>';
-    const isAdmin = user.role === 'admin';
-    const [data, projects] = await Promise.all([
-      API.getCoachingPlanGrid(payload),
-      API.getProjects(payload.batch_id).catch(() => []),
-    ]);
-    const projectMap = {};
-    projects.forEach((p) => { projectMap[p.project_id] = p.project_name; });
-
-    if (!data.rows || !data.rows.length) {
-      gridEl.innerHTML = '<p class="empty-state">표시할 코치 데이터가 없습니다.</p>';
-      return;
-    }
-
-    const todayKey = this._todayKey();
-    const globalDateSet = new Set((data.global_schedule_dates || []).map((d) => String(d).slice(0, 10)));
-    const coachingDateSet = new Set((data.coaching_schedule_dates || []).map((d) => String(d).slice(0, 10)));
-    if (dateFilter === 'coaching' && !coachingDateSet.size) {
-      gridEl.innerHTML = '<p class="empty-state">선택 기간에 코칭 일정이 없습니다. 상단에서 전체를 선택하면 모든 날짜를 볼 수 있습니다.</p>';
-      return;
-    }
-
-    gridEl.innerHTML = `
-      <div class="cp-month-wrap">
-        ${data.rows.map((row) => {
-          const visibleCells = dateFilter === 'coaching'
-            ? row.cells.filter((cell) => coachingDateSet.has(String(cell.date).slice(0, 10)))
-            : row.cells;
-          const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
-          const canEditActual = isAdmin || row.coach_user_id === user.user_id;
-          const planCount = visibleCells.filter((cell) => !!cell.plan_id).length;
-          const actualTotalMinutes = visibleCells.reduce((acc, cell) => acc + Number(cell.final_minutes || 0), 0);
-
-          const rowsHtml = visibleCells.length ? visibleCells.map((cell) => {
-            const dateKey = String(cell.date).slice(0, 10);
-            const dateObj = this._parseDateText(dateKey);
-            const day = ['일', '월', '화', '수', '목', '금', '토'][dateObj.getDay()];
-            const isWeekend = day === '토' || day === '일';
-            const cellJson = this._escapeAttrJson(cell);
-            const rowClasses = [
-              'cp-month-row',
-              globalDateSet.has(dateKey) ? 'cp-global-date' : '',
-              coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
-              dateKey === todayKey ? 'cp-today-col' : '',
-            ].filter(Boolean).join(' ');
-            return `
-              <tr class="${rowClasses}" data-date="${Fmt.escape(dateKey)}">
-                <td class="cp-month-date">
-                  <strong>${Fmt.escape(`${dateObj.getMonth() + 1}/${dateObj.getDate()}`)}</strong>
-                  <span class="${isWeekend ? 'cp-weekend' : ''}">${Fmt.escape(day)}</span>
-                  ${globalDateSet.has(dateKey) ? '<span class="tag">공통일정</span>' : ''}
-                  ${coachingDateSet.has(dateKey) ? '<span class="tag">코칭일정</span>' : ''}
-                </td>
-                <td class="cp-month-plan">
-                  <div class="cp-line">${Fmt.escape(this._formatPlanTime(cell))}</div>
-                  ${cell.plan_note ? `<div class="cp-line hint">${Fmt.escape(cell.plan_note)}</div>` : ''}
-                  ${cell.entered_previous_day ? '<span class="tag">전일입력</span>' : ''}
-                </td>
-                <td class="cp-month-actual">
-                  <div class="cp-line">${Fmt.escape(this._formatActualRange(cell))}</div>
-                  ${this._formatActualProjectNames(cell) ? `<div class="cp-line hint">과제: ${Fmt.escape(this._formatActualProjectNames(cell))}</div>` : ''}
-                  ${cell.actual_source === 'override' ? '<div class="cp-line hint">수동 입력값 적용</div>' : ''}
-                </td>
-                <td class="cp-month-actions">
-                  ${canEditPlan ? `<button class="btn btn-xs cp-edit-plan" data-coach="${row.coach_user_id}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">계획</button>` : ''}
-                  ${canEditActual ? `<button class="btn btn-xs btn-secondary cp-edit-actual" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">실적</button>` : ''}
-                </td>
-              </tr>
-            `;
-          }).join('') : '<tr><td colspan="4" class="hint">표시할 일정이 없습니다.</td></tr>';
-
-          return `
-            <section class="cp-month-coach-card">
-              <div class="cp-month-coach-head">
-                <div>
-                  <h3>${Fmt.escape(row.coach_name)}</h3>
-                  <p class="hint">${Fmt.escape(row.coach_emp_id)}${row.department ? ` · ${Fmt.escape(row.department)}` : ''}</p>
-                </div>
-                <div class="cp-month-summary">
-                  <span class="tag">계획 ${planCount}일</span>
-                  <span class="tag">실적 ${Fmt.escape(this._formatMinutes(actualTotalMinutes))}</span>
-                </div>
-              </div>
-              <div class="cp-month-table-wrap">
-                <table class="data-table cp-month-table">
-                  <thead>
-                    <tr>
-                      <th>일자</th>
-                      <th>계획</th>
-                      <th>실적</th>
-                      <th>관리</th>
-                    </tr>
-                  </thead>
-                  <tbody>${rowsHtml}</tbody>
-                </table>
-              </div>
-            </section>
-          `;
-        }).join('')}
-      </div>
-    `;
-
-    gridEl.querySelectorAll('.cp-edit-plan').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
-        const workDate = btn.dataset.date;
-        const cell = JSON.parse(btn.dataset.cell || '{}');
-        await this._openPlanModal({ payload, coachUserId, workDate, cell, projectMap, reload: () => this._renderMonthlyView(gridEl, payload, user, dateFilter) });
-      });
-    });
-
-    gridEl.querySelectorAll('.cp-edit-actual').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
-        const coachName = btn.dataset.name || '';
-        const workDate = btn.dataset.date;
-        const cell = JSON.parse(btn.dataset.cell || '{}');
-        await this._openActualModal({
-          payload,
-          coachUserId,
-          coachName,
-          workDate,
-          cell,
-          projectMap,
-          reload: () => this._renderMonthlyView(gridEl, payload, user, dateFilter),
-        });
-      });
-    });
-
-    if (autoFocusToday) {
-      this._focusTodayInMonthly(gridEl);
-    }
-  },
-
-  async _renderGrid(gridEl, payload, user, dateFilter = 'coaching', autoFocusToday = true) {
-    gridEl.innerHTML = '<div class="loading">로딩 중...</div>';
-    const isAdmin = user.role === 'admin';
-    const [data, projects] = await Promise.all([
-      API.getCoachingPlanGrid(payload),
-      API.getProjects(payload.batch_id).catch(() => []),
-    ]);
-    const projectMap = {};
-    projects.forEach((p) => { projectMap[p.project_id] = p.project_name; });
-
-    if (!data.rows || !data.rows.length) {
-      gridEl.innerHTML = '<p class="empty-state">표시할 코치 데이터가 없습니다.</p>';
-      return;
-    }
-
-    const todayKey = this._todayKey();
-    const globalDateSet = new Set((data.global_schedule_dates || []).map((d) => String(d).slice(0, 10)));
-    const coachingDateSet = new Set((data.coaching_schedule_dates || []).map((d) => String(d).slice(0, 10)));
-    const visibleDateKeys = (data.dates || [])
-      .map((dt) => String(dt).slice(0, 10))
-      .filter((dateKey) => dateFilter !== 'coaching' || coachingDateSet.has(dateKey));
-    if (!visibleDateKeys.length) {
-      gridEl.innerHTML = '<p class="empty-state">선택 기간에 코칭 일정이 없습니다. 상단에서 전체를 선택하면 모든 날짜를 볼 수 있습니다.</p>';
-      return;
-    }
-
-    gridEl.innerHTML = `
-      <div class="cp-table-wrap">
-        <table class="data-table coaching-plan-table">
-          <thead>
-            <tr>
-              <th class="cp-coach-col">코치</th>
-              <th class="cp-kind-col">구분</th>
-              ${visibleDateKeys.map((dateKey) => {
-                const classes = [
-                  globalDateSet.has(dateKey) ? 'cp-global-date' : '',
-                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
-                  dateKey === todayKey ? 'cp-today-col' : '',
-                ].filter(Boolean).join(' ');
-                return `<th class="${classes}" data-date="${Fmt.escape(dateKey)}">${this._dayLabel(dateKey)}</th>`;
-              }).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${data.rows.map((row) => {
-              const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
-              const canEditActual = isAdmin || row.coach_user_id === user.user_id;
-              const cellMap = {};
-              (row.cells || []).forEach((cell) => {
-                cellMap[String(cell.date).slice(0, 10)] = cell;
-              });
-              const planCells = visibleDateKeys.map((dateKey) => {
-                const cell = cellMap[dateKey] || { date: dateKey };
-                const cellJson = this._escapeAttrJson(cell);
-                const classes = [
-                  'cp-plan-cell',
-                  cell.plan_id ? 'cp-plan-entered' : '',
-                  globalDateSet.has(dateKey) ? 'cp-global-date' : '',
-                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
-                  dateKey === todayKey ? 'cp-today-col' : '',
-                ].filter(Boolean).join(' ');
-                return `<td class="${classes}" data-date="${Fmt.escape(dateKey)}">
-                  <div class="cp-cell">
-                    <div class="cp-line">${Fmt.escape(this._formatPlanTime(cell))}</div>
-                    ${cell.entered_previous_day ? '<span class="tag">전일입력</span>' : ''}
-                    <div class="cp-line hint">${cell.plan_note ? Fmt.escape(cell.plan_note) : ''}</div>
-                    ${canEditPlan ? `<button class="btn btn-xs cp-edit-plan" data-coach="${row.coach_user_id}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">계획</button>` : ''}
-                  </div>
-                </td>`;
-              }).join('');
-
-              const actualCells = visibleDateKeys.map((dateKey) => {
-                const cell = cellMap[dateKey] || { date: dateKey };
-                const cellJson = this._escapeAttrJson(cell);
-                const actualProjectNames = this._formatActualProjectNames(cell);
-                const classes = [
-                  'cp-actual-cell',
-                  globalDateSet.has(dateKey) ? 'cp-global-date' : '',
-                  coachingDateSet.has(dateKey) ? 'cp-coaching-date' : '',
-                  dateKey === todayKey ? 'cp-today-col' : '',
-                ].filter(Boolean).join(' ');
-                return `<td class="${classes}" data-date="${Fmt.escape(dateKey)}">
-                  <div class="cp-cell">
-                    <div class="cp-line">${Fmt.escape(this._formatActualRange(cell))}</div>
-                    <div class="cp-line hint">${actualProjectNames ? `과제: ${Fmt.escape(actualProjectNames)}` : ''}</div>
-                    <div class="cp-line hint">${Fmt.escape(cell.actual_source === 'override' ? '수동 입력값 적용' : '')}</div>
-                    ${canEditActual ? `<button class="btn btn-xs btn-secondary cp-edit-actual" data-coach="${row.coach_user_id}" data-name="${Fmt.escape(row.coach_name)}" data-date="${Fmt.escape(dateKey)}" data-cell="${cellJson}">실적</button>` : ''}
-                  </div>
-                </td>`;
-              }).join('');
-
-              return `
-                <tr class="cp-row-plan">
-                  <th class="cp-coach-col" rowspan="2">
-                    <strong>${Fmt.escape(row.coach_name)}</strong>
-                    <div class="hint">${Fmt.escape(row.coach_emp_id)} ${row.department ? `· ${Fmt.escape(row.department)}` : ''}</div>
-                  </th>
-                  <th class="cp-kind-col">계획</th>
-                  ${planCells}
-                </tr>
-                <tr class="cp-row-actual">
-                  <th class="cp-kind-col">실적</th>
-                  ${actualCells}
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-
-    gridEl.querySelectorAll('.cp-edit-plan').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
-        const workDate = btn.dataset.date;
-        const cell = JSON.parse(btn.dataset.cell || '{}');
-        await this._openPlanModal({ payload, coachUserId, workDate, cell, projectMap, reload: () => this._renderGrid(gridEl, payload, user, dateFilter) });
-      });
-    });
-
-    gridEl.querySelectorAll('.cp-edit-actual').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const coachUserId = Number.parseInt(btn.dataset.coach, 10);
-        const coachName = btn.dataset.name || '';
-        const workDate = btn.dataset.date;
-        const cell = JSON.parse(btn.dataset.cell || '{}');
-        await this._openActualModal({
-          payload,
-          coachUserId,
-          coachName,
-          workDate,
-          cell,
-          projectMap,
-          reload: () => this._renderGrid(gridEl, payload, user, dateFilter),
-        });
-      });
-    });
-
-    const wrap = gridEl.querySelector('.cp-table-wrap');
-    const todayTarget = wrap?.querySelector(`[data-date="${todayKey}"]`);
-    if (autoFocusToday && wrap && todayTarget) {
-      const coachWidth = wrap.querySelector('.cp-coach-col')?.offsetWidth || 180;
-      wrap.scrollLeft = Math.max(0, todayTarget.offsetLeft - coachWidth - 24);
-    }
-  },
-
   _escapeAttrJson(value) {
     return String(JSON.stringify(value || {}))
       .replace(/&/g, '&amp;')
       .replace(/"/g, '&quot;')
       .replace(/</g, '&lt;');
   },
-  async _openPlanModal({ payload, coachUserId, workDate, cell, projectMap, reload }) {
+
+  async _openPlanModal({ payload, coachUserId, workDate, cell, reload }) {
     Modal.open(`
       <h2>코칭 계획 입력</h2>
       <form id="cp-plan-form">
@@ -591,16 +305,12 @@ Pages.coachingPlan = {
         <div class="form-group cal-time-row">
           <div>
             <label>시작 시간</label>
-            <input name="start_time" type="time" value="${Fmt.escape(cell.start_time || '')}" />
+            <input name="start_time" type="time" step="600" value="${Fmt.escape(cell.start_time || '')}" />
           </div>
           <div>
             <label>종료 시간</label>
-            <input name="end_time" type="time" value="${Fmt.escape(cell.end_time || '')}" />
+            <input name="end_time" type="time" step="600" value="${Fmt.escape(cell.end_time || '')}" />
           </div>
-        </div>
-        <div class="form-group">
-          <label>메모</label>
-          <textarea name="plan_note" rows="4" placeholder="당일 코칭 계획 메모">${Fmt.escape(cell.plan_note || '')}</textarea>
         </div>
         <div class="page-actions">
           <button type="submit" class="btn btn-primary">저장</button>
@@ -608,7 +318,7 @@ Pages.coachingPlan = {
         </div>
         <p class="form-error" id="cp-plan-err" style="display:none;"></p>
       </form>
-    `, null, { className: 'modal-box-lg' });
+    `, null, { className: 'modal-box-md' });
 
     const allDayEl = document.querySelector('#cp-plan-form input[name="is_all_day"]');
     const startEl = document.querySelector('#cp-plan-form input[name="start_time"]');
@@ -639,10 +349,10 @@ Pages.coachingPlan = {
           is_all_day: fd.has('is_all_day'),
           start_time: fd.get('start_time') ? String(fd.get('start_time')) : null,
           end_time: fd.get('end_time') ? String(fd.get('end_time')) : null,
-          plan_note: fd.get('plan_note') ? String(fd.get('plan_note')).trim() : null,
+          plan_note: null,
         });
         Modal.close();
-        await reload();
+        await reload(workDate);
       } catch (err) {
         errEl.textContent = err.message || '저장 실패';
         errEl.style.display = 'block';
@@ -658,7 +368,7 @@ Pages.coachingPlan = {
           plan_date: workDate,
         });
         Modal.close();
-        await reload();
+        await reload(workDate);
       } catch (err) {
         const errEl = document.getElementById('cp-plan-err');
         errEl.textContent = err.message || '삭제 실패';
@@ -667,9 +377,7 @@ Pages.coachingPlan = {
     });
   },
 
-  async _openActualModal({ payload, coachUserId, coachName, workDate, cell, projectMap, reload }) {
-    const selectedProjectIds = new Set((Array.isArray(cell.actual_project_ids) ? cell.actual_project_ids : []).map((id) => String(id)));
-    const projectEntries = Object.entries(projectMap || {});
+  async _openActualModal({ payload, coachUserId, coachName, workDate, cell, reload }) {
     Modal.open(`
       <h2>실적 보정</h2>
       <form id="cp-actual-form">
@@ -680,20 +388,7 @@ Pages.coachingPlan = {
         </div>
         <div class="form-group">
           <label>보정 실적(분)</label>
-          <input name="actual_minutes" type="number" min="0" max="1440" value="${cell.override_minutes != null ? String(cell.override_minutes) : String(cell.auto_minutes || 0)}" required />
-        </div>
-        <div class="form-group">
-          <label>실적 과제 (복수 선택)</label>
-          ${projectEntries.length ? `
-            <div class="cp-project-checks">
-              ${projectEntries.map(([projectId, projectName]) => `
-                <label>
-                  <input type="checkbox" name="actual_project_ids" value="${Fmt.escape(projectId)}"${selectedProjectIds.has(String(projectId)) ? ' checked' : ''} />
-                  ${Fmt.escape(projectName)}
-                </label>
-              `).join('')}
-            </div>
-          ` : '<p class="hint">선택 가능한 과제가 없습니다.</p>'}
+          <input name="actual_minutes" type="number" min="0" max="1440" step="10" value="${cell.override_minutes != null ? String(cell.override_minutes) : String(cell.auto_minutes || 0)}" required />
         </div>
         <div class="form-group">
           <label>사유</label>
@@ -710,9 +405,6 @@ Pages.coachingPlan = {
     document.getElementById('cp-actual-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const actualProjectIds = Array.from(document.querySelectorAll('#cp-actual-form input[name="actual_project_ids"]:checked'))
-        .map((el) => Number.parseInt(String(el.value), 10))
-        .filter((num) => Number.isInteger(num) && num > 0);
       const errEl = document.getElementById('cp-actual-err');
       errEl.style.display = 'none';
       try {
@@ -722,10 +414,9 @@ Pages.coachingPlan = {
           work_date: workDate,
           actual_minutes: Number.parseInt(String(fd.get('actual_minutes') || '0'), 10),
           reason: fd.get('reason') ? String(fd.get('reason')).trim() : null,
-          actual_project_ids: actualProjectIds,
         });
         Modal.close();
-        await reload();
+        await reload(workDate);
       } catch (err) {
         errEl.textContent = err.message || '저장 실패';
         errEl.style.display = 'block';
@@ -741,7 +432,7 @@ Pages.coachingPlan = {
           work_date: workDate,
         });
         Modal.close();
-        await reload();
+        await reload(workDate);
       } catch (err) {
         const errEl = document.getElementById('cp-actual-err');
         errEl.textContent = err.message || '삭제 실패';

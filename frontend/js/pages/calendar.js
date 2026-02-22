@@ -6,11 +6,23 @@ Pages.calendar = {
   currentDate: new Date(),
   selectedProjectByBatch: {},
   projectOptionsByBatch: {},
+  scheduleColorOptions: [
+    { value: '#4CAF50', label: '그린' },
+    { value: '#00ACC1', label: '민트' },
+    { value: '#2196F3', label: '블루' },
+    { value: '#FF9800', label: '오렌지' },
+    { value: '#E57373', label: '레드' },
+    { value: '#8E24AA', label: '퍼플' },
+  ],
 
   async render(el) {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
+      if (user.role === 'external_coach') {
+        el.innerHTML = '<div class="error-state">외부코치는 캘린더에 접근할 수 없습니다.</div>';
+        return;
+      }
       const role = user.role;
       const policy = {
         role,
@@ -358,6 +370,23 @@ Pages.calendar = {
     return scope || '-';
   },
 
+  _defaultScheduleColor(scope) {
+    return scope === 'coaching' ? '#00ACC1' : '#4CAF50';
+  },
+
+  _normalizeScheduleColor(value, scope = 'global') {
+    const text = String(value || '').trim().toUpperCase();
+    const found = this.scheduleColorOptions.find((opt) => opt.value.toUpperCase() === text);
+    return found ? found.value : this._defaultScheduleColor(scope);
+  },
+
+  _buildColorOptionHtml(selectedColor, scope = 'global') {
+    const normalized = this._normalizeScheduleColor(selectedColor, scope);
+    return this.scheduleColorOptions
+      .map((opt) => `<option value="${opt.value}"${opt.value === normalized ? ' selected' : ''}>${opt.label}</option>`)
+      .join('');
+  },
+
   async _openEventCreateModal(batchId, options = {}) {
     const {
       presetDate = '',
@@ -403,7 +432,9 @@ Pages.calendar = {
         </div>
         <div class="form-group" id="cal-color-row">
           <label>색상</label>
-          <input type="color" name="color" value="${scopeValue === 'coaching' ? '#00acc1' : '#4caf50'}" />
+          <select name="color">
+            ${this._buildColorOptionHtml(this._defaultScheduleColor(scopeValue), scopeValue)}
+          </select>
         </div>
         <div class="form-group">
           <label>설명</label>
@@ -470,9 +501,10 @@ Pages.calendar = {
       colorRow.style.display = isProject ? 'none' : '';
       repeatRow.style.display = isProject ? 'none' : '';
       if (allowGlobalScope) {
-        const colorInput = document.querySelector('#calendar-event-form input[name="color"]');
-        if (colorInput && !isProject) {
-          colorInput.value = isCoaching ? '#00acc1' : '#4caf50';
+        const colorSelect = document.querySelector('#calendar-event-form select[name="color"]');
+        if (colorSelect && !isProject) {
+          const nextScope = isCoaching ? 'coaching' : 'global';
+          colorSelect.innerHTML = this._buildColorOptionHtml(this._defaultScheduleColor(nextScope), nextScope);
         }
       }
       if (isProject && !projectSelect.value && selectableProjects.length === 1) {
@@ -559,7 +591,7 @@ Pages.calendar = {
               end_datetime: this._toDateTimeString(dateStr, isAllDay ? '23:59' : endTime),
               location: location || null,
               is_all_day: isAllDay,
-              color: (fd.get('color') || (isCoaching ? '#00ACC1' : '#4CAF50')).toString(),
+              color: this._normalizeScheduleColor(fd.get('color'), isCoaching ? 'coaching' : 'global'),
               repeat_group_id: repeatGroupId,
               repeat_sequence: i + 1,
             });
@@ -649,7 +681,7 @@ Pages.calendar = {
       <form id="calendar-event-edit-form">
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(initialTitle)}" /></div>
         ${event.project_name ? `<div class="form-group"><label>과제</label><input disabled value="${Fmt.escape(event.project_name)}" /></div>` : ''}
-        ${isSchedule ? `<div class="form-group"><label>색상</label><input type="color" name="color" value="${Fmt.escape((event.color || '#4CAF50').toLowerCase())}" /></div>` : ''}
+        ${isSchedule ? `<div class="form-group"><label>색상</label><select name="color">${this._buildColorOptionHtml(event.color, event.scope === 'coaching' ? 'coaching' : 'global')}</select></div>` : ''}
         <div class="form-group"><label>설명</label><textarea name="description" rows="3">${Fmt.escape(initialDesc)}</textarea></div>
         <div class="form-group cal-time-row">
           <div>
@@ -726,7 +758,7 @@ Pages.calendar = {
             end_datetime: this._toDateTimeString(eventDate, allDayToggle?.checked ? '23:59' : endTime),
             location,
             is_all_day: !!allDayToggle?.checked,
-            color: (fd.get('color') || event.color || '#4CAF50').toString(),
+            color: this._normalizeScheduleColor(fd.get('color'), event.scope === 'coaching' ? 'coaching' : 'global'),
           };
           const applyScope = (fd.get('apply_scope') || 'single').toString();
           if (event.repeat_group_id && applyScope === 'series') {

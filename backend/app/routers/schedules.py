@@ -12,6 +12,14 @@ from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
 
 router = APIRouter(prefix="/api/schedules", tags=["schedules"])
+ALLOWED_SCHEDULE_COLORS = {
+    "#4CAF50",
+    "#00ACC1",
+    "#2196F3",
+    "#FF9800",
+    "#E57373",
+    "#8E24AA",
+}
 
 
 def _validate_schedule_window(db: Session, batch_id: int, start_dt, end_dt):
@@ -52,13 +60,15 @@ def _assert_global_one_per_day(
         raise HTTPException(status_code=400, detail="전체 일정은 하루에 1개만 등록할 수 있습니다.")
 
 
-def _normalize_color(value: str | None) -> str:
+def _normalize_color(value: str | None, schedule_type: str | None = None, visibility_scope: str | None = None) -> str:
+    scope = _normalize_visibility_scope(visibility_scope, schedule_type)
+    default_color = "#00ACC1" if scope == "coaching" else "#4CAF50"
     if not value:
-        return "#4CAF50"
-    text = value.strip()
-    if text.startswith("#") and len(text) in (4, 7):
+        return default_color
+    text = str(value).strip().upper()
+    if text in ALLOWED_SCHEDULE_COLORS:
         return text
-    return "#4CAF50"
+    return default_color
 
 
 def _normalize_visibility_scope(value: str | None, schedule_type: str | None = None) -> str:
@@ -96,7 +106,11 @@ def create_schedule(
     payload = data.model_dump()
     payload["schedule_type"] = payload.get("schedule_type") or "other"
     payload["visibility_scope"] = _normalize_visibility_scope(payload.get("visibility_scope"), payload.get("schedule_type"))
-    payload["color"] = _normalize_color(payload.get("color"))
+    payload["color"] = _normalize_color(
+        payload.get("color"),
+        payload.get("schedule_type"),
+        payload.get("visibility_scope"),
+    )
     target_day = _validate_schedule_window(db, payload["batch_id"], payload["start_datetime"], payload.get("end_datetime"))
     _assert_global_one_per_day(db, payload["batch_id"], target_day, payload["visibility_scope"])
 
@@ -132,7 +146,11 @@ def update_schedule(
     target_day = _validate_schedule_window(db, s.batch_id, next_start, next_end)
     _assert_global_one_per_day(db, s.batch_id, target_day, next_scope, exclude_schedule_ids=[s.schedule_id])
     if "color" in payload:
-        payload["color"] = _normalize_color(payload.get("color"))
+        payload["color"] = _normalize_color(
+            payload.get("color"),
+            payload.get("schedule_type", s.schedule_type),
+            next_scope,
+        )
     if "schedule_type" in payload and not payload["schedule_type"]:
         payload["schedule_type"] = "other"
     if "visibility_scope" in payload or "schedule_type" in payload:
@@ -172,7 +190,11 @@ def update_schedule_series(
     if not payload:
         return {"updated": 0}
     if "color" in payload:
-        payload["color"] = _normalize_color(payload.get("color"))
+        payload["color"] = _normalize_color(
+            payload.get("color"),
+            payload.get("schedule_type", seed.schedule_type),
+            payload.get("visibility_scope", seed.visibility_scope),
+        )
     if "schedule_type" in payload and not payload["schedule_type"]:
         payload["schedule_type"] = "other"
     normalized_scope = None

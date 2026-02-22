@@ -23,6 +23,7 @@ Pages.projectList = {
       let page = 1;
       const pageSize = 12;
       const canManage = user.role === 'admin';
+      const showOwnProjects = user.role === 'participant';
       let activeType = 'primary';
 
       const normalizeType = (value) => {
@@ -47,24 +48,26 @@ Pages.projectList = {
             </div>
           </div>
 
-          <div class="project-own-table-section">
-            <h3>내 과제</h3>
-            <div class="project-list-table-wrap">
-              <table class="data-table project-list-table">
-                <thead>
-                  <tr>
-                    <th>구분</th>
-                    <th>과제명</th>
-                    <th>부서명</th>
-                    <th>과제 대표자</th>
-                    <th>AI기술 분류</th>
-                    <th>사용된 AI기술</th>
-                  </tr>
-                </thead>
-                <tbody id="own-project-list-body"></tbody>
-              </table>
+          ${showOwnProjects ? `
+            <div class="project-own-table-section">
+              <h3>내 과제</h3>
+              <div class="project-list-table-wrap">
+                <table class="data-table project-list-table">
+                  <thead>
+                    <tr>
+                      <th>구분</th>
+                      <th>과제명</th>
+                      <th>부서명</th>
+                      <th>과제 대표자</th>
+                      <th>AI기술 분류</th>
+                      <th>사용된 AI기술</th>
+                    </tr>
+                  </thead>
+                  <tbody id="own-project-list-body"></tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          ` : ''}
 
           <div class="project-type-tabs">
             <button class="project-type-tab active" data-type="primary">정식과제</button>
@@ -128,6 +131,7 @@ Pages.projectList = {
       };
 
       const renderOwnTable = () => {
+        if (!showOwnProjects || !ownBody) return;
         const rows = sortedRows(ownProjects);
         ownBody.innerHTML = renderProjectRows(rows, true);
         ownBody.querySelectorAll('.project-list-row').forEach((row) => row.addEventListener('click', () => {

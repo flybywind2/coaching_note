@@ -15,6 +15,7 @@ from app.schemas.attendance import (
     MyDailyAttendanceStatusOut,
 )
 from app.services import attendance_service
+from app.utils.permissions import is_admin_or_internal_coach
 
 router = APIRouter(prefix="/api/attendance", tags=["attendance"])
 
@@ -74,6 +75,22 @@ def check_out_today(
     )
 
 
+@router.post("/checkout-cancel", response_model=DailyAttendanceOut)
+def cancel_check_out_today(
+    request: Request,
+    work_date: date | None = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    target_date = work_date or date.today()
+    return attendance_service.cancel_check_out_today(
+        target_date,
+        current_user.user_id,
+        _get_client_ip(request),
+        db,
+    )
+
+
 @router.post("/auto-checkin-today", response_model=DailyAutoCheckinResultOut)
 def auto_checkin_today(
     request: Request,
@@ -95,7 +112,6 @@ def list_daily_attendance(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if not is_admin_or_internal_coach(current_user):
         return []
     return attendance_service.list_daily_attendance(work_date, db)
-

@@ -11,12 +11,12 @@ const Header = {
 
     const nav = document.getElementById('main-nav');
     const links = [
-      { path: '/about', label: 'SSP+ 소개', roles: ['admin', 'coach', 'participant', 'observer'] },
-      { path: '/projects', label: '과제 목록', roles: ['admin', 'coach', 'participant', 'observer'] },
-      { path: '/calendar', label: '캘린더', roles: ['admin', 'coach', 'participant', 'observer'] },
-      { path: '/coaching-plan', label: '코칭 계획/실적', roles: ['admin', 'coach'] },
-      { path: '/board', label: '게시판', roles: ['admin', 'coach', 'participant', 'observer'] },
-      { path: '/dashboard', label: '대시보드', roles: ['admin', 'coach'] },
+      { path: '/about', label: 'SSP+ 소개', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
+      { path: '/projects', label: '과제 목록', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
+      { path: '/calendar', label: '캘린더', roles: ['admin', 'coach', 'internal_coach', 'participant', 'observer'] },
+      { path: '/coaching-plan', label: '코칭 계획/실적', roles: ['admin', 'coach', 'internal_coach'] },
+      { path: '/board', label: '게시판', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
+      { path: '/dashboard', label: '대시보드', roles: ['admin', 'coach', 'internal_coach'] },
       { path: '/admin', label: '관리자', roles: ['admin'] },
     ];
 
@@ -50,14 +50,28 @@ const Header = {
   async _renderAttendanceQuick(user) {
     const box = document.getElementById('attendance-quick');
     if (!box) return;
-    if (!(user.role === 'coach' || user.role === 'participant')) {
+    if (!(Auth.isCoach() || user.role === 'participant')) {
       box.innerHTML = '';
       return;
     }
 
+    const formatQuickTime = (value) => {
+      const parsed = Fmt.parseDate(value);
+      if (!parsed) return '-';
+      return parsed.toLocaleString('ko-KR', {
+        timeZone: Fmt.KST_TIMEZONE,
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    };
+
     try {
       const status = await API.getMyDailyAttendanceStatus();
       const log = status.attendance_log;
+      const canCancelCheckout = !!(status.ip_allowed && log && log.check_out_time);
       if (!status.ip_allowed && !log) {
         box.innerHTML = '<span class="attendance-hint">허용 IP에서 입실 가능</span>';
         return;
@@ -76,7 +90,7 @@ const Header = {
       }
       if (!log.check_out_time) {
         box.innerHTML = `
-          <span class="attendance-time">입실 ${Fmt.datetime(log.check_in_time)}</span>
+          <span class="attendance-time">입실 ${formatQuickTime(log.check_in_time)}</span>
           ${status.can_checkout
             ? '<button id="attendance-checkout-btn" class="btn btn-xs btn-secondary">퇴실</button>'
             : '<span class="attendance-hint">허용 IP에서 퇴실 가능</span>'}
@@ -92,9 +106,20 @@ const Header = {
         return;
       }
       box.innerHTML = `
-        <span class="attendance-time">입실 ${Fmt.datetime(log.check_in_time)}</span>
-        <span class="attendance-time">퇴실 ${Fmt.datetime(log.check_out_time)}</span>
+        <span class="attendance-time">입실 ${formatQuickTime(log.check_in_time)}</span>
+        <span class="attendance-time">퇴실 ${formatQuickTime(log.check_out_time)}</span>
+        ${canCancelCheckout
+          ? '<button id="attendance-checkout-cancel-btn" class="btn btn-xs btn-secondary">퇴실 취소</button>'
+          : '<span class="attendance-hint">허용 IP에서 퇴실 취소 가능</span>'}
       `;
+      document.getElementById('attendance-checkout-cancel-btn')?.addEventListener('click', async () => {
+        try {
+          await API.cancelCheckOutToday();
+          await this._renderAttendanceQuick(user);
+        } catch (err) {
+          alert(err.message || '퇴실 취소 실패');
+        }
+      });
     } catch (_) {
       box.innerHTML = '';
     }

@@ -246,6 +246,8 @@ const API = {
     apiFetch(`/api/attendance/checkin${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`, { method: 'POST' }),
   checkOutToday: (workDate = null) =>
     apiFetch(`/api/attendance/checkout${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`, { method: 'POST' }),
+  cancelCheckOutToday: (workDate = null) =>
+    apiFetch(`/api/attendance/checkout-cancel${workDate ? `?work_date=${encodeURIComponent(workDate)}` : ''}`, { method: 'POST' }),
   getDailyAttendance: (workDate) => apiFetch(`/api/attendance?work_date=${encodeURIComponent(workDate)}`),
   getAttendance: (sessionId) => apiFetch(`/api/sessions/${sessionId}/attendance`),
   coachingStart: (sessionId) => apiFetch(`/api/sessions/${sessionId}/coaching-start`, { method: 'POST' }),

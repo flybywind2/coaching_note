@@ -97,7 +97,7 @@ def test_schedule_series_update_and_delete(client, seed_users, seed_batch):
             "title": "반복 일정 B",
             "start_datetime": "2026-03-02T09:00:00",
             "end_datetime": "2026-03-02T10:00:00",
-            "color": "#112233",
+            "color": "#2196F3",
         },
         headers=admin_headers,
     )
@@ -111,7 +111,7 @@ def test_schedule_series_update_and_delete(client, seed_users, seed_batch):
     start_values = sorted(datetime.fromisoformat(row["start_datetime"]).date().isoformat() for row in series_rows)
     assert start_values == ["2026-03-02", "2026-03-09"]
     assert all(row["title"] == "반복 일정 B" for row in series_rows)
-    assert all(row["color"] == "#112233" for row in series_rows)
+    assert all(row["color"] == "#2196F3" for row in series_rows)
 
     delete_resp = client.delete(f"/api/schedules/{seed_id}/series", headers=admin_headers)
     assert delete_resp.status_code == 200, delete_resp.text

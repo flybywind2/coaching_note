@@ -9,7 +9,7 @@ Pages.sessionDetail = {
     try {
       const user = Auth.getUser();
       const s = await API.getSession(sessionId);
-      const isCoachAdmin = user.role === 'admin' || user.role === 'coach';
+      const isCoachAdmin = user.role === 'admin' || Auth.isCoach();
 
       el.innerHTML = `
         <div class="page-container">
@@ -62,7 +62,7 @@ Pages.sessionDetail = {
     try {
       const status = await API.getMyAttendanceStatus(sessionId);
       const myLog = status.attendance_log;
-      const canUseAttendance = ['admin', 'coach', 'participant'].includes(user.role);
+      const canUseAttendance = user.role === 'admin' || user.role === 'participant' || Auth.isCoach();
 
       if (!canUseAttendance) {
         el.innerHTML = '<p class="empty-state">출결 기능은 참여자/코치/관리자에게만 제공됩니다.</p>';

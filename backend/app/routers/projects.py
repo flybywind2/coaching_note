@@ -39,11 +39,13 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.utils.permissions import is_admin_or_coach
+    from app.utils.permissions import is_admin, is_participant, is_project_member
     from fastapi import HTTPException
-    if not is_admin_or_coach(current_user):
-        raise HTTPException(status_code=403, detail="관리자/코치만 수정 가능합니다.")
-    return project_service.update_project(db, project_id, data, current_user)
+    if is_admin(current_user):
+        return project_service.update_project(db, project_id, data, current_user)
+    if is_participant(current_user) and is_project_member(db, project_id, current_user.user_id):
+        return project_service.update_project(db, project_id, data, current_user)
+    raise HTTPException(status_code=403, detail="관리자 또는 본인 과제 참여자만 수정 가능합니다.")
 
 
 @router.delete("/api/projects/{project_id}")

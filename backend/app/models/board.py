@@ -11,7 +11,7 @@ class Board(Base):
 
     board_id = Column(Integer, primary_key=True, autoincrement=True)
     board_name = Column(String(100), nullable=False)
-    board_type = Column(String(30), nullable=False)  # notice/qna/free
+    board_type = Column(String(30), nullable=False)  # notice/question/tip/chat
     description = Column(Text)
     created_at = Column(DateTime, server_default=func.now())
 

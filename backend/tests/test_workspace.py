@@ -114,7 +114,7 @@ def workspace_data(db, seed_batch, seed_users):
     )
     db.commit()
 
-    board = Board(board_name="검색 테스트", board_type="free")
+    board = Board(board_name="검색 테스트", board_type="chat")
     db.add(board)
     db.commit()
     db.refresh(board)
@@ -146,13 +146,13 @@ def test_home_returns_personal_todos(client, seed_users, workspace_data):
     assert data["today_tasks"][0]["title"] == "오늘 마감 개인 Task"
 
 
-def test_search_hides_restricted_project_note_for_non_member(client, seed_users, workspace_data):
+def test_search_includes_restricted_project_note_for_participant(client, seed_users, workspace_data):
     headers = auth_headers(client, "user001")
     resp = client.get("/api/search?q=비밀%20검색키워드&types=note", headers=headers)
     assert resp.status_code == 200
 
     rows = resp.json()["results"]
-    assert len(rows) == 0
+    assert len(rows) == 1
 
 
 def test_search_supports_author_filter(client, seed_users, workspace_data):

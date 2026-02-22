@@ -113,7 +113,7 @@ Pages.about = {
                             <div class="page-actions">
                               <button class="btn btn-sm btn-secondary edit-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}">편집</button>
                               <button class="btn btn-sm ${coach.is_visible ? 'btn-danger' : 'btn-secondary'} toggle-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}" data-visible="${coach.is_visible ? '1' : '0'}">${coach.is_visible ? '숨김' : '표시'}</button>
-                              ${coach.coach_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
+                              ${coach.coach_id && !coach.user_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
                             </div>
                           ` : ''}
                         </article>
@@ -247,6 +247,7 @@ Pages.about = {
                 draggedCoachId = Number.parseInt(card.dataset.coachId, 10);
                 card.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', String(draggedCoachId || ''));
               });
               card.addEventListener('dragend', () => {
                 card.classList.remove('dragging');

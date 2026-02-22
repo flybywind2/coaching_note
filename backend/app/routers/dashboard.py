@@ -14,7 +14,7 @@ from app.models.coaching_note import CoachingComment, CoachingNote
 from app.models.project import Project, ProjectMember
 from app.models.schedule import ProgramSchedule
 from app.models.user import User
-from app.utils.permissions import can_view_project
+from app.utils.permissions import COACH_ROLES, can_view_dashboard, can_view_project
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -43,7 +43,7 @@ def get_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in ("admin", "coach"):
+    if not can_view_dashboard(current_user):
         raise HTTPException(status_code=403, detail="대시보드는 관리자/코치만 접근 가능합니다.")
 
     target_batch = None
@@ -177,7 +177,7 @@ def get_dashboard(
             CoachingNote.project_id.in_(project_ids),
             CoachingNote.coaching_date >= axis_start,
             CoachingNote.coaching_date <= axis_end,
-            User.role == "coach",
+            User.role.in_(list(COACH_ROLES)),
         )
         .group_by(CoachingNote.project_id, CoachingNote.coaching_date)
         .all()
@@ -199,6 +199,7 @@ def get_dashboard(
             {
                 "project_id": project.project_id,
                 "project_name": project.project_name,
+                "project_type": project.project_type or "primary",
                 "status": project.status,
                 "progress_rate": int(project.progress_rate or 0),
                 "expected_count": expected_count,
@@ -234,6 +235,7 @@ def get_dashboard(
             {
                 "project_id": project.project_id,
                 "project_name": project.project_name,
+                "project_type": project.project_type or "primary",
                 "expected_count": expected_count,
                 "total_attendance": total_attended,
                 "total_expected": total_expected,
@@ -270,6 +272,7 @@ def get_dashboard(
             {
                 "project_id": project.project_id,
                 "project_name": project.project_name,
+                "project_type": project.project_type or "primary",
                 "total_note_count": total_note_count,
                 "total_coach_commenter_count": total_commenter_count,
                 "cells": note_cells,
@@ -278,7 +281,7 @@ def get_dashboard(
 
     coach_rows = (
         db.query(User.user_id, User.name)
-        .filter(User.is_active == True, User.role == "coach")  # noqa: E712
+        .filter(User.is_active == True, User.role.in_(list(COACH_ROLES)))  # noqa: E712
         .order_by(User.name.asc())
         .all()
     )

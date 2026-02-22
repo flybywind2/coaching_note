@@ -113,11 +113,12 @@ body::after {
 .header-inner {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 8px 16px;
   display: flex;
   align-items: center;
   gap: 16px;
-  height: 62px;
+  min-height: 62px;
+  flex-wrap: wrap;
 }
 .logo {
   font-size: 18px;
@@ -125,7 +126,7 @@ body::after {
   letter-spacing: 0.2px;
   white-space: nowrap;
 }
-#main-nav { display: flex; gap: 6px; flex: 1; }
+#main-nav { display: flex; gap: 6px; flex: 1 1 auto; flex-wrap: wrap; min-width: 0; }
 .nav-link {
   color: rgba(255, 255, 255, 0.9);
   text-decoration: none;
@@ -138,24 +139,36 @@ body::after {
   color: #fff;
   background: rgba(255, 255, 255, 0.2);
 }
-.header-right { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  white-space: normal;
+  flex: 1 1 320px;
+  min-width: 240px;
+}
 #user-info { font-size: 13px; opacity: 0.95; }
 .attendance-quick {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  max-width: 100%;
+  justify-content: flex-end;
 }
 .attendance-time {
-  font-size: 11px;
-  padding: 3px 8px;
+  font-size: 10px;
+  padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.34);
   background: rgba(255, 255, 255, 0.14);
   color: rgba(255, 255, 255, 0.95);
+  white-space: nowrap;
 }
 .attendance-hint {
-  font-size: 11px;
+  font-size: 10px;
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -731,6 +744,26 @@ body::after {
 .compact-check-grid label {
   font-size: 12px;
 }
+.perm-multi-select {
+  width: 100%;
+  min-height: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.66);
+  font-size: 13px;
+  padding: 6px;
+}
+.perm-multi-select option {
+  padding: 4px 6px;
+}
+.member-candidate-select {
+  width: 100%;
+  min-height: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+}
 
 /* Home / Search */
 .home-batch-filter {
@@ -978,10 +1011,19 @@ body::after {
 .coaching-plan-table {
   width: max-content;
   min-width: 100%;
+  table-layout: fixed;
+}
+.coaching-plan-table th,
+.coaching-plan-table td {
+  min-width: 112px;
+  width: 112px;
+  height: 58px;
+  padding: 6px 8px;
+  vertical-align: middle;
 }
 .cp-coach-col {
-  min-width: 180px;
-  width: 180px;
+  min-width: 190px !important;
+  width: 190px !important;
   position: sticky;
   left: 0;
   z-index: 4;
@@ -990,22 +1032,36 @@ body::after {
   -webkit-backdrop-filter: blur(var(--blur));
 }
 .cp-kind-col {
-  min-width: 68px;
-  width: 68px;
+  min-width: 64px !important;
+  width: 64px !important;
   text-align: center;
   position: sticky;
-  left: 180px;
+  left: 190px;
   z-index: 3;
   background: rgba(255, 255, 255, 0.93);
 }
 .cp-cell {
   display: grid;
-  gap: 6px;
-  min-width: 140px;
+  gap: 4px;
+  min-width: 0;
+  align-content: center;
+}
+.cp-cell-compact {
+  min-height: 34px;
 }
 .cp-line {
-  font-size: 12px;
+  font-size: 11px;
   color: #2f4678;
+  line-height: 1.35;
+}
+.cp-editable {
+  cursor: pointer;
+}
+.cp-editable:hover {
+  box-shadow: inset 0 0 0 9999px rgba(79, 124, 255, 0.12);
+}
+.cp-actual-override {
+  box-shadow: inset 0 0 0 9999px rgba(255, 186, 91, 0.18);
 }
 .cp-plan-entered {
   background: rgba(79, 124, 255, 0.12);
@@ -1115,6 +1171,80 @@ body::after {
   gap: 6px;
   font-size: 12px;
   color: #2f4678;
+}
+
+.dashboard-page {
+  display: grid;
+  gap: 12px;
+}
+.dash-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.dash-mode-group,
+.dash-type-group {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.dash-matrix-wrap {
+  width: 100%;
+  overflow: auto;
+}
+.dash-matrix-table {
+  width: max-content;
+  min-width: 100%;
+}
+.dash-matrix-table th,
+.dash-matrix-table td {
+  min-width: 98px;
+  width: 98px;
+  text-align: center;
+  vertical-align: middle;
+}
+.dash-matrix-table .sticky-col {
+  position: sticky;
+  z-index: 4;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(var(--blur));
+  -webkit-backdrop-filter: blur(var(--blur));
+}
+.dash-matrix-table .sticky-col-project {
+  left: 0;
+  min-width: 210px;
+  width: 210px;
+  text-align: left;
+}
+.dash-matrix-table .sticky-col-total {
+  left: 210px;
+  min-width: 110px;
+  width: 110px;
+}
+.dash-total-cell {
+  font-weight: 700;
+}
+.dash-subtext {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #5f719d;
+}
+.dash-value-cell {
+  font-size: 12px;
+}
+.dash-progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(130, 147, 192, 0.2);
+  overflow: hidden;
+}
+.dash-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #3f7bff, #2959cc);
 }
 
 /* Login */
@@ -1750,6 +1880,69 @@ body::after {
   font-size: 12px;
   font-weight: 700;
   padding: 6px 8px;
+}
+.rte-inline-modal-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+.rte-inline-modal-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 20, 44, 0.35);
+  pointer-events: auto;
+  padding: 12px;
+}
+.rte-inline-modal-box {
+  width: min(440px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 28px rgba(24, 41, 88, 0.24);
+  padding: 14px;
+}
+.rte-inline-modal-box h4 {
+  font-size: 14px;
+  color: #233d72;
+  margin-bottom: 10px;
+}
+.rte-inline-modal-body {
+  display: grid;
+  gap: 8px;
+}
+.rte-inline-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.rte-inline-modal-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #324d82;
+}
+.rte-inline-modal-grid input,
+.rte-inline-modal-body input {
+  width: 100%;
+  border: 1px solid rgba(140, 157, 201, 0.54);
+  border-radius: 8px;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+.rte-inline-modal-message {
+  font-size: 13px;
+  color: #2a416f;
+}
+.rte-inline-modal-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .rte-editor { min-height: 220px; padding: 12px; outline: none; line-height: 1.6; overflow: auto; }
 .rte.compact .rte-editor { min-height: 140px; }

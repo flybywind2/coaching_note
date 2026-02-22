@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.session import AttendanceLog, CoachingTimeLog
 from app.models.attendance import DailyAttendanceLog
 from app.models.allowed_ip import AllowedIPRange
+from app.utils.permissions import COACH_ROLES
 
 
 def validate_ip(client_ip: str, db: Session) -> bool:
@@ -83,8 +84,25 @@ def check_out_today(work_date: date, user_id: int, client_ip: str, db: Session) 
     return log
 
 
+def cancel_check_out_today(work_date: date, user_id: int, client_ip: str, db: Session) -> DailyAttendanceLog:
+    if not validate_ip(client_ip, db):
+        raise HTTPException(status_code=403, detail="허용되지 않은 IP 대역에서의 접근입니다.")
+
+    log = get_daily_attendance_log(work_date, user_id, db)
+    if not log:
+        raise HTTPException(status_code=404, detail="오늘 입실 기록이 없습니다.")
+    if not log.check_out_time:
+        raise HTTPException(status_code=409, detail="퇴실 기록이 없어 취소할 수 없습니다.")
+
+    log.check_out_time = None
+    log.check_out_ip = None
+    db.commit()
+    db.refresh(log)
+    return log
+
+
 def auto_checkin_today_daily(work_date: date, user_id: int, role: str, client_ip: str, db: Session) -> dict:
-    if role not in ("coach", "participant"):
+    if role not in (*COACH_ROLES, "participant"):
         return {"checked_in": 0, "skipped": 0}
 
     if not validate_ip(client_ip, db):

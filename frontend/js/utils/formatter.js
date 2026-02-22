@@ -36,7 +36,14 @@ const Fmt = {
     return `<div class="progress-bar"><div class="progress-fill" style="width:${val}%"></div><span>${val}%</span></div>`;
   },
   role(r) {
-    const map = { admin: '관리자', coach: '코치', participant: '참여자', observer: '참관자' };
+    const map = {
+      admin: '관리자',
+      coach: '코치(구)',
+      internal_coach: '사내코치',
+      external_coach: '외부코치',
+      participant: '참여자',
+      observer: '참관자',
+    };
     return map[r] || r;
   },
   status(s) {
