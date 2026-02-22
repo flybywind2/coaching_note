@@ -29,6 +29,40 @@ Pages.about = {
         coaches: [],
       };
 
+      const ensureCoachProfilesForOrdering = async () => {
+        if (!isAdmin || !state.selectedBatchId) return;
+        const missingProfiles = state.coaches.filter((coach) => !coach.coach_id && coach.user_id);
+        if (!missingProfiles.length) return;
+
+        let hasChanges = false;
+        for (const coach of missingProfiles) {
+          try {
+            await API.createCoachProfile({
+              user_id: coach.user_id,
+              batch_id: state.selectedBatchId,
+              name: coach.name,
+              coach_type: coach.coach_type || 'internal',
+              department: coach.department || null,
+              affiliation: coach.affiliation || null,
+              specialty: coach.specialty || null,
+              career: coach.career || null,
+              photo_url: coach.photo_url || null,
+              is_visible: coach.is_visible !== false,
+            });
+            hasChanges = true;
+          } catch (err) {
+            const message = (err?.message || '').toString();
+            if (message.includes('이미') || message.includes('duplicate')) continue;
+            throw err;
+          }
+        }
+        if (!hasChanges) return;
+        state.coaches = await API.getCoachProfiles({
+          batch_id: state.selectedBatchId,
+          include_hidden: isAdmin,
+        });
+      };
+
       const loadCoachProfiles = async () => {
         if (!state.selectedBatchId) {
           state.coaches = [];
@@ -38,6 +72,7 @@ Pages.about = {
           batch_id: state.selectedBatchId,
           include_hidden: isAdmin,
         });
+        await ensureCoachProfilesForOrdering();
       };
 
       const renderCoachField = (label, value) => {
@@ -349,7 +384,23 @@ Pages.about = {
         <div class="form-group"><label>소속</label><input name="affiliation" value="${Fmt.escape(coach?.affiliation || '')}" /></div>
         <div class="form-group"><label>코칭 분야</label><input name="specialty" value="${Fmt.escape(coach?.specialty || '')}" /></div>
         <div class="form-group"><label>경력</label><textarea name="career" rows="4">${Fmt.escape(coach?.career || '')}</textarea></div>
-        <div class="form-group"><label>사진 URL</label><input name="photo_url" value="${Fmt.escape(coach?.photo_url || '')}" /></div>
+        <div class="form-group">
+          <label>코치 사진</label>
+          <div class="coach-photo-upload-tools">
+            <input id="coach-photo-file" type="file" accept="image/*" />
+            <button type="button" class="btn btn-sm btn-secondary" id="coach-photo-remove-btn">사진 제거</button>
+          </div>
+          <div class="coach-photo-paste-zone" id="coach-photo-paste-zone" tabindex="0">
+            이미지를 붙여넣기(Ctrl+V) 하거나 파일 선택으로 업로드하세요.
+          </div>
+          <p class="hint" id="coach-photo-status"></p>
+          <input type="hidden" name="photo_url" value="${Fmt.escape(coach?.photo_url || '')}" />
+          <div class="coach-photo-preview-wrap">
+            ${coach?.photo_url
+              ? `<img id="coach-photo-preview" class="coach-photo-preview" src="${Fmt.escape(coach.photo_url)}" alt="${Fmt.escape(coach?.name || 'coach')}" />`
+              : '<div id="coach-photo-empty" class="coach-photo-preview-empty">사진 미리보기 없음</div>'}
+          </div>
+        </div>
         <div class="form-group"><label><input type="checkbox" name="is_visible"${coach?.is_visible !== false ? ' checked' : ''} /> 공개 상태</label></div>
         <p class="hint">차수 ID: ${Fmt.escape(String(batchId || '-'))}</p>
         <div class="page-actions">
@@ -357,6 +408,88 @@ Pages.about = {
         </div>
         <p class="form-error" id="coach-profile-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
+
+    const formEl = document.getElementById('coach-profile-form');
+    const fileInput = document.getElementById('coach-photo-file');
+    const removePhotoBtn = document.getElementById('coach-photo-remove-btn');
+    const pasteZone = document.getElementById('coach-photo-paste-zone');
+    const statusEl = document.getElementById('coach-photo-status');
+    const photoUrlInput = formEl?.querySelector('input[name="photo_url"]');
+    let previewEl = document.getElementById('coach-photo-preview');
+    let emptyPreviewEl = document.getElementById('coach-photo-empty');
+
+    const setPhotoStatus = (message, isError = false) => {
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.style.color = isError ? '#b12030' : '';
+    };
+    const renderPhotoPreview = (url) => {
+      const previewWrap = formEl?.querySelector('.coach-photo-preview-wrap');
+      if (!previewWrap) return;
+      const safeUrl = (url || '').toString().trim();
+      if (!safeUrl) {
+        previewWrap.innerHTML = '<div id="coach-photo-empty" class="coach-photo-preview-empty">사진 미리보기 없음</div>';
+        previewEl = null;
+        emptyPreviewEl = document.getElementById('coach-photo-empty');
+        return;
+      }
+      previewWrap.innerHTML = `<img id="coach-photo-preview" class="coach-photo-preview" src="${Fmt.escape(safeUrl)}" alt="${Fmt.escape((coach?.name || 'coach').toString())}" />`;
+      previewEl = document.getElementById('coach-photo-preview');
+      emptyPreviewEl = null;
+    };
+    const uploadCoachPhoto = async (file) => {
+      if (!file) return;
+      if (!file.type || !file.type.startsWith('image/')) {
+        setPhotoStatus('이미지 파일만 업로드할 수 있습니다.', true);
+        return;
+      }
+      setPhotoStatus('사진 업로드 중...');
+      try {
+        const uploaded = await API.uploadEditorImage(file, { scope: 'about' });
+        if (!uploaded?.url) throw new Error('사진 업로드 응답이 올바르지 않습니다.');
+        if (photoUrlInput) photoUrlInput.value = uploaded.url;
+        renderPhotoPreview(uploaded.url);
+        setPhotoStatus('사진 업로드가 완료되었습니다.');
+      } catch (err) {
+        setPhotoStatus(err.message || '사진 업로드 실패', true);
+      }
+    };
+
+    fileInput?.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      await uploadCoachPhoto(file);
+      fileInput.value = '';
+    });
+    removePhotoBtn?.addEventListener('click', () => {
+      if (photoUrlInput) photoUrlInput.value = '';
+      renderPhotoPreview('');
+      setPhotoStatus('사진을 제거했습니다.');
+    });
+    pasteZone?.addEventListener('paste', async (e) => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const imageItem = items.find((item) => item.type && item.type.startsWith('image/'));
+      if (!imageItem) return;
+      e.preventDefault();
+      const file = imageItem.getAsFile();
+      await uploadCoachPhoto(file);
+    });
+    pasteZone?.addEventListener('click', () => fileInput?.click());
+    pasteZone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      pasteZone.classList.add('drag-over');
+    });
+    pasteZone?.addEventListener('dragleave', () => {
+      pasteZone.classList.remove('drag-over');
+    });
+    pasteZone?.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      pasteZone.classList.remove('drag-over');
+      const file = e.dataTransfer?.files?.[0];
+      await uploadCoachPhoto(file);
+    });
+    if (previewEl || emptyPreviewEl) {
+      setPhotoStatus('이미지 파일 선택 또는 붙여넣기로 사진을 등록하세요.');
+    }
 
     document.getElementById('coach-profile-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();

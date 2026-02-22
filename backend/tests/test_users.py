@@ -206,3 +206,63 @@ def test_user_permissions_project_grant_allows_restricted_project(client, db, se
     assert rows[0]["project_id"] == restricted.project_id
 
 
+def test_user_permissions_participant_scope_saved(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_user = seed_users["participant"]
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Participant Scope",
+        organization="Org",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    update_resp = client.put(
+        f"/api/users/{participant_user.user_id}/permissions",
+        headers=admin_headers,
+        json={"batch_ids": [seed_batch.batch_id], "project_ids": [project.project_id]},
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["batch_ids"] == [seed_batch.batch_id]
+    assert update_resp.json()["project_ids"] == [project.project_id]
+
+    get_resp = client.get(f"/api/users/{participant_user.user_id}/permissions", headers=admin_headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["batch_ids"] == [seed_batch.batch_id]
+    assert get_resp.json()["project_ids"] == [project.project_id]
+
+
+def test_user_permissions_internal_coach_stores_batch_only(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    coach_user = seed_users["coach"]
+    coach_user.role = "internal_coach"
+    db.commit()
+    db.refresh(coach_user)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Internal Coach Scope",
+        organization="Org",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    update_resp = client.put(
+        f"/api/users/{coach_user.user_id}/permissions",
+        headers=admin_headers,
+        json={"batch_ids": [seed_batch.batch_id], "project_ids": [project.project_id]},
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["batch_ids"] == [seed_batch.batch_id]
+    assert update_resp.json()["project_ids"] == []
+
+    get_resp = client.get(f"/api/users/{coach_user.user_id}/permissions", headers=admin_headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["batch_ids"] == [seed_batch.batch_id]
+    assert get_resp.json()["project_ids"] == []
+
+

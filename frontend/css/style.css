@@ -934,18 +934,20 @@ body::after {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 14px;
 }
 .about-coach-head h3 {
   color: #1a2f5f;
-  font-size: 16px;
+  font-size: 18px;
 }
 .about-coach-photo {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+  width: 164px;
+  height: 164px;
+  border-radius: 16px;
   object-fit: cover;
   border: 1px solid rgba(255, 255, 255, 0.68);
+  box-shadow: 0 8px 20px rgba(24, 44, 92, 0.24);
+  flex-shrink: 0;
 }
 .about-coach-photo.placeholder {
   display: inline-flex;
@@ -953,7 +955,7 @@ body::after {
   justify-content: center;
   background: rgba(255, 255, 255, 0.45);
   color: #4a6298;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 .about-coach-body { display: grid; gap: 4px; }
@@ -964,6 +966,49 @@ body::after {
 }
 .about-drag-hint { font-size: 11px; color: #4462a3; }
 .about-coach-board { display: grid; gap: 12px; }
+.coach-photo-upload-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.coach-photo-paste-zone {
+  margin-top: 8px;
+  border: 1px dashed rgba(95, 127, 201, 0.58);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #2a4178;
+  padding: 10px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.coach-photo-paste-zone.drag-over {
+  border-color: rgba(47, 102, 255, 0.88);
+  background: rgba(224, 236, 255, 0.72);
+}
+.coach-photo-preview-wrap {
+  margin-top: 10px;
+}
+.coach-photo-preview {
+  width: min(240px, 100%);
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow: 0 8px 22px rgba(27, 50, 104, 0.2);
+}
+.coach-photo-preview-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 180px;
+  min-height: 120px;
+  border: 1px dashed rgba(122, 143, 194, 0.58);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #4b6296;
+  font-size: 12px;
+}
 .about-batch-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .about-batch-tab {
   border: 1px solid rgba(255, 255, 255, 0.7);
@@ -2281,6 +2326,8 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   .doc-actions { width: 100%; justify-content: flex-start; }
   .project-list-table { min-width: 640px; }
   .about-coach-grid { grid-template-columns: 1fr; }
+  .about-coach-head { flex-direction: column-reverse; }
+  .about-coach-photo { width: min(100%, 220px); height: auto; aspect-ratio: 1 / 1; }
   .records-tab-layout { grid-template-columns: 1fr; }
   .records-tab-nav { grid-template-columns: 1fr; }
   .data-table { display: block; overflow-x: auto; white-space: nowrap; }

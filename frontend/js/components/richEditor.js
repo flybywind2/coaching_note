@@ -248,27 +248,54 @@ const RichEditor = {
               <div class="rte-inline-modal-body">${bodyHtml || ''}</div>
               <div class="rte-inline-modal-actions">
                 <button type="button" class="btn btn-sm btn-secondary" data-role="rte-inline-cancel">취소</button>
-                <button type="submit" class="btn btn-sm btn-primary">${Fmt.escape(submitLabel)}</button>
+                <button type="button" class="btn btn-sm btn-primary" data-role="rte-inline-submit">${Fmt.escape(submitLabel)}</button>
               </div>
             </form>
           </div>
         </div>
       `;
 
+      const overlay = inlineModalHost.querySelector('.rte-inline-modal-overlay');
+      const box = inlineModalHost.querySelector('.rte-inline-modal-box');
       const cancel = inlineModalHost.querySelector('[data-role="rte-inline-cancel"]');
+      const submit = inlineModalHost.querySelector('[data-role="rte-inline-submit"]');
       const form = inlineModalHost.querySelector('.rte-inline-modal-form');
-      cancel?.addEventListener('click', () => {
+      const stopPropagation = (e) => e.stopPropagation();
+      overlay?.addEventListener('mousedown', stopPropagation);
+      overlay?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.target !== overlay) return;
         closeInlineModal();
         if (onCancel) onCancel();
       });
-      form?.addEventListener('submit', async (e) => {
-        e.preventDefault();
+      box?.addEventListener('mousedown', stopPropagation);
+      box?.addEventListener('click', stopPropagation);
+
+      const submitInlineModal = async (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         if (!onSubmit) {
           closeInlineModal();
           return;
         }
         const keepOpen = await onSubmit(new FormData(form));
         if (!keepOpen) closeInlineModal();
+      };
+      cancel?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeInlineModal();
+        if (onCancel) onCancel();
+      });
+      submit?.addEventListener('click', submitInlineModal);
+      form?.addEventListener('submit', submitInlineModal);
+      form?.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+        const target = e.target instanceof HTMLElement ? e.target : null;
+        if (target && (target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+        submitInlineModal(e);
       });
     };
 

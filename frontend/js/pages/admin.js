@@ -18,8 +18,51 @@ Pages.admin = {
       .join('');
   },
 
-  _isExternalCoachRole(roleText) {
-    return this._normalizeRole(roleText) === 'external_coach';
+  _getRoleScopePolicy(roleText) {
+    const role = this._normalizeRole(roleText);
+    return {
+      canSelectBatch: ['participant', 'internal_coach', 'external_coach'].includes(role),
+      canSelectProject: ['participant', 'external_coach'].includes(role),
+    };
+  },
+
+  _mergeRoleScopePolicy(roleTexts = []) {
+    const policies = roleTexts.map((role) => this._getRoleScopePolicy(role));
+    if (!policies.length) {
+      return { canSelectBatch: false, canSelectProject: false };
+    }
+    return {
+      canSelectBatch: policies.every((policy) => policy.canSelectBatch),
+      canSelectProject: policies.every((policy) => policy.canSelectProject),
+    };
+  },
+
+  _parseMultiSelectIds(formData, fieldName) {
+    return formData.getAll(fieldName)
+      .map((v) => Number.parseInt(String(v), 10))
+      .filter((v) => !Number.isNaN(v));
+  },
+
+  _buildPermissionPayloadFromForm(formData, scopePolicy) {
+    return {
+      batch_ids: scopePolicy.canSelectBatch ? this._parseMultiSelectIds(formData, 'batch_ids') : [],
+      project_ids: scopePolicy.canSelectProject ? this._parseMultiSelectIds(formData, 'project_ids') : [],
+    };
+  },
+
+  async _loadBatchesAndProjects() {
+    const batches = await API.getBatches().catch(() => []);
+    const mapped = await Promise.all(
+      batches.map(async (b) => ({
+        batch: b,
+        projects: await API.getProjects(b.batch_id).catch(() => []),
+      }))
+    );
+    const allProjects = mapped.flatMap((row) => row.projects.map((p) => ({
+      ...p,
+      batch_name: row.batch.batch_name,
+    })));
+    return { batches, allProjects };
   },
 
   async render(el, params) {
@@ -240,7 +283,8 @@ Pages.admin = {
       });
     });
 
-    document.getElementById('add-user-btn').addEventListener('click', () => {
+    document.getElementById('add-user-btn').addEventListener('click', async () => {
+      const { batches, allProjects } = await this._loadBatchesAndProjects();
       Modal.open(`<h2>사용자 추가</h2>
         <form id="add-user-form">
           <div class="form-group"><label>Knox ID(emp_id) *</label><input name="emp_id" required placeholder="knox001" /></div>
@@ -251,23 +295,67 @@ Pages.admin = {
               ${this._renderRoleOptions('participant')}
             </select>
           </div>
+          <div class="form-group" id="add-user-batch-scope-group">
+            <label>차수 (복수 선택)</label>
+            <p class="hint">참여자/사내코치/외부코치 역할에서 저장됩니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${batches.length
+              ? `<select name="batch_ids" class="perm-multi-select" multiple size="8">
+                  ${batches.map((b) => `<option value="${b.batch_id}">${Fmt.escape(b.batch_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">차수가 없습니다.</p>'}
+          </div>
+          <div class="form-group" id="add-user-project-scope-group">
+            <label>과제 권한 (복수 선택)</label>
+            <p class="hint">참여자/외부코치 역할에서 저장됩니다.</p>
+            <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
+            ${allProjects.length
+              ? `<select name="project_ids" class="perm-multi-select" multiple size="10">
+                  ${allProjects.map((p) => `<option value="${p.project_id}">[${Fmt.escape(p.batch_name)}] ${Fmt.escape(p.project_name)}</option>`).join('')}
+                </select>`
+              : '<p class="empty-state">과제가 없습니다.</p>'}
+          </div>
           <div class="form-group"><label>이메일</label><input type="email" name="email" placeholder="미입력 시 Knox ID@samsung.com 자동 생성" /></div>
           <button type="submit" class="btn btn-primary">생성</button>
           <p class="form-error" id="add-user-err" style="display:none;"></p>
-        </form>`);
+        </form>`, null, { className: 'modal-box-xl' });
+      const addForm = document.getElementById('add-user-form');
+      const addRoleEl = addForm?.querySelector('select[name="role"]');
+      const addBatchScopeGroup = document.getElementById('add-user-batch-scope-group');
+      const addProjectScopeGroup = document.getElementById('add-user-project-scope-group');
+      const syncAddScopeVisibility = () => {
+        const scopePolicy = this._getRoleScopePolicy(addRoleEl?.value || '');
+        if (addBatchScopeGroup) addBatchScopeGroup.style.display = scopePolicy.canSelectBatch ? '' : 'none';
+        if (addProjectScopeGroup) addProjectScopeGroup.style.display = scopePolicy.canSelectProject ? '' : 'none';
+        if (!addForm) return;
+        if (!scopePolicy.canSelectBatch) {
+          addForm.querySelectorAll('select[name="batch_ids"] option').forEach((opt) => { opt.selected = false; });
+        }
+        if (!scopePolicy.canSelectProject) {
+          addForm.querySelectorAll('select[name="project_ids"] option').forEach((opt) => { opt.selected = false; });
+        }
+      };
+      addRoleEl?.addEventListener('change', syncAddScopeVisibility);
+      syncAddScopeVisibility();
 
       document.getElementById('add-user-form').addEventListener('submit', async e => {
         e.preventDefault();
         const fd = new FormData(e.target);
+        const normalizedRole = this._normalizeRole(fd.get('role'));
         const data = {
           emp_id: fd.get('emp_id').trim(),
           name: fd.get('name').trim(),
           department: fd.get('department')?.trim() || null,
-          role: fd.get('role'),
+          role: normalizedRole,
           email: fd.get('email')?.trim() || null,
         };
         try {
-          await API.createUser(data);
+          const created = await API.createUser(data);
+          const scopePolicy = this._getRoleScopePolicy(normalizedRole);
+          if (created?.user_id && (scopePolicy.canSelectBatch || scopePolicy.canSelectProject)) {
+            const permissionPayload = this._buildPermissionPayloadFromForm(fd, scopePolicy);
+            await API.updateUserPermissions(created.user_id, permissionPayload);
+          }
           Modal.close();
           await this._renderUsers(el);
         } catch (err) {
@@ -368,20 +456,7 @@ Pages.admin = {
         alert('수정할 사용자를 선택하세요.');
         return;
       }
-      const [batches, allProjects] = await Promise.all([
-        API.getBatches().catch(() => []),
-        (async () => {
-          const rows = await API.getBatches().catch(() => []);
-          const mapped = await Promise.all(rows.map(async (b) => ({
-            batch: b,
-            projects: await API.getProjects(b.batch_id).catch(() => []),
-          })));
-          return mapped.flatMap((row) => row.projects.map((p) => ({
-            ...p,
-            batch_name: row.batch.batch_name,
-          })));
-        })(),
-      ]);
+      const { batches, allProjects } = await this._loadBatchesAndProjects();
       Modal.open(`<h2>사용자 일괄 수정</h2>
         <form id="bulk-update-user-form">
           <p class="hint">선택한 ${userIds.length}명에게 입력한 항목만 일괄 반영됩니다. 비워둔 항목은 변경하지 않습니다.</p>
@@ -398,7 +473,7 @@ Pages.admin = {
           </div>
           <div class="form-group" id="bulk-batch-scope-group">
             <label>차수 변경 (복수 선택)</label>
-            <p class="hint">외부코치 전용 권한 설정입니다.</p>
+            <p class="hint">참여자/사내코치/외부코치 역할에서 반영됩니다.</p>
             <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
             ${batches.length
               ? `<select name="batch_ids" class="perm-multi-select" multiple size="8">
@@ -408,7 +483,7 @@ Pages.admin = {
           </div>
           <div class="form-group" id="bulk-project-scope-group">
             <label>과제 권한 변경 (복수 선택)</label>
-            <p class="hint">외부코치 전용 권한 설정입니다.</p>
+            <p class="hint">참여자/외부코치 역할에서 반영됩니다.</p>
             <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
             ${allProjects.length
               ? `<select name="project_ids" class="perm-multi-select" multiple size="10">
@@ -421,22 +496,20 @@ Pages.admin = {
           <p class="form-error" id="bulk-update-user-err" style="display:none;"></p>
         </form>`, null, { className: 'modal-box-xl' });
       const selectedUsers = users.filter((u) => userIds.includes(u.user_id));
-      const allSelectedExternalCoach = selectedUsers.length > 0 && selectedUsers.every((u) => this._isExternalCoachRole(u.role));
+      const selectedScopePolicy = this._mergeRoleScopePolicy(selectedUsers.map((u) => u.role));
       const bulkForm = document.getElementById('bulk-update-user-form');
       const roleSelectEl = bulkForm?.querySelector('select[name="role"]');
-      const scopeGroups = [
-        document.getElementById('bulk-batch-scope-group'),
-        document.getElementById('bulk-project-scope-group'),
-      ];
+      const batchScopeGroup = document.getElementById('bulk-batch-scope-group');
+      const projectScopeGroup = document.getElementById('bulk-project-scope-group');
       const syncBulkScopeVisibility = () => {
         const nextRole = this._normalizeRole(roleSelectEl?.value || '');
-        const showScope = this._isExternalCoachRole(nextRole) || (!nextRole && allSelectedExternalCoach);
-        scopeGroups.forEach((group) => {
-          if (!group) return;
-          group.style.display = showScope ? '' : 'none';
-        });
-        if (!showScope && bulkForm) {
+        const scopePolicy = nextRole ? this._getRoleScopePolicy(nextRole) : selectedScopePolicy;
+        if (batchScopeGroup) batchScopeGroup.style.display = scopePolicy.canSelectBatch ? '' : 'none';
+        if (projectScopeGroup) projectScopeGroup.style.display = scopePolicy.canSelectProject ? '' : 'none';
+        if (bulkForm && !scopePolicy.canSelectBatch) {
           bulkForm.querySelectorAll('select[name="batch_ids"] option').forEach((el) => { el.selected = false; });
+        }
+        if (bulkForm && !scopePolicy.canSelectProject) {
           bulkForm.querySelectorAll('select[name="project_ids"] option').forEach((el) => { el.selected = false; });
         }
       };
@@ -453,12 +526,15 @@ Pages.admin = {
         if (department) payload.department = department;
         const normalizedRole = this._normalizeRole((fd.get('role') || '').toString());
         if (normalizedRole) payload.role = normalizedRole;
-        const shouldApplyScope = this._isExternalCoachRole(payload.role || (allSelectedExternalCoach ? 'external_coach' : ''));
-        if (shouldApplyScope) {
-          const batchIds = fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
-          const projectIds = fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
-          if (batchIds.length) payload.batch_ids = batchIds;
-          if (projectIds.length) payload.project_ids = projectIds;
+        const effectiveScopePolicy = normalizedRole
+          ? this._getRoleScopePolicy(normalizedRole)
+          : selectedScopePolicy;
+        const permissionPayload = this._buildPermissionPayloadFromForm(fd, effectiveScopePolicy);
+        if (effectiveScopePolicy.canSelectBatch && permissionPayload.batch_ids.length) {
+          payload.batch_ids = permissionPayload.batch_ids;
+        }
+        if (effectiveScopePolicy.canSelectProject && permissionPayload.project_ids.length) {
+          payload.project_ids = permissionPayload.project_ids;
         }
         if (Object.keys(payload).length <= 1) {
           errEl.textContent = '반영할 값을 최소 1개 이상 입력하세요.';
@@ -487,23 +563,13 @@ Pages.admin = {
       const userId = +btn.dataset.id;
       const current = users.find((u) => u.user_id === userId);
       if (!current) return;
-      const [batches, permission] = await Promise.all([
-        API.getBatches().catch(() => []),
+      const [{ batches, allProjects }, permission] = await Promise.all([
+        this._loadBatchesAndProjects(),
         API.getUserPermissions(userId).catch(() => ({ batch_ids: [], project_ids: [] })),
       ]);
       const currentRole = this._normalizeRole(current.role);
       const batchIds = new Set((permission.batch_ids || []).map((v) => Number(v)));
       const projectIds = new Set((permission.project_ids || []).map((v) => Number(v)));
-      const batchProjects = await Promise.all(
-        batches.map(async (b) => ({
-          batch: b,
-          projects: await API.getProjects(b.batch_id).catch(() => []),
-        }))
-      );
-      const allProjects = batchProjects.flatMap((row) => row.projects.map((p) => ({
-        ...p,
-        batch_name: row.batch.batch_name,
-      })));
 
       Modal.open(`<h2>사용자 수정</h2>
         <form id="edit-user-form">
@@ -518,7 +584,7 @@ Pages.admin = {
           <div class="form-group"><label>이메일</label><input type="email" name="email" value="${Fmt.escape(current.email || '')}" /></div>
           <div class="form-group" id="user-batch-scope-group">
             <label>차수 (복수 선택)</label>
-            <p class="hint">외부코치 전용 접근 권한입니다.</p>
+            <p class="hint">참여자/사내코치/외부코치 역할에서 저장됩니다.</p>
             <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
             ${batches.length
               ? `<select name="batch_ids" class="perm-multi-select" multiple size="8">
@@ -528,7 +594,7 @@ Pages.admin = {
           </div>
           <div class="form-group" id="user-project-scope-group">
             <label>과제 권한 (복수 선택)</label>
-            <p class="hint">외부코치 전용 접근 권한입니다.</p>
+            <p class="hint">참여자/외부코치 역할에서 저장됩니다.</p>
             <p class="hint">여러 항목 선택: Ctrl(또는 Cmd)+클릭, 연속 선택: Shift+클릭</p>
             ${allProjects.length
               ? `<select name="project_ids" class="perm-multi-select" multiple size="10">
@@ -541,18 +607,16 @@ Pages.admin = {
         </form>`);
       const editForm = document.getElementById('edit-user-form');
       const editRoleEl = editForm?.querySelector('select[name="role"]');
-      const editScopeGroups = [
-        document.getElementById('user-batch-scope-group'),
-        document.getElementById('user-project-scope-group'),
-      ];
+      const editBatchScopeGroup = document.getElementById('user-batch-scope-group');
+      const editProjectScopeGroup = document.getElementById('user-project-scope-group');
       const syncEditScopeVisibility = () => {
-        const showScope = this._isExternalCoachRole(editRoleEl?.value || '');
-        editScopeGroups.forEach((group) => {
-          if (!group) return;
-          group.style.display = showScope ? '' : 'none';
-        });
-        if (!showScope && editForm) {
+        const scopePolicy = this._getRoleScopePolicy(editRoleEl?.value || '');
+        if (editBatchScopeGroup) editBatchScopeGroup.style.display = scopePolicy.canSelectBatch ? '' : 'none';
+        if (editProjectScopeGroup) editProjectScopeGroup.style.display = scopePolicy.canSelectProject ? '' : 'none';
+        if (editForm && !scopePolicy.canSelectBatch) {
           editForm.querySelectorAll('select[name="batch_ids"] option').forEach((el) => { el.selected = false; });
+        }
+        if (editForm && !scopePolicy.canSelectProject) {
           editForm.querySelectorAll('select[name="project_ids"] option').forEach((el) => { el.selected = false; });
         }
       };
@@ -569,15 +633,8 @@ Pages.admin = {
           role: this._normalizeRole(fd.get('role')),
           email: fd.get('email')?.trim() || null,
         };
-        const canEditScope = this._isExternalCoachRole(data.role);
-        const permissionPayload = {
-          batch_ids: canEditScope
-            ? fd.getAll('batch_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v))
-            : [],
-          project_ids: canEditScope
-            ? fd.getAll('project_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v))
-            : [],
-        };
+        const scopePolicy = this._getRoleScopePolicy(data.role);
+        const permissionPayload = this._buildPermissionPayloadFromForm(fd, scopePolicy);
         try {
           await API.updateUser(userId, data);
           await API.updateUserPermissions(userId, permissionPayload);
