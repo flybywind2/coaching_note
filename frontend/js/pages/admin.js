@@ -74,7 +74,19 @@ Pages.admin = {
 
     el.innerHTML = `
       <div class="page-container">
-        <h1>관리자 메뉴</h1>
+        <div class="section-header" style="align-items:flex-end; gap:12px;">
+          <h1>관리자 메뉴</h1>
+          <div class="inline-actions" style="margin-left:auto;">
+            <label for="new-ui-theme-select" class="hint">New UI 테마</label>
+            <select id="new-ui-theme-select" class="form-select">
+              <option value="ocean">Ocean</option>
+              <option value="emerald">Emerald</option>
+              <option value="amber">Amber</option>
+              <option value="slate">Slate</option>
+            </select>
+            <button id="open-new-ui-btn" class="btn btn-primary">새 UI 열기</button>
+          </div>
+        </div>
         <div class="admin-tabs">
           <button class="admin-tab active" data-tab="users">사용자 관리</button>
           <button class="admin-tab" data-tab="batches">차수 관리</button>
@@ -84,6 +96,21 @@ Pages.admin = {
       </div>`;
 
     const content = document.getElementById('admin-content');
+    const newUiThemeSelect = document.getElementById('new-ui-theme-select');
+    const openNewUiBtn = document.getElementById('open-new-ui-btn');
+    const savedTheme = localStorage.getItem('new_ui_theme');
+    if (newUiThemeSelect && savedTheme) {
+      newUiThemeSelect.value = savedTheme;
+    }
+    newUiThemeSelect?.addEventListener('change', () => {
+      localStorage.setItem('new_ui_theme', newUiThemeSelect.value);
+    });
+    openNewUiBtn?.addEventListener('click', () => {
+      const theme = newUiThemeSelect?.value || 'ocean';
+      localStorage.setItem('new_ui_theme', theme);
+      window.location.href = `/new-ui/?theme=${encodeURIComponent(theme)}`;
+    });
+
     const renderTab = async (tab) => {
       el.querySelectorAll('.admin-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       if (tab === 'batches') await this._renderBatches(content);

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSP+ Space New UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ["Pretendard", "Noto Sans KR", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root {
+      --bg: #f2f5fb;
+      --surface: #ffffff;
+      --surface-soft: #eef2ff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #dbe3f0;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+    }
+    :root[data-theme="ocean"] {
+      --bg: #eef6ff;
+      --surface: #ffffff;
+      --surface-soft: #e0eeff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #c9d9ef;
+      --primary: #2563eb;
+      --primary-soft: #dbeafe;
+    }
+    :root[data-theme="emerald"] {
+      --bg: #edf8f2;
+      --surface: #ffffff;
+      --surface-soft: #dff4e8;
+      --text: #052e16;
+      --muted: #3f6152;
+      --line: #bfe2cf;
+      --primary: #059669;
+      --primary-soft: #d1fae5;
+    }
+    :root[data-theme="amber"] {
+      --bg: #fff7ed;
+      --surface: #fffefc;
+      --surface-soft: #ffedd5;
+      --text: #431407;
+      --muted: #7c2d12;
+      --line: #f6d5b2;
+      --primary: #ea580c;
+      --primary-soft: #ffedd5;
+    }
+    :root[data-theme="slate"] {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --surface-soft: #e2e8f0;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --primary: #334155;
+      --primary-soft: #e2e8f0;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+    }
+    .nu-surface { background: var(--surface); border-color: var(--line); }
+    .nu-soft { background: var(--surface-soft); }
+    .nu-text-muted { color: var(--muted); }
+    .nu-primary { color: var(--primary); }
+    .nu-primary-bg { background: var(--primary); color: #fff; }
+    .nu-primary-bg:hover { filter: brightness(0.95); }
+    .nu-primary-soft { background: var(--primary-soft); color: var(--primary); }
+    .nu-border { border-color: var(--line); }
+  </style>
+</head>
+<body class="font-sans">
+  <div id="app"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
