@@ -3752,6 +3752,24 @@ async function renderCalendar(view) {
   let events = [];
   const projects = await api(`/api/batches/${state.batchId}/projects`).catch(() => []);
   const projectRows = Array.isArray(projects) ? projects : [];
+  const CALENDAR_PROJECT_FILTER_KEY = `new_ui_calendar_project_filter_${state.batchId}`;
+  let selectedProjectId = Number.parseInt(localStorage.getItem(CALENDAR_PROJECT_FILTER_KEY) || '', 10);
+  if (Number.isNaN(selectedProjectId)) selectedProjectId = null;
+  if (
+    selectedProjectId &&
+    !projectRows.some((row) => Number(row.project_id) === Number(selectedProjectId))
+  ) {
+    selectedProjectId = null;
+  }
+  const persistProjectFilter = () => {
+    if (selectedProjectId) localStorage.setItem(CALENDAR_PROJECT_FILTER_KEY, String(selectedProjectId));
+    else localStorage.removeItem(CALENDAR_PROJECT_FILTER_KEY);
+  };
+  const selectedProjectForView = () =>
+    selectedProjectId &&
+    projectRows.some((row) => Number(row.project_id) === Number(selectedProjectId))
+      ? Number(selectedProjectId)
+      : null;
 
   const CALENDAR_COLORS = [
     { value: '#4CAF50', label: '초록' },
@@ -4130,7 +4148,7 @@ async function renderCalendar(view) {
     const startDate = toDateInputValueFromDateTime(event?.start) || presetDate || `${monthValue}-01`;
     const startTime = startDt ? `${pad2(startDt.getHours())}:${pad2(startDt.getMinutes())}` : '10:00';
     const endTime = endDt ? `${pad2(endDt.getHours())}:${pad2(endDt.getMinutes())}` : '11:00';
-    const selectedProjectId = Number(event?.project_id || projectRows[0]?.project_id || 0);
+    const initialProjectId = Number(event?.project_id || selectedProjectForView() || projectRows[0]?.project_id || 0);
     const overlay = openCalendarOverlay(`
       <div class="w-full max-w-xl rounded-2xl border nu-border nu-surface shadow-xl">
         <div class="flex items-center justify-between px-4 py-3 border-b nu-border">
@@ -4141,7 +4159,7 @@ async function renderCalendar(view) {
           <label class="text-sm block">대상 과제
             <select name="project_id" class="mt-1 w-full rounded-lg border nu-border px-3 py-2 nu-surface" ${isEdit ? 'disabled' : ''}>
               ${projectRows
-                .map((row) => `<option value="${row.project_id}" ${Number(row.project_id) === Number(selectedProjectId) ? 'selected' : ''}>${escapeHtml(row.project_name || `과제 ${row.project_id}`)}</option>`)
+                .map((row) => `<option value="${row.project_id}" ${Number(row.project_id) === Number(initialProjectId) ? 'selected' : ''}>${escapeHtml(row.project_name || `과제 ${row.project_id}`)}</option>`)
                 .join('')}
             </select>
           </label>
@@ -4529,7 +4547,10 @@ async function renderCalendar(view) {
     const start = `${parsed.year}-${pad2(parsed.month)}-01`;
     const endDate = new Date(parsed.year, parsed.month, 0);
     const end = `${parsed.year}-${pad2(parsed.month)}-${pad2(endDate.getDate())}`;
-    const payload = await api(`/api/calendar?batch_id=${state.batchId}&start=${start}&end=${end}`).catch(() => ({ events: [] }));
+    const projectId = selectedProjectForView();
+    const payload = await api(
+      `/api/calendar?batch_id=${state.batchId}&start=${start}&end=${end}${projectId ? `&project_id=${projectId}` : ''}`
+    ).catch(() => ({ events: [] }));
     const rows = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
     events = rows.sort((a, b) => resolveEventSortTime(a) - resolveEventSortTime(b));
     renderViewMode();
@@ -4542,6 +4563,17 @@ async function renderCalendar(view) {
     </section>
     <section class="rounded-2xl border nu-border nu-surface p-4">
       <div class="flex flex-wrap items-center gap-2 mb-3">
+        <select id="nu-calendar-project-filter" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">
+          <option value="" ${selectedProjectForView() ? '' : 'selected'}>공통 캘린더</option>
+          ${projectRows
+            .map(
+              (row) =>
+                `<option value="${row.project_id}" ${
+                  Number(row.project_id) === Number(selectedProjectForView()) ? 'selected' : ''
+                }>${escapeHtml(row.project_name || `과제 ${row.project_id}`)}</option>`
+            )
+            .join('')}
+        </select>
         <button id="nu-calendar-prev-month" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">이전</button>
         <input id="nu-calendar-month" type="month" class="rounded-lg border nu-border px-3 py-2 nu-surface" value="${monthValue}" />
         <button id="nu-calendar-next-month" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm">다음</button>
@@ -4580,6 +4612,12 @@ async function renderCalendar(view) {
   document.getElementById('nu-calendar-load')?.addEventListener('click', () => {
     monthValue = parseMonthValue(monthEl?.value || '') ? monthEl.value : monthValue;
     syncMonthInput();
+    draw();
+  });
+  document.getElementById('nu-calendar-project-filter')?.addEventListener('change', (evt) => {
+    const next = Number.parseInt(String(evt.target?.value || ''), 10);
+    selectedProjectId = Number.isNaN(next) ? null : next;
+    persistProjectFilter();
     draw();
   });
   document.getElementById('nu-calendar-create')?.addEventListener('click', () => {
@@ -4651,9 +4689,9 @@ async function renderBoard(view, options = {}) {
   const boards = await api('/api/boards').catch(() => []);
   const boardRows = Array.isArray(boards) ? boards : [];
   const writableBoards = role === 'admin' ? boardRows : boardRows.filter((row) => String(row.board_type || '').toLowerCase() !== 'notice');
-  let deepLinkBoardId = Number.parseInt(String(options?.boardId ?? state.boardDeepLink.boardId ?? ''), 10);
+  let deepLinkBoardId = Number.parseInt(String(options?.boardId ?? ''), 10);
   if (Number.isNaN(deepLinkBoardId)) deepLinkBoardId = null;
-  let deepLinkPostId = Number.parseInt(String(options?.openPostId ?? state.boardDeepLink.postId ?? ''), 10);
+  let deepLinkPostId = Number.parseInt(String(options?.openPostId ?? ''), 10);
   if (Number.isNaN(deepLinkPostId)) deepLinkPostId = null;
   if (!deepLinkBoardId && deepLinkPostId) {
     const post = await api(`/api/boards/posts/${deepLinkPostId}`).catch(() => null);
@@ -4663,20 +4701,18 @@ async function renderBoard(view, options = {}) {
     boardId: deepLinkBoardId,
     postId: deepLinkPostId,
   };
-  const preferredBoardId = Number(deepLinkBoardId || state.boardPage.boardId || 0);
-  let boardId = preferredBoardId && boardRows.some((row) => Number(row.board_id) === Number(preferredBoardId))
+  const preferredBoardId = Number(deepLinkBoardId || 0);
+  let boardId = preferredBoardId > 0 && boardRows.some((row) => Number(row.board_id) === Number(preferredBoardId))
     ? Number(preferredBoardId)
-    : Number(boardRows[0]?.board_id || 0);
+    : 0;
   let posts = [];
   let currentKeyword = '';
 
   const fetchPosts = async () => {
-    if (!boardId) {
-      posts = [];
-      return;
-    }
     state.boardPage.boardId = boardId;
-    const payload = await api(`/api/boards/${boardId}/posts?skip=${state.boardPage.skip}&limit=${state.boardPage.limit}`).catch(() => []);
+    const payload = boardId > 0
+      ? await api(`/api/boards/${boardId}/posts?skip=${state.boardPage.skip}&limit=${state.boardPage.limit}`).catch(() => [])
+      : await api(`/api/boards/posts?skip=${state.boardPage.skip}&limit=${state.boardPage.limit}`).catch(() => []);
     posts = Array.isArray(payload) ? payload : Array.isArray(payload?.items) ? payload.items : [];
   };
 
@@ -5099,9 +5135,11 @@ async function renderBoard(view, options = {}) {
       <div class="flex flex-wrap items-center gap-2 mb-3">
         <select id="nu-board-select" class="rounded-lg border nu-border px-3 py-2 nu-surface">
           ${
-            boardRows.length
-              ? boardRows.map((row) => `<option value="${row.board_id}" ${Number(row.board_id) === Number(boardId) ? 'selected' : ''}>${escapeHtml(row.board_name || row.name || `게시판 ${row.board_id}`)}</option>`).join('')
-              : '<option value="">게시판 없음</option>'
+            `<option value="0" ${Number(boardId) === 0 ? 'selected' : ''}>전체</option>${
+              boardRows.length
+                ? boardRows.map((row) => `<option value="${row.board_id}" ${Number(row.board_id) === Number(boardId) ? 'selected' : ''}>${escapeHtml(row.board_name || row.name || `게시판 ${row.board_id}`)}</option>`).join('')
+                : ''
+            }`
           }
         </select>
         <input id="nu-board-search" class="rounded-lg border nu-border px-3 py-2 nu-surface text-sm" placeholder="제목/내용 검색" />
