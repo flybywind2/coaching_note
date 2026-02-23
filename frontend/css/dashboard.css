@@ -9,6 +9,8 @@
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   padding: 16px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dash-panel-head {
@@ -22,6 +24,9 @@
 .dash-panel h3 {
   margin: 0;
   color: #1b2d59;
+}
+.dashboard-page {
+  min-width: 0;
 }
 .dash-controls {
   display: grid;
@@ -89,6 +94,8 @@
   overflow-x: auto;
   overflow-y: hidden;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid rgba(205, 218, 252, 0.72);
   border-radius: 12px;
 }
