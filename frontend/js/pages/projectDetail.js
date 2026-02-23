@@ -501,6 +501,7 @@ Pages.projectDetail = {
       ['workshop_result', '공동워크샵 산출물'],
       ['mid_presentation', '중간 발표 자료'],
       ['final_presentation', '최종 발표 자료'],
+      ['other_material', '기타 자료'],
     ];
     let selectedType = types[0][0];
 

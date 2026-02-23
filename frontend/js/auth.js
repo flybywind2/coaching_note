@@ -10,9 +10,23 @@ const Auth = {
   getToken() { return localStorage.getItem(this._key); },
   getUser() {
     const u = localStorage.getItem(this._userKey);
-    return u ? JSON.parse(u) : null;
+    if (!u) return null;
+    try {
+      const parsed = JSON.parse(u);
+      if (!parsed || typeof parsed !== 'object' || !parsed.role) return null;
+      return parsed;
+    } catch (_) {
+      localStorage.removeItem(this._userKey);
+      return null;
+    }
   },
-  isLoggedIn() { return !!this.getToken(); },
+  isLoggedIn() {
+    const token = this.getToken();
+    const user = this.getUser();
+    if (token && user) return true;
+    if (token && !user) this.clear();
+    return false;
+  },
   isRole(...roles) {
     const u = this.getUser();
     return u && roles.includes(u.role);
