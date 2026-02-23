@@ -31,6 +31,16 @@ Pages.dashboard = {
       const coachingDates = this._getCoachingDates(data);
       const coachingStartDate = data?.batch?.coaching_start_date || data?.batch?.start_date || null;
       const projects = this._getFilteredProjects(data, projectType);
+      const weekOptions = this._buildWeekOptions(coachingDates, coachingStartDate);
+      const supportsWeekView = mode === 'attendance' || mode === 'coaching';
+      let selectedWeek = String(State.get('dashWeekFilter') || '');
+      if (supportsWeekView && weekOptions.length && !weekOptions.some((opt) => opt.value === selectedWeek)) {
+        selectedWeek = this._recommendedWeekValue(coachingDates, coachingStartDate, weekOptions);
+        State.set('dashWeekFilter', selectedWeek);
+      }
+      const visibleDates = supportsWeekView
+        ? this._filterDatesByWeek(coachingDates, coachingStartDate, selectedWeek)
+        : coachingDates;
 
       el.innerHTML = `
         <div class="page-container dashboard-page">
@@ -57,13 +67,21 @@ Pages.dashboard = {
                   <button type="button" class="btn btn-sm dash-type-btn${projectType === 'associate' ? ' btn-primary' : ' btn-secondary'}" data-type="associate">준참여과제</button>
                 </div>
               ` : ''}
+              ${supportsWeekView && weekOptions.length ? `
+                <div class="dash-week-group">
+                  <label for="dash-week-filter">주차</label>
+                  <select id="dash-week-filter">
+                    ${weekOptions.map((opt) => `<option value="${Fmt.escape(opt.value)}"${opt.value === selectedWeek ? ' selected' : ''}>${Fmt.escape(opt.label)}</option>`).join('')}
+                  </select>
+                </div>
+              ` : ''}
             </div>
           </div>
           <section class="dash-panel">
             ${this._renderMatrix({
               mode,
               projects,
-              dates: coachingDates,
+              dates: visibleDates,
               attendanceRows: data.attendance_rows || [],
               noteRows: data.note_rows || [],
               attendanceMemberRows: data.attendance_member_rows || [],
@@ -78,6 +96,7 @@ Pages.dashboard = {
       document.getElementById('dash-batch')?.addEventListener('change', (e) => {
         State.set('currentBatchId', Number.parseInt(e.target.value, 10));
         State.set('dashExpandedProjects', {});
+        State.set('dashWeekFilter', '');
         this.render(el, params);
       });
       el.querySelectorAll('.dash-mode-btn').forEach((btn) => {
@@ -98,6 +117,10 @@ Pages.dashboard = {
           this.render(el, params);
         });
       });
+      document.getElementById('dash-week-filter')?.addEventListener('change', (e) => {
+        State.set('dashWeekFilter', String(e.target.value || ''));
+        this.render(el, params);
+      });
       el.querySelectorAll('.dash-toggle-members-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           const projectId = Number.parseInt(btn.dataset.projectId, 10);
@@ -110,7 +133,7 @@ Pages.dashboard = {
       });
 
       if (mode === 'attendance' || mode === 'coaching') {
-        this._scrollToFocusDate('dash-matrix-wrap', coachingDates);
+        this._scrollToFocusDate('dash-matrix-wrap', visibleDates);
       }
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
@@ -128,6 +151,52 @@ Pages.dashboard = {
     return list
       .filter((row) => (row.project_type || 'primary') === projectType)
       .sort((a, b) => String(a.project_name || '').localeCompare(String(b.project_name || '')));
+  },
+
+  _buildWeekOptions(dates, baselineIsoDate) {
+    const buckets = new Map();
+    (dates || []).forEach((isoDate) => {
+      const weekNo = this._weekNumberFromBaseline(isoDate, baselineIsoDate);
+      const key = String(weekNo);
+      if (!buckets.has(key)) {
+        buckets.set(key, { weekNo, start: isoDate, end: isoDate });
+        return;
+      }
+      const current = buckets.get(key);
+      if (isoDate < current.start) current.start = isoDate;
+      if (isoDate > current.end) current.end = isoDate;
+    });
+    return Array.from(buckets.entries())
+      .map(([value, meta]) => ({
+        value,
+        weekNo: meta.weekNo,
+        start: meta.start,
+        end: meta.end,
+      }))
+      .sort((a, b) => a.weekNo - b.weekNo)
+      .map((item) => ({
+        value: item.value,
+        label: `${item.weekNo}주차 (${this._dateLabel(item.start)}${item.start === item.end ? '' : ` ~ ${this._dateLabel(item.end)}`})`,
+      }));
+  },
+
+  _recommendedWeekValue(dates, baselineIsoDate, weekOptions) {
+    if (!Array.isArray(weekOptions) || !weekOptions.length) return '';
+    const orderedDates = [...(dates || [])].sort();
+    if (!orderedDates.length) return weekOptions[0].value;
+    const todayIso = this._todayIso();
+    const pivotDate = orderedDates.includes(todayIso)
+      ? todayIso
+      : (orderedDates.find((dateIso) => dateIso > todayIso) || orderedDates[orderedDates.length - 1]);
+    const targetWeek = String(this._weekNumberFromBaseline(pivotDate, baselineIsoDate));
+    return weekOptions.some((opt) => opt.value === targetWeek) ? targetWeek : weekOptions[0].value;
+  },
+
+  _filterDatesByWeek(dates, baselineIsoDate, weekValue) {
+    if (!Array.isArray(dates) || !dates.length) return [];
+    const targetWeek = Number.parseInt(String(weekValue || ''), 10);
+    if (Number.isNaN(targetWeek)) return dates;
+    return dates.filter((isoDate) => this._weekNumberFromBaseline(isoDate, baselineIsoDate) === targetWeek);
   },
 
   _renderMatrix({

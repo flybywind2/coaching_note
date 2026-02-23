@@ -39,6 +39,17 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+.dash-week-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+}
+.dash-week-group label {
+  font-size: 12px;
+  color: #32497a;
+  font-weight: 700;
+}
 
 .dash-date-filter {
   display: inline-flex;
@@ -91,11 +102,13 @@
 }
 
 .dash-matrix-wrap {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  max-height: min(72vh, 920px);
+  overscroll-behavior: contain;
   border: 1px solid rgba(205, 218, 252, 0.72);
   border-radius: 12px;
 }
@@ -260,6 +273,9 @@
     --project-w: 180px;
     --metric-w: 150px;
     --total-w: 120px;
+  }
+  .dash-matrix-wrap {
+    overflow-x: auto;
   }
 }
 
