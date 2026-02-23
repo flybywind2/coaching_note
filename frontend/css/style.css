@@ -1120,6 +1120,15 @@ body::after {
   color: #7d5108;
   font-size: 11px;
   font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cp-plan-empty-day:hover {
+  background: rgba(255, 255, 255, 0.94);
+}
+.cp-plan-empty-day:focus-visible {
+  outline: 2px solid rgba(230, 179, 38, 0.55);
+  outline-offset: 1px;
 }
 .cp-table-wrap {
   width: 100%;

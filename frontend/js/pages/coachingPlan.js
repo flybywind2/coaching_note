@@ -103,12 +103,13 @@ Pages.coachingPlan = {
     const todayKey = this._todayKey();
     const weekBaseDate = payload.coaching_start_date || payload.start;
     const emptyPlanDates = this._findEmptyPlanDates(data.rows || [], visibleDateKeys);
+    const editablePlanRows = (data.rows || []).filter((row) => isAdmin || row.coach_user_id === user.user_id);
     gridEl.innerHTML = `
       ${emptyPlanDates.length ? `
         <div class="cp-plan-empty-days">
           <span class="cp-plan-empty-days-title">코칭 계획이 비어있는 날짜</span>
           <div class="cp-plan-empty-days-list">
-            ${emptyPlanDates.map((dateKey) => `<span class="cp-plan-empty-day">${Fmt.escape(this._dayLabel(dateKey))}</span>`).join('')}
+            ${emptyPlanDates.map((dateKey) => `<button type="button" class="cp-plan-empty-day" data-date="${Fmt.escape(dateKey)}">${Fmt.escape(this._dayLabel(dateKey))}</button>`).join('')}
           </div>
         </div>
       ` : ''}
@@ -188,28 +189,56 @@ Pages.coachingPlan = {
       </div>
     `;
 
+    const openPlanEditor = async ({ coachUserId, workDate, cell = null }) => {
+      const row = (data.rows || []).find((item) => Number(item.coach_user_id) === Number(coachUserId));
+      if (!row) return;
+      const targetCell = cell || (row.cells || []).find((item) => String(item.date).slice(0, 10) === workDate) || { date: workDate };
+      await this._openPlanModal({
+        payload,
+        coachUserId: Number(row.coach_user_id),
+        workDate,
+        cell: targetCell,
+        reload: async (nextFocusDate) => {
+          State.set('cpFocusDate', nextFocusDate || workDate);
+          await this._renderGrid({
+            gridEl,
+            payload,
+            user,
+            isAdmin,
+            rangeLabelEl,
+            focusDate: nextFocusDate || workDate,
+          });
+        },
+      });
+    };
+
+    gridEl.querySelectorAll('.cp-plan-empty-day').forEach((dayEl) => {
+      dayEl.addEventListener('click', async () => {
+        const workDate = dayEl.dataset.date;
+        if (!workDate) return;
+        State.set('cpFocusDate', workDate);
+        this._focusDate(gridEl, workDate);
+        if (!editablePlanRows.length) return;
+        if (editablePlanRows.length === 1) {
+          await openPlanEditor({ coachUserId: editablePlanRows[0].coach_user_id, workDate });
+          return;
+        }
+        this._openPlanCoachPickerModal({
+          rows: editablePlanRows,
+          workDate,
+          onSelect: async (coachUserId) => {
+            await openPlanEditor({ coachUserId, workDate });
+          },
+        });
+      });
+    });
+
     gridEl.querySelectorAll('.cp-plan-cell.cp-editable').forEach((cellEl) => {
       cellEl.addEventListener('click', async () => {
         const coachUserId = Number.parseInt(cellEl.dataset.coach, 10);
         const workDate = cellEl.dataset.date;
         const cell = JSON.parse(cellEl.dataset.cell || '{}');
-        await this._openPlanModal({
-          payload,
-          coachUserId,
-          workDate,
-          cell,
-          reload: async (nextFocusDate) => {
-            State.set('cpFocusDate', nextFocusDate || workDate);
-            await this._renderGrid({
-              gridEl,
-              payload,
-              user,
-              isAdmin,
-              rangeLabelEl,
-              focusDate: nextFocusDate || workDate,
-            });
-          },
-        });
+        await openPlanEditor({ coachUserId, workDate, cell });
       });
     });
 
@@ -297,7 +326,10 @@ Pages.coachingPlan = {
       });
       return cellMap;
     });
-    return visibleDateKeys.filter((dateKey) => !rowCellMaps.some((cellMap) => Boolean(cellMap[dateKey]?.plan_id)));
+    return visibleDateKeys.filter((dateKey) => !rowCellMaps.some((cellMap) => {
+      const cell = cellMap[dateKey];
+      return Boolean(cell?.plan_id) && Boolean(cell?.is_all_day);
+    }));
   },
 
   _formatMinutes(minutes) {
@@ -315,6 +347,28 @@ Pages.coachingPlan = {
     if (cell.is_all_day) return '종일';
     if (cell.start_time && cell.end_time) return `${cell.start_time} ~ ${cell.end_time}`;
     return '-';
+  },
+
+  _normalizeTimeValue(value) {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return '';
+    const hour = Number.parseInt(match[1], 10);
+    const minute = Number.parseInt(match[2], 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  },
+
+  _timeOptions(selectedValue) {
+    const selected = this._normalizeTimeValue(selectedValue);
+    const options = ['<option value="">선택</option>'];
+    for (let hour = 0; hour < 24; hour += 1) {
+      for (let minute = 0; minute < 60; minute += 10) {
+        const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        options.push(`<option value="${value}"${value === selected ? ' selected' : ''}>${value}</option>`);
+      }
+    }
+    return options.join('');
   },
 
   _formatActualRange(cell) {
@@ -337,6 +391,36 @@ Pages.coachingPlan = {
       .replace(/</g, '&lt;');
   },
 
+  _openPlanCoachPickerModal({ rows, workDate, onSelect }) {
+    if (!rows || !rows.length) return;
+    Modal.open(`
+      <h2>코치 선택</h2>
+      <form id="cp-empty-day-coach-form">
+        <div class="form-group">
+          <label>날짜</label>
+          <input value="${Fmt.escape(workDate)}" disabled />
+        </div>
+        <div class="form-group">
+          <label for="cp-empty-day-coach">코치</label>
+          <select id="cp-empty-day-coach" name="coach_user_id" required>
+            ${rows.map((row) => `<option value="${row.coach_user_id}">${Fmt.escape(row.coach_name)} (${Fmt.escape(row.coach_emp_id || '-')})</option>`).join('')}
+          </select>
+        </div>
+        <div class="page-actions">
+          <button type="submit" class="btn btn-primary">계획 입력</button>
+        </div>
+      </form>
+    `, null, { className: 'modal-box-md' });
+
+    document.getElementById('cp-empty-day-coach-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const coachUserId = Number.parseInt(String(new FormData(e.target).get('coach_user_id') || ''), 10);
+      if (Number.isNaN(coachUserId)) return;
+      Modal.close();
+      if (onSelect) await onSelect(coachUserId);
+    });
+  },
+
   async _openPlanModal({ payload, coachUserId, workDate, cell, reload }) {
     Modal.open(`
       <h2>코칭 계획 입력</h2>
@@ -351,11 +435,15 @@ Pages.coachingPlan = {
         <div class="form-group cal-time-row">
           <div>
             <label>시작 시간</label>
-            <input name="start_time" type="time" step="600" value="${Fmt.escape(cell.start_time || '')}" />
+            <select name="start_time">
+              ${this._timeOptions(cell.start_time)}
+            </select>
           </div>
           <div>
             <label>종료 시간</label>
-            <input name="end_time" type="time" step="600" value="${Fmt.escape(cell.end_time || '')}" />
+            <select name="end_time">
+              ${this._timeOptions(cell.end_time)}
+            </select>
           </div>
         </div>
         <div class="page-actions">
@@ -367,8 +455,8 @@ Pages.coachingPlan = {
     `, null, { className: 'modal-box-md' });
 
     const allDayEl = document.querySelector('#cp-plan-form input[name="is_all_day"]');
-    const startEl = document.querySelector('#cp-plan-form input[name="start_time"]');
-    const endEl = document.querySelector('#cp-plan-form input[name="end_time"]');
+    const startEl = document.querySelector('#cp-plan-form [name="start_time"]');
+    const endEl = document.querySelector('#cp-plan-form [name="end_time"]');
     const syncAllDay = () => {
       if (!allDayEl || !startEl || !endEl) return;
       const isAllDay = allDayEl.checked;

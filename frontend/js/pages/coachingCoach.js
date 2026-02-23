@@ -59,6 +59,7 @@ Pages.coachingCoach = {
         weekNo: this._weekNumberFromBaseline(dateKey, payload.coaching_start_date || payload.start),
         ...(cellMap[dateKey] || {}),
       }));
+      const emptyPlanDates = this._findUnassignedDates(grid.rows || [], visibleDateKeys);
 
       const plannedDays = rows.filter((item) => item.plan_id).length;
       const actualDays = rows.filter((item) => Number(item.final_minutes || 0) > 0).length;
@@ -106,6 +107,19 @@ Pages.coachingCoach = {
             </div>
           </section>
 
+          ${emptyPlanDates.length ? `
+            <section class="cp-plan-empty-days coach-empty-days">
+              <span class="cp-plan-empty-days-title">코치 미배정 날짜(전체 코치 기준)</span>
+              <div class="cp-plan-empty-days-list">
+                ${emptyPlanDates.map((dateKey) => (
+    canEditPlan
+      ? `<button type="button" class="cp-plan-empty-day coach-empty-day-btn" data-date="${Fmt.escape(dateKey)}">${Fmt.escape(this._dateLabel(dateKey))}</button>`
+      : `<span class="cp-plan-empty-day">${Fmt.escape(this._dateLabel(dateKey))}</span>`
+  )).join('')}
+              </div>
+            </section>
+          ` : ''}
+
           <section class="card">
             <div class="coach-table-wrap">
               <table class="data-table coach-detail-table">
@@ -146,24 +160,36 @@ Pages.coachingCoach = {
         Router.go(`#/coaching-plan/coach/${coachUserId}?batch_id=${encodeURIComponent(String(nextBatchId || ''))}`);
       });
       if (canEditPlan) {
+        const openPlanEditor = async ({ workDate, cell }) => {
+          await this._openPlanModal({
+            payload,
+            coachUserId,
+            workDate,
+            cell: cell || (cellMap[workDate] || { date: workDate }),
+            reload: async (nextFocusDate) => {
+              await this.render(el, {
+                ...params,
+                id: String(coachUserId),
+                batch_id: String(batchId),
+                focus_date: nextFocusDate || workDate,
+              });
+            },
+          });
+        };
+
+        el.querySelectorAll('.coach-empty-day-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const workDate = btn.dataset.date;
+            if (!workDate) return;
+            await openPlanEditor({ workDate });
+          });
+        });
+
         el.querySelectorAll('.coach-plan-edit-btn').forEach((btn) => {
           btn.addEventListener('click', async () => {
             const workDate = btn.dataset.date;
             const cell = JSON.parse(btn.dataset.cell || '{}');
-            await this._openPlanModal({
-              payload,
-              coachUserId,
-              workDate,
-              cell,
-              reload: async (nextFocusDate) => {
-                await this.render(el, {
-                  ...params,
-                  id: String(coachUserId),
-                  batch_id: String(batchId),
-                  focus_date: nextFocusDate || workDate,
-                });
-              },
-            });
+            await openPlanEditor({ workDate, cell });
           });
         });
       }
@@ -213,6 +239,42 @@ Pages.coachingCoach = {
     return '-';
   },
 
+  _findUnassignedDates(allCoachRows, visibleDateKeys) {
+    const rowCellMaps = (allCoachRows || []).map((coachRow) => {
+      const map = {};
+      (coachRow.cells || []).forEach((cell) => {
+        map[String(cell.date).slice(0, 10)] = cell;
+      });
+      return map;
+    });
+    return (visibleDateKeys || []).filter((dateKey) => !rowCellMaps.some((map) => {
+      const cell = map[dateKey];
+      return Boolean(cell?.plan_id) && Boolean(cell?.is_all_day);
+    }));
+  },
+
+  _normalizeTimeValue(value) {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return '';
+    const hour = Number.parseInt(match[1], 10);
+    const minute = Number.parseInt(match[2], 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  },
+
+  _timeOptions(selectedValue) {
+    const selected = this._normalizeTimeValue(selectedValue);
+    const options = ['<option value="">선택</option>'];
+    for (let hour = 0; hour < 24; hour += 1) {
+      for (let minute = 0; minute < 60; minute += 10) {
+        const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        options.push(`<option value="${value}"${value === selected ? ' selected' : ''}>${value}</option>`);
+      }
+    }
+    return options.join('');
+  },
+
   _formatActualRange(cell) {
     const minutes = Number(cell.final_minutes || 0);
     if (!minutes) return '-';
@@ -257,11 +319,15 @@ Pages.coachingCoach = {
         <div class="form-group cal-time-row">
           <div>
             <label>시작 시간</label>
-            <input name="start_time" type="time" step="600" value="${Fmt.escape(cell.start_time || '')}" />
+            <select name="start_time">
+              ${this._timeOptions(cell.start_time)}
+            </select>
           </div>
           <div>
             <label>종료 시간</label>
-            <input name="end_time" type="time" step="600" value="${Fmt.escape(cell.end_time || '')}" />
+            <select name="end_time">
+              ${this._timeOptions(cell.end_time)}
+            </select>
           </div>
         </div>
         <div class="page-actions">
@@ -273,8 +339,8 @@ Pages.coachingCoach = {
     `, null, { className: 'modal-box-md' });
 
     const allDayEl = document.querySelector('#cp-coach-plan-form input[name="is_all_day"]');
-    const startEl = document.querySelector('#cp-coach-plan-form input[name="start_time"]');
-    const endEl = document.querySelector('#cp-coach-plan-form input[name="end_time"]');
+    const startEl = document.querySelector('#cp-coach-plan-form [name="start_time"]');
+    const endEl = document.querySelector('#cp-coach-plan-form [name="end_time"]');
     const syncAllDay = () => {
       if (!allDayEl || !startEl || !endEl) return;
       const isAllDay = allDayEl.checked;
