@@ -56,12 +56,18 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.utils.permissions import is_admin, is_project_member
+    from app.utils.permissions import is_admin, is_project_member, is_coach
     from fastapi import HTTPException
+
+    payload = data.model_dump(exclude_none=True)
     if is_admin(current_user):
         return project_service.update_project(db, project_id, data, current_user)
     if is_project_member(db, project_id, current_user.user_id):
         return project_service.update_project(db, project_id, data, current_user)
+    if is_coach(current_user):
+        if payload and set(payload.keys()) <= {"progress_rate"}:
+            return project_service.update_project(db, project_id, data, current_user)
+        raise HTTPException(status_code=403, detail="코치는 과제 진행률만 수정 가능합니다.")
     raise HTTPException(status_code=403, detail="관리자 또는 과제 팀원만 수정 가능합니다.")
 
 

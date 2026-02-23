@@ -93,6 +93,61 @@ def test_update_project_status_by_coach_forbidden(client, seed_users, seed_batch
     assert update_resp.status_code == 403
 
 
+def test_update_project_progress_rate_by_coach_allowed(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    coach_headers = auth_headers(client, "coach001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Progress Edit by Coach", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}",
+        json={"progress_rate": 65},
+        headers=coach_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["progress_rate"] == 65
+
+
+def test_update_project_progress_rate_by_external_coach_allowed_with_scope(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    seed_users["observer"].role = "external_coach"
+    db.commit()
+    db.refresh(seed_users["observer"])
+    external_headers = auth_headers(client, "obs001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Progress Edit by External Coach", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    grant_resp = client.put(
+        f"/api/users/{seed_users['observer'].user_id}/permissions",
+        json={
+            "batch_ids": [seed_batch.batch_id],
+            "project_ids": [project_id],
+        },
+        headers=admin_headers,
+    )
+    assert grant_resp.status_code == 200, grant_resp.text
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}",
+        json={"progress_rate": 35},
+        headers=external_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["progress_rate"] == 35
+
+
 def test_update_project_status_participant_forbidden(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     participant_headers = auth_headers(client, "user001")

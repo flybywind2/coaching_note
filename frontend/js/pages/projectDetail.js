@@ -20,6 +20,7 @@ Pages.projectDetail = {
       const canWrite = user.role === 'admin' || Auth.isCoach();
       const isAdmin = user.role === 'admin';
       const canEditInfo = isAdmin || !!project.is_my_project;
+      const canEditProgress = canEditInfo || Auth.isCoach();
       const noteCount = sortedNotes.length;
       const initialTab = ['info', 'records', 'notes'].includes(params.tab) ? params.tab : 'info';
       const refreshView = async (tab = 'info') => {
@@ -47,6 +48,7 @@ Pages.projectDetail = {
             this._renderInfo(tabContent, project, {
               canWrite,
               canEditInfo,
+              canEditProgress,
               isAdmin,
               members,
               projectId,
@@ -84,6 +86,7 @@ Pages.projectDetail = {
     const {
       canWrite,
       canEditInfo,
+      canEditProgress = false,
       isAdmin,
       members,
       projectId,
@@ -121,11 +124,11 @@ Pages.projectDetail = {
         ${value}
       </div>
     `;
-    const renderMetaChip = ({ label, value, field }) => `
+    const renderMetaChip = ({ label, value, field, canEdit = canEditInfo }) => `
       <div class="project-meta-chip">
         <div class="project-meta-chip-head">
           <label>${label}</label>
-          ${canEditInfo && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
+          ${canEdit && field ? `<button class="btn btn-xs btn-secondary info-edit-btn" data-field="${field}">edit</button>` : ''}
         </div>
         <div class="project-meta-chip-body">${value}</div>
       </div>
@@ -138,8 +141,13 @@ Pages.projectDetail = {
         </div>
         <div class="project-top-meta-strip">
           ${renderMetaChip({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
-          ${renderMetaChip({ label: '과제 대표자', field: 'representative', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
-          ${renderMetaChip({ label: '과제 진행률', field: 'progress_rate', value: `<span>${progressValue}%</span>${Fmt.progress(progressValue)}` })}
+          ${renderMetaChip({ label: '과제 대표자', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
+          ${renderMetaChip({
+            label: '과제 진행률',
+            field: canEditProgress ? 'progress_rate' : null,
+            canEdit: canEditProgress,
+            value: `<span>${progressValue}%</span>${Fmt.progress(progressValue)}`,
+          })}
         </div>
 
         <div class="project-info-panel">
@@ -158,8 +166,7 @@ Pages.projectDetail = {
                   <div class="project-member-main">
                     <strong>${Fmt.escape(m.user_name || `사용자#${m.user_id}`)}</strong>
                     <span>${Fmt.escape(m.user_emp_id || '-')}</span>
-                    <span class="tag">${Fmt.escape(m.role || 'member')}</span>
-                    ${m.is_representative ? '<span class="tag tag-done">대표</span>' : ''}
+                    <span class="tag${String(m.role || '').toLowerCase() === 'leader' ? ' tag-done' : ''}">${Fmt.escape(m.role || 'member')}</span>
                   </div>
                   ${canManageMembers ? `
                     <div class="inline-actions">
