@@ -4,7 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectOut, ProjectMemberCreate, ProjectMemberOut
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectOut,
+    ProjectMemberCreate,
+    ProjectMemberOut,
+    ProjectMemberCandidateOut,
+)
 from app.services import project_service
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.user import User
@@ -71,6 +78,16 @@ def delete_project(
 @router.get("/api/projects/{project_id}/members", response_model=List[ProjectMemberOut])
 def get_members(project_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return project_service.get_members(db, project_id, current_user)
+
+
+@router.get("/api/projects/{project_id}/member-candidates", response_model=List[ProjectMemberCandidateOut])
+def get_member_candidates(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _ensure_member_manage_permission(db, project_id, current_user)
+    return project_service.get_member_candidates(db, project_id, current_user)
 
 
 @router.post("/api/projects/{project_id}/members", response_model=ProjectMemberOut)

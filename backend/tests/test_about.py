@@ -245,3 +245,43 @@ def test_reorder_coaches_endpoint_not_shadowed_by_dynamic_route(client, seed_use
     visible_rows = [row for row in rows if row.get("coach_id")]
     assert visible_rows[0]["coach_id"] == second_id
     assert visible_rows[1]["coach_id"] == first_id
+
+
+def test_reorder_coaches_supports_column_layout_payload(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    created_ids = []
+    for name in ["코치 A", "코치 B", "코치 C"]:
+        resp = client.post(
+            "/api/about/coaches",
+            json={
+                "batch_id": seed_batch.batch_id,
+                "name": name,
+                "coach_type": "internal",
+            },
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        created_ids.append(resp.json()["coach_id"])
+
+    first_id, second_id, third_id = created_ids
+    reorder_resp = client.put(
+        "/api/about/coaches/reorder",
+        json={
+            "batch_id": seed_batch.batch_id,
+            "left_coach_ids": [third_id, first_id],
+            "right_coach_ids": [second_id],
+        },
+        headers=admin_headers,
+    )
+    assert reorder_resp.status_code == 200, reorder_resp.text
+    rows = [row for row in reorder_resp.json() if row.get("coach_id") in created_ids]
+
+    assert rows[0]["coach_id"] == third_id
+    assert rows[0]["layout_column"] == "left"
+    assert rows[0]["display_order"] == 1
+    assert rows[1]["coach_id"] == first_id
+    assert rows[1]["layout_column"] == "left"
+    assert rows[1]["display_order"] == 2
+    assert rows[2]["coach_id"] == second_id
+    assert rows[2]["layout_column"] == "right"
+    assert rows[2]["display_order"] == 1

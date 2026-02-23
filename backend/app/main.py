@@ -80,6 +80,9 @@ def ensure_schema():
         if "display_order" not in coach_columns:
             conn.execute(text("ALTER TABLE coach ADD COLUMN display_order INTEGER"))
             conn.execute(text("UPDATE coach SET display_order = coach_id WHERE display_order IS NULL"))
+        if "layout_column" not in coach_columns:
+            conn.execute(text("ALTER TABLE coach ADD COLUMN layout_column VARCHAR(10)"))
+            conn.execute(text("UPDATE coach SET layout_column = 'left' WHERE layout_column IS NULL OR layout_column = ''"))
         schedule_rows = conn.execute(text("PRAGMA table_info(program_schedule)")).fetchall()
         schedule_columns = {str(row[1]) for row in schedule_rows}
         if "color" not in schedule_columns:

@@ -76,6 +76,7 @@ const API = {
   updateProject: (id, data) => apiFetch(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteProject: (id) => apiFetch(`/api/projects/${id}`, { method: 'DELETE' }),
   getMembers: (id) => apiFetch(`/api/projects/${id}/members`),
+  getProjectMemberCandidates: (id) => apiFetch(`/api/projects/${id}/member-candidates`),
   addMember: (id, data) => apiFetch(`/api/projects/${id}/members`, { method: 'POST', body: JSON.stringify(data) }),
   removeMember: (id, userId) => apiFetch(`/api/projects/${id}/members/${userId}`, { method: 'DELETE' }),
   setMemberRepresentative: (id, userId) => apiFetch(`/api/projects/${id}/members/${userId}/representative`, { method: 'PUT' }),

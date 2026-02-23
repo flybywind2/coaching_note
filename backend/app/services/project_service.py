@@ -17,6 +17,8 @@ from typing import List, Optional
 
 
 ALLOWED_PROJECT_TYPES = {"primary", "associate"}
+MEMBER_ROLE = "member"
+LEADER_ROLE = "leader"
 
 
 def _normalize_project_type(value: str | None) -> str:
@@ -24,6 +26,10 @@ def _normalize_project_type(value: str | None) -> str:
     if text not in ALLOWED_PROJECT_TYPES:
         return "primary"
     return text
+
+
+def _normalize_member_role(value: str | None) -> str:
+    return LEADER_ROLE if str(value or "").strip().lower() == LEADER_ROLE else MEMBER_ROLE
 
 
 def get_projects(db: Session, batch_id: int, current_user: User) -> List[Project]:
@@ -139,20 +145,44 @@ def _sync_project_representative(db: Session, project_id: int):
     project = db.query(Project).filter(Project.project_id == project_id).first()
     if not project:
         return
-    representative_member = (
+    members = (
         db.query(ProjectMember)
-        .filter(
-            ProjectMember.project_id == project_id,
-            ProjectMember.is_representative == True,  # noqa: E712
-        )
+        .filter(ProjectMember.project_id == project_id)
         .order_by(ProjectMember.joined_at.asc(), ProjectMember.member_id.asc())
-        .first()
+        .all()
     )
-    if not representative_member:
+    if not members:
         project.representative = None
         return
-    representative_user = db.query(User).filter(User.user_id == representative_member.user_id).first()
+
+    leader_member = next((m for m in members if _normalize_member_role(m.role) == LEADER_ROLE), None)
+    if leader_member is None:
+        leader_member = next((m for m in members if bool(m.is_representative)), None)
+
+    for member in members:
+        is_leader = leader_member is not None and member.member_id == leader_member.member_id
+        member.role = LEADER_ROLE if is_leader else MEMBER_ROLE
+        member.is_representative = bool(is_leader)
+
+    if not leader_member:
+        project.representative = None
+        return
+    representative_user = db.query(User).filter(User.user_id == leader_member.user_id).first()
     project.representative = representative_user.name if representative_user else None
+
+
+def get_member_candidates(db: Session, project_id: int, current_user: User) -> List[User]:
+    get_project(db, project_id, current_user)
+    member_ids = {
+        row[0]
+        for row in db.query(ProjectMember.user_id)
+        .filter(ProjectMember.project_id == project_id)
+        .all()
+    }
+    q = db.query(User).filter(User.is_active == True)  # noqa: E712
+    if member_ids:
+        q = q.filter(~User.user_id.in_(member_ids))
+    return q.order_by(User.name.asc(), User.emp_id.asc(), User.user_id.asc()).all()
 
 
 def add_member(db: Session, project_id: int, data: ProjectMemberCreate) -> ProjectMember:
@@ -165,16 +195,19 @@ def add_member(db: Session, project_id: int, data: ProjectMemberCreate) -> Proje
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="이미 과제 멤버입니다.")
-    if data.is_representative:
+    payload = data.model_dump()
+    normalized_role = _normalize_member_role(payload.get("role"))
+    wants_leader = normalized_role == LEADER_ROLE or bool(payload.get("is_representative"))
+    if wants_leader:
         db.query(ProjectMember).filter(ProjectMember.project_id == project_id).update(
-            {"is_representative": False},
+            {"role": MEMBER_ROLE, "is_representative": False},
             synchronize_session=False,
         )
-    member = ProjectMember(project_id=project_id, **data.model_dump())
+    payload["role"] = LEADER_ROLE if wants_leader else MEMBER_ROLE
+    payload["is_representative"] = bool(wants_leader)
+    member = ProjectMember(project_id=project_id, **payload)
     db.add(member)
     user = db.query(User).filter(User.user_id == data.user_id).first()
-    if data.is_representative:
-        project.representative = user.name if user else None
     if user and user.role == PARTICIPANT:
         exists_access = (
             db.query(UserProjectAccess)
@@ -202,7 +235,6 @@ def remove_member(db: Session, project_id: int, user_id: int):
     ).first()
     if not member:
         raise HTTPException(status_code=404, detail="멤버를 찾을 수 없습니다.")
-    was_representative = bool(member.is_representative)
     # 팀원 제거 시 담당자로 지정된 과제 내 Task는 자동으로 미배정 처리합니다.
     db.query(ProjectTask).filter(
         ProjectTask.project_id == project_id,
@@ -215,8 +247,7 @@ def remove_member(db: Session, project_id: int, user_id: int):
             UserProjectAccess.project_id == project_id,
         ).delete()
     db.delete(member)
-    if was_representative:
-        _sync_project_representative(db, project_id)
+    _sync_project_representative(db, project_id)
     db.commit()
 
 
@@ -236,12 +267,12 @@ def set_representative(db: Session, project_id: int, user_id: int) -> ProjectMem
         raise HTTPException(status_code=404, detail="해당 사용자는 과제 팀원이 아닙니다.")
 
     db.query(ProjectMember).filter(ProjectMember.project_id == project_id).update(
-        {"is_representative": False},
+        {"role": MEMBER_ROLE, "is_representative": False},
         synchronize_session=False,
     )
+    member.role = LEADER_ROLE
     member.is_representative = True
-    representative_user = db.query(User).filter(User.user_id == user_id).first()
-    project.representative = representative_user.name if representative_user else None
+    _sync_project_representative(db, project_id)
     db.commit()
     db.refresh(member)
     return member
