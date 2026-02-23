@@ -102,7 +102,16 @@ Pages.coachingPlan = {
 
     const todayKey = this._todayKey();
     const weekBaseDate = payload.coaching_start_date || payload.start;
+    const emptyPlanDates = this._findEmptyPlanDates(data.rows || [], visibleDateKeys);
     gridEl.innerHTML = `
+      ${emptyPlanDates.length ? `
+        <div class="cp-plan-empty-days">
+          <span class="cp-plan-empty-days-title">코칭 계획이 비어있는 날짜</span>
+          <div class="cp-plan-empty-days-list">
+            ${emptyPlanDates.map((dateKey) => `<span class="cp-plan-empty-day">${Fmt.escape(this._dayLabel(dateKey))}</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
       <div class="cp-table-wrap">
         <table class="data-table coaching-plan-table">
           <thead>
@@ -119,6 +128,7 @@ Pages.coachingPlan = {
                 cellMap[String(cell.date).slice(0, 10)] = cell;
               });
               const isSelfRow = row.coach_user_id === user.user_id;
+              const coachHref = this._coachHref(row.coach_user_id, payload.batch_id);
               const canEditPlan = isAdmin || row.coach_user_id === user.user_id;
               const canEditActual = isAdmin;
               const planCells = visibleDateKeys.map((dateKey) => {
@@ -159,7 +169,9 @@ Pages.coachingPlan = {
               return `
                 <tr class="cp-row-plan${isSelfRow ? ' cp-row-self' : ''}">
                   <th class="cp-coach-col" rowspan="2">
-                    <strong>${Fmt.escape(row.coach_name)}</strong>
+                    ${coachHref
+    ? `<a href="${coachHref}" class="cp-coach-link"><strong>${Fmt.escape(row.coach_name)}</strong></a>`
+    : `<strong>${Fmt.escape(row.coach_name)}</strong>`}
                     <div class="hint">${Fmt.escape(row.coach_emp_id)}${row.department ? ` · ${Fmt.escape(row.department)}` : ''}</div>
                   </th>
                   <th class="cp-kind-col">계획</th>
@@ -269,6 +281,23 @@ Pages.coachingPlan = {
   _dateHeaderHtml(dateText, baselineDateText) {
     const weekNo = this._weekNumberFromBaseline(dateText, baselineDateText);
     return `<div class="cp-week-label">${weekNo}주차</div><div class="cp-day-label">${this._dayLabel(dateText)}</div>`;
+  },
+
+  _coachHref(coachUserId, batchId) {
+    const coachId = Number.parseInt(String(coachUserId || ''), 10);
+    if (Number.isNaN(coachId)) return '';
+    return `#/coaching-plan/coach/${coachId}?batch_id=${encodeURIComponent(String(batchId || ''))}`;
+  },
+
+  _findEmptyPlanDates(rows, visibleDateKeys) {
+    const rowCellMaps = (rows || []).map((row) => {
+      const cellMap = {};
+      (row.cells || []).forEach((cell) => {
+        cellMap[String(cell.date).slice(0, 10)] = cell;
+      });
+      return cellMap;
+    });
+    return visibleDateKeys.filter((dateKey) => !rowCellMaps.some((cellMap) => Boolean(cellMap[dateKey]?.plan_id)));
   },
 
   _formatMinutes(minutes) {

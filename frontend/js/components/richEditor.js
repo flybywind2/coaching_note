@@ -57,6 +57,7 @@ const RichEditor = {
             <button type="button" data-cmd="indent" title="들여쓰기">들여쓰기</button>
             <button type="button" data-cmd="outdent" title="내어쓰기">내어쓰기</button>
             <button type="button" data-cmd="formatBlock" data-value="BLOCKQUOTE" title="인용">인용</button>
+            <button type="button" data-action="code-block" title="코드 블록">코드</button>
             <button type="button" data-cmd="insertHorizontalRule" title="구분선">구분선</button>
           </div>
           <div class="rte-group rte-group-align">
@@ -110,6 +111,7 @@ const RichEditor = {
     const inlineModalHost = root.querySelector('[data-role="rte-inline-modal-host"]');
     const formatBlockSelect = root.querySelector('[data-action="format-block"]');
     const fontSizeSelect = root.querySelector('[data-action="font-size"]');
+    const codeBlockButton = root.querySelector('[data-action="code-block"]');
     editor.innerHTML = initialHTML;
     sourceArea.value = initialHTML;
     let sourceMode = false;
@@ -117,11 +119,45 @@ const RichEditor = {
     let tablePickerCols = 0;
     let resizeState = null;
     let resizeHoverCell = null;
+    let savedRange = null;
+    let savedCodeBlock = null;
     document.execCommand('styleWithCSS', false, true);
 
     const focusEditor = () => editor.focus();
     const getCurrentHTML = () => (sourceMode ? sourceArea.value : editor.innerHTML).trim();
     const hasVisualContent = (html) => /<img|<table|<hr/i.test(html);
+    const getSelectionRangeInEditor = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return null;
+      const range = selection.getRangeAt(0);
+      if (!editor.contains(range.commonAncestorContainer)) return null;
+      return range;
+    };
+    const getCodeBlockFromRange = (range) => {
+      if (!range) return null;
+      const node = range.startContainer;
+      const base = node.nodeType === 1 ? node : node.parentElement;
+      const pre = base ? base.closest('pre') : null;
+      return pre && editor.contains(pre) ? pre : null;
+    };
+    const saveSelectionRange = () => {
+      const range = getSelectionRangeInEditor();
+      savedRange = range ? range.cloneRange() : null;
+      savedCodeBlock = getCodeBlockFromRange(range);
+    };
+    const restoreSelectionRange = () => {
+      if (!savedRange) return false;
+      focusEditor();
+      const selection = window.getSelection();
+      if (!selection) return false;
+      selection.removeAllRanges();
+      selection.addRange(savedRange);
+      return true;
+    };
+    const currentCodeBlock = () => {
+      const range = getSelectionRangeInEditor();
+      return getCodeBlockFromRange(range);
+    };
     const normalizeFormatBlock = (value) => {
       const text = String(value || '')
         .replace(/[<>]/g, '')
@@ -170,6 +206,7 @@ const RichEditor = {
         blockValue = 'P';
       }
       formatBlockSelect.value = blockValue;
+      if (codeBlockButton) codeBlockButton.classList.toggle('active', !!currentCodeBlock());
     };
 
     const exec = (cmd, value = null) => {
@@ -491,6 +528,58 @@ const RichEditor = {
       exec('createLink', url);
     });
 
+    codeBlockButton?.addEventListener('click', () => {
+      if (sourceMode) return;
+      saveSelectionRange();
+      const activeBlock = currentCodeBlock() || savedCodeBlock;
+      const selectedText = activeBlock
+        ? (activeBlock.textContent || '')
+        : (savedRange ? savedRange.toString() : '');
+      openInlineModal({
+        title: '코드 블록',
+        bodyHtml: `
+          <label>코드
+            <textarea name="code" rows="10" placeholder="코드를 입력하세요...">${Fmt.escape(selectedText)}</textarea>
+          </label>
+          <p class="form-error rte-inline-modal-error" data-role="rte-inline-modal-error" style="display:none;"></p>
+        `,
+        submitLabel: activeBlock ? '코드 블록 수정' : '코드 블록 삽입',
+        onSubmit: (fd) => {
+          const rawCode = String(fd.get('code') || '').replace(/\r\n/g, '\n');
+          const errEl = inlineModalHost?.querySelector('[data-role="rte-inline-modal-error"]');
+          if (!rawCode.trim()) {
+            if (errEl) {
+              errEl.textContent = '코드를 입력하세요.';
+              errEl.style.display = 'block';
+            }
+            return true;
+          }
+          const codeHtml = `<pre><code>${Fmt.escape(rawCode)}</code></pre><p></p>`;
+          if (activeBlock && activeBlock.isConnected) {
+            activeBlock.outerHTML = codeHtml;
+            focusEditor();
+            syncToolbarState();
+            savedRange = null;
+            savedCodeBlock = null;
+            return false;
+          }
+          restoreSelectionRange();
+          insertHTML(codeHtml);
+          savedRange = null;
+          savedCodeBlock = null;
+          return false;
+        },
+        onCancel: () => {
+          savedRange = null;
+          savedCodeBlock = null;
+        },
+      });
+    });
+    codeBlockButton?.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      saveSelectionRange();
+    });
+
     root.querySelector('[data-action="image-url"]').addEventListener('click', () => {
       const url = prompt('이미지 URL을 입력하세요', 'https://');
       if (!url) return;
@@ -585,6 +674,12 @@ const RichEditor = {
     editor.addEventListener('keydown', (e) => {
       if (sourceMode) return;
       if (e.key !== 'Tab') return;
+      const codeBlock = currentCodeBlock();
+      if (codeBlock) {
+        e.preventDefault();
+        document.execCommand('insertText', false, '  ');
+        return;
+      }
       e.preventDefault();
       focusEditor();
       if (e.shiftKey) {
