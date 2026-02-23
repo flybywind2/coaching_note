@@ -36,3 +36,5 @@ tasks.md
 feedback*.txt
 
 pytest-cache-files-*
+
+.backup/
