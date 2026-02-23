@@ -322,6 +322,33 @@ Pages.calendar = {
     return text.slice(0, 5);
   },
 
+  _normalizeTimeValue(value) {
+    if (!value) return '';
+    const text = String(value).trim();
+    const match = text.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return '';
+    const hour = Number.parseInt(match[1], 10);
+    const minute = Number.parseInt(match[2], 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  },
+
+  _timeOptions(selectedValue, { includeEmpty = false } = {}) {
+    const selected = this._normalizeTimeValue(selectedValue);
+    const options = [];
+    if (includeEmpty) options.push('<option value="">선택</option>');
+    for (let hour = 0; hour < 24; hour += 1) {
+      for (let minute = 0; minute < 60; minute += 10) {
+        const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        options.push(`<option value="${value}"${value === selected ? ' selected' : ''}>${value}</option>`);
+      }
+    }
+    if (selected === '23:59') {
+      options.push('<option value="23:59" selected>23:59</option>');
+    }
+    return options.join('');
+  },
+
   _stripProjectPrefix(title) {
     return String(title || '').replace(/^\[[^\]]+\]\s*/, '').trim();
   },
@@ -480,11 +507,15 @@ Pages.calendar = {
           </div>
           <div>
             <label>시작 시간 *</label>
-            <input type="time" name="start_time" step="600" value="10:00" required />
+            <select name="start_time" required>
+              ${this._timeOptions('10:00')}
+            </select>
           </div>
           <div>
             <label>종료 시간 *</label>
-            <input type="time" name="end_time" step="600" value="11:00" required />
+            <select name="end_time" required>
+              ${this._timeOptions('11:00')}
+            </select>
           </div>
         </div>
         <div class="form-group">
@@ -517,8 +548,8 @@ Pages.calendar = {
     const repeatRow = document.getElementById('cal-repeat-row');
     const projectSelect = document.getElementById('cal-project-select');
     const allDayInput = document.querySelector('input[name="is_all_day"]');
-    const startTimeInput = document.querySelector('input[name="start_time"]');
-    const endTimeInput = document.querySelector('input[name="end_time"]');
+    const startTimeInput = document.querySelector('#calendar-event-form [name="start_time"]');
+    const endTimeInput = document.querySelector('#calendar-event-form [name="end_time"]');
     const formEl = document.getElementById('calendar-event-form');
 
     if (!allowGlobalScope && presetProjectId == null && selectableProjects.length === 1) {
@@ -551,6 +582,9 @@ Pages.calendar = {
       if (isAllDay) {
         startTimeInput.value = '00:00';
         endTimeInput.value = '23:59';
+      } else {
+        if (!startTimeInput.value) startTimeInput.value = '10:00';
+        if (!endTimeInput.value) endTimeInput.value = '11:00';
       }
     };
 
@@ -728,11 +762,15 @@ Pages.calendar = {
           </div>
           <div>
             <label>시작 시간 *</label>
-            <input type="time" name="start_time" step="600" value="${Fmt.escape(initialStart)}" required />
+            <select name="start_time" required>
+              ${this._timeOptions(initialStart)}
+            </select>
           </div>
           <div>
             <label>종료 시간 *</label>
-            <input type="time" name="end_time" step="600" value="${Fmt.escape(initialEnd)}" required />
+            <select name="end_time" required>
+              ${this._timeOptions(initialEnd)}
+            </select>
           </div>
         </div>
         ${isSchedule ? `<div class="form-group"><label><input type="checkbox" name="is_all_day" ${event.is_all_day ? 'checked' : ''} /> 종일 일정</label></div>` : ''}
@@ -752,8 +790,8 @@ Pages.calendar = {
       </form>`, null, { className: 'modal-box-xl' });
 
     const allDayToggle = document.querySelector('#calendar-event-edit-form input[name="is_all_day"]');
-    const startInput = document.querySelector('#calendar-event-edit-form input[name="start_time"]');
-    const endInput = document.querySelector('#calendar-event-edit-form input[name="end_time"]');
+    const startInput = document.querySelector('#calendar-event-edit-form [name="start_time"]');
+    const endInput = document.querySelector('#calendar-event-edit-form [name="end_time"]');
     const editFormEl = document.getElementById('calendar-event-edit-form');
     if (isSchedule) this._bindColorPalette(editFormEl, 'color');
     const syncAllDay = () => {
@@ -764,6 +802,9 @@ Pages.calendar = {
       if (checked) {
         startInput.value = '00:00';
         endInput.value = '23:59';
+      } else {
+        if (!startInput.value) startInput.value = initialStart;
+        if (!endInput.value) endInput.value = initialEnd;
       }
     };
     allDayToggle?.addEventListener('change', syncAllDay);

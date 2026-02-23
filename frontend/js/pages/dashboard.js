@@ -111,6 +111,7 @@ Pages.dashboard = {
         });
       });
 
+      this._setupStickyColumns('dash-matrix-wrap');
       if (mode === 'attendance' || mode === 'coaching') {
         this._scrollToFocusDate('dash-matrix-wrap', visibleDates);
       }
@@ -375,6 +376,58 @@ Pages.dashboard = {
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+  },
+
+  _isStickyWorking(wrap, sampleNode) {
+    if (!wrap || !sampleNode) return true;
+    const maxScroll = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+    if (maxScroll < 2) return true;
+
+    const original = wrap.scrollLeft;
+    const probe = Math.min(maxScroll, (original || 0) + 80);
+
+    wrap.scrollLeft = 0;
+    const leftAtStart = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = probe;
+    const leftAtProbe = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = original;
+
+    return Math.abs(leftAtProbe - leftAtStart) <= 1;
+  },
+
+  _setupStickyColumns(wrapId) {
+    const wrap = document.getElementById(wrapId);
+    if (!wrap) return;
+    const table = wrap.querySelector('.dash-matrix-table');
+    if (!table) return;
+
+    const stickyNodes = Array.from(table.querySelectorAll('.sticky-col-project, .sticky-col-people, .sticky-col-total'));
+    if (!stickyNodes.length) return;
+
+    if (wrap.__dashStickyFallbackHandler) {
+      wrap.removeEventListener('scroll', wrap.__dashStickyFallbackHandler);
+      delete wrap.__dashStickyFallbackHandler;
+    }
+    stickyNodes.forEach((node) => { node.style.transform = ''; });
+
+    if (this._isStickyWorking(wrap, stickyNodes[0])) return;
+
+    let rafId = 0;
+    const applyTransform = () => {
+      rafId = 0;
+      const x = wrap.scrollLeft;
+      stickyNodes.forEach((node) => {
+        node.style.transform = `translateX(${x}px)`;
+      });
+    };
+    const onScroll = () => {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(applyTransform);
+    };
+
+    wrap.__dashStickyFallbackHandler = onScroll;
+    wrap.addEventListener('scroll', onScroll, { passive: true });
+    applyTransform();
   },
 
   _scrollToFocusDate(wrapId, dates) {
