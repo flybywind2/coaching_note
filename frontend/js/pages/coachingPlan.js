@@ -271,7 +271,60 @@ Pages.coachingPlan = {
       });
     }
 
+    this._setupStickyColumns(gridEl);
     this._focusDate(gridEl, focusDate || State.get('cpFocusDate') || todayKey);
+  },
+
+  _isStickyWorking(wrap, sampleNode) {
+    if (!wrap || !sampleNode) return true;
+    const maxScroll = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+    if (maxScroll < 2) return true;
+
+    const original = wrap.scrollLeft;
+    const probe = Math.min(maxScroll, (original || 0) + 80);
+
+    wrap.scrollLeft = 0;
+    const leftAtStart = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = probe;
+    const leftAtProbe = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = original;
+
+    return Math.abs(leftAtProbe - leftAtStart) <= 1;
+  },
+
+  _setupStickyColumns(gridEl) {
+    const wrap = gridEl?.querySelector('.cp-table-wrap');
+    if (!wrap) return;
+    const table = wrap.querySelector('.coaching-plan-table');
+    if (!table) return;
+
+    const stickyNodes = Array.from(table.querySelectorAll('.cp-coach-col, .cp-kind-col'));
+    if (!stickyNodes.length) return;
+
+    if (wrap.__cpStickyFallbackHandler) {
+      wrap.removeEventListener('scroll', wrap.__cpStickyFallbackHandler);
+      delete wrap.__cpStickyFallbackHandler;
+    }
+    stickyNodes.forEach((node) => { node.style.transform = ''; });
+
+    if (this._isStickyWorking(wrap, stickyNodes[0])) return;
+
+    let rafId = 0;
+    const applyTransform = () => {
+      rafId = 0;
+      const x = wrap.scrollLeft;
+      stickyNodes.forEach((node) => {
+        node.style.transform = `translateX(${x}px)`;
+      });
+    };
+    const onScroll = () => {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(applyTransform);
+    };
+
+    wrap.__cpStickyFallbackHandler = onScroll;
+    wrap.addEventListener('scroll', onScroll, { passive: true });
+    applyTransform();
   },
 
   _focusDate(gridEl, focusDate) {
