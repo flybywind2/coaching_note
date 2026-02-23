@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from tests.conftest import auth_headers
 from app.models.project import Project
 from app.models.coaching_note import CoachingNote
+from app.models.document import ProjectDocument
 from datetime import date
 
 
@@ -104,6 +105,53 @@ def test_enhance_note_mocked(client, seed_users, project_with_notes, db):
         assert data["main_issue"] == "<p>보완된 당면 문제</p>"
         assert "보완된 다음 액션" in data["next_action"]
         assert data["model_used"] == "qwen3"
+
+
+def test_enhance_note_prompt_includes_records_and_existing_notes(client, seed_users, project_with_notes, db):
+    base_note = db.query(CoachingNote).filter(CoachingNote.project_id == project_with_notes.project_id).first()
+    old_note = CoachingNote(
+        project_id=project_with_notes.project_id,
+        author_id=seed_users["coach"].user_id,
+        coaching_date=date(2026, 1, 10),
+        current_status="<p>이전 상태</p>",
+        progress_rate=30,
+        main_issue="<p>이전 이슈</p>",
+        next_action="<p>이전 액션</p>",
+    )
+    doc = ProjectDocument(
+        project_id=project_with_notes.project_id,
+        doc_type="other_material",
+        title="외부 벤치마크 자료",
+        content="<p>경쟁사 분석 및 기술 비교 내용</p>",
+        created_by=seed_users["coach"].user_id,
+    )
+    db.add_all([old_note, doc])
+    db.commit()
+
+    with patch("app.services.ai_service.AIClient") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.model_name = "qwen3"
+        mock_instance.invoke.return_value = (
+            '{"current_status":"<p>정리됨</p>",'
+            '"main_issue":"<p>정리됨</p>",'
+            '"next_action":"<p>정리됨</p>"}'
+        )
+        MockClient.get_client.return_value = mock_instance
+
+        headers = auth_headers(client, "coach001")
+        resp = client.post(
+            f"/api/notes/{base_note.note_id}/enhance",
+            json={"instruction": "맥락 반영"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        called_prompt = str(mock_instance.invoke.call_args[0][0])
+        assert "[과제기록 참고]" in called_prompt
+        assert "외부 벤치마크 자료" in called_prompt
+        assert "경쟁사 분석 및 기술 비교 내용" in called_prompt
+        assert "[기존 코칭노트 참고]" in called_prompt
+        assert "이전 이슈" in called_prompt
 
 
 def test_dashboard_forbidden_for_participant(client, seed_users, seed_batch):

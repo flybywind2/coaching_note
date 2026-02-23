@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote
 from app.models.project import Project
+from app.models.document import ProjectDocument
 from app.models.ai_content import AIGeneratedContent
 from app.services.ai_client import AIClient
 from app.config import settings
@@ -67,6 +68,73 @@ class AIService:
             )
         return "\n---\n".join(parts)
 
+    def _strip_html(self, text: Optional[str]) -> str:
+        raw = str(text or "")
+        no_tag = re.sub(r"<[^>]+>", " ", raw)
+        return re.sub(r"\s+", " ", no_tag).strip()
+
+    def _truncate(self, text: Optional[str], limit: int) -> str:
+        plain = self._strip_html(text)
+        if len(plain) <= limit:
+            return plain
+        return plain[: max(0, limit - 1)].rstrip() + "…"
+
+    def _format_project_records(self, project_id: int, limit: int = 6) -> str:
+        docs = (
+            self.db.query(ProjectDocument)
+            .filter(ProjectDocument.project_id == project_id)
+            .order_by(ProjectDocument.updated_at.desc(), ProjectDocument.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        if not docs:
+            return "없음"
+
+        doc_type_labels = {
+            "application": "지원서",
+            "basic_consulting": "기초컨설팅 산출물",
+            "workshop_result": "공동워크샵 산출물",
+            "mid_presentation": "중간 발표 자료",
+            "final_presentation": "최종 발표 자료",
+            "other_material": "기타 자료",
+        }
+        lines = []
+        for doc in docs:
+            label = doc_type_labels.get(doc.doc_type, doc.doc_type or "기타")
+            title = self._truncate(doc.title or "-", 80) or "-"
+            content = self._truncate(doc.content or "-", 320) or "-"
+            lines.append(f"- [{label}] {title}\n  내용 요약: {content}")
+        return "\n".join(lines)
+
+    def _format_existing_notes_for_reference(
+        self,
+        project_id: int,
+        current_note_id: int,
+        limit: int = 8,
+    ) -> str:
+        notes = (
+            self.db.query(CoachingNote)
+            .filter(
+                CoachingNote.project_id == project_id,
+                CoachingNote.note_id != current_note_id,
+            )
+            .order_by(CoachingNote.coaching_date.desc(), CoachingNote.note_id.desc())
+            .limit(limit)
+            .all()
+        )
+        if not notes:
+            return "없음"
+
+        lines = []
+        for row in notes:
+            lines.append(
+                f"- [{row.coaching_date}] {row.week_number or '?'}주차 / 진행률 {row.progress_rate or 0}%\n"
+                f"  상태: {self._truncate(row.current_status or '-', 220) or '-'}\n"
+                f"  이슈: {self._truncate(row.main_issue or '-', 220) or '-'}\n"
+                f"  액션: {self._truncate(row.next_action or '-', 220) or '-'}"
+            )
+        return "\n".join(lines)
+
     def _parse_json_object(self, raw_text: str) -> Dict[str, Any]:
         text = (raw_text or "").strip()
         if not text:
@@ -123,6 +191,8 @@ class AIService:
         base_issue = main_issue if main_issue is not None else note.main_issue
         base_action = next_action if next_action is not None else note.next_action
         extra_instruction = (instruction or "").strip()
+        record_context = self._format_project_records(project.project_id)
+        existing_note_context = self._format_existing_notes_for_reference(project.project_id, note.note_id)
 
         system_prompt = (
             "당신은 기업 코칭노트 편집을 돕는 전문 코치입니다.\n"
@@ -134,6 +204,8 @@ class AIService:
         prompt = (
             f"과제명: {project.project_name}\n"
             f"코칭노트 ID: {note.note_id}\n\n"
+            f"[과제기록 참고]\n{record_context}\n\n"
+            f"[기존 코칭노트 참고]\n{existing_note_context}\n\n"
             f"[현재 상태]\n{base_current or '-'}\n\n"
             f"[당면 문제]\n{base_issue or '-'}\n\n"
             f"[다음 액션]\n{base_action or '-'}\n\n"
