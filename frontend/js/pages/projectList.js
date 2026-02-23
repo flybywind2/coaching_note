@@ -70,6 +70,7 @@ Pages.projectList = {
           ` : ''}
 
           <div class="project-type-tabs">
+            <button class="project-type-tab" data-type="all">전체</button>
             <button class="project-type-tab active" data-type="primary">정식과제</button>
             <button class="project-type-tab" data-type="associate">준참여과제</button>
           </div>
@@ -140,7 +141,9 @@ Pages.projectList = {
       };
 
       const renderMainTable = () => {
-        const typed = projects.filter((p) => normalizeType(p.project_type) === activeType);
+        const typed = activeType === 'all'
+          ? projects
+          : projects.filter((p) => normalizeType(p.project_type) === activeType);
         const rows = sortedRows(typed);
         const total = rows.length;
         const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -194,7 +197,8 @@ Pages.projectList = {
       }));
 
       el.querySelectorAll('.project-type-tab').forEach((btn) => btn.addEventListener('click', () => {
-        activeType = btn.dataset.type === 'associate' ? 'associate' : 'primary';
+        const nextType = btn.dataset.type;
+        activeType = ['all', 'primary', 'associate'].includes(nextType) ? nextType : 'primary';
         page = 1;
         renderMainTable();
       }));

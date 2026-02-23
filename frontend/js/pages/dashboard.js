@@ -38,6 +38,7 @@ Pages.dashboard = {
         selectedWeek = this._recommendedWeekValue(coachingDates, coachingStartDate, weekOptions);
         State.set('dashWeekFilter', selectedWeek);
       }
+      const selectedWeekIndex = weekOptions.findIndex((opt) => opt.value === selectedWeek);
       const visibleDates = supportsWeekView
         ? this._filterDatesByWeek(coachingDates, coachingStartDate, selectedWeek)
         : coachingDates;
@@ -69,10 +70,26 @@ Pages.dashboard = {
               ` : ''}
               ${supportsWeekView && weekOptions.length ? `
                 <div class="dash-week-group">
+                  <button
+                    type="button"
+                    id="dash-week-prev"
+                    class="btn btn-sm"
+                    title="이전 주차"
+                    aria-label="이전 주차"
+                    ${selectedWeekIndex <= 0 ? 'disabled' : ''}
+                  >◀</button>
                   <label for="dash-week-filter">주차</label>
                   <select id="dash-week-filter">
                     ${weekOptions.map((opt) => `<option value="${Fmt.escape(opt.value)}"${opt.value === selectedWeek ? ' selected' : ''}>${Fmt.escape(opt.label)}</option>`).join('')}
                   </select>
+                  <button
+                    type="button"
+                    id="dash-week-next"
+                    class="btn btn-sm"
+                    title="다음 주차"
+                    aria-label="다음 주차"
+                    ${selectedWeekIndex < 0 || selectedWeekIndex >= weekOptions.length - 1 ? 'disabled' : ''}
+                  >▶</button>
                 </div>
               ` : ''}
             </div>
@@ -88,6 +105,7 @@ Pages.dashboard = {
               coachPerformanceRows: data.coach_performance || [],
               expandedProjects,
               coachingStartDate,
+              batchId,
             })}
           </section>
         </div>
@@ -119,6 +137,16 @@ Pages.dashboard = {
       });
       document.getElementById('dash-week-filter')?.addEventListener('change', (e) => {
         State.set('dashWeekFilter', String(e.target.value || ''));
+        this.render(el, params);
+      });
+      document.getElementById('dash-week-prev')?.addEventListener('click', () => {
+        if (selectedWeekIndex <= 0) return;
+        State.set('dashWeekFilter', weekOptions[selectedWeekIndex - 1].value);
+        this.render(el, params);
+      });
+      document.getElementById('dash-week-next')?.addEventListener('click', () => {
+        if (selectedWeekIndex < 0 || selectedWeekIndex >= weekOptions.length - 1) return;
+        State.set('dashWeekFilter', weekOptions[selectedWeekIndex + 1].value);
         this.render(el, params);
       });
       el.querySelectorAll('.dash-toggle-members-btn').forEach((btn) => {
@@ -209,6 +237,7 @@ Pages.dashboard = {
     coachPerformanceRows,
     expandedProjects,
     coachingStartDate,
+    batchId,
   }) {
     if (mode === 'coach-performance') {
       if (!coachPerformanceRows.length) {
@@ -307,6 +336,7 @@ Pages.dashboard = {
                 row: attendanceMap.get(project.project_id) || { cells: [], expected_count: Number(project.expected_count || 0) },
                 members: attendanceMemberMap.get(project.project_id) || [],
                 expanded: !!expandedProjects[project.project_id],
+                projectHref: this._projectHref(project.project_id, mode, batchId),
               })).join('')}
             </tbody>
           </table>
@@ -333,7 +363,7 @@ Pages.dashboard = {
               return `
                 <tr>
                   <td class="sticky-col sticky-col-project">
-                    <a href="#/project/${project.project_id}" class="proj-link">${Fmt.escape(project.project_name)}</a>
+                    <a href="${this._projectHref(project.project_id, mode, batchId)}" class="proj-link">${Fmt.escape(project.project_name)}</a>
                   </td>
                   <td class="sticky-col sticky-col-total dash-total-cell">
                     ${totalNotes}건
@@ -354,7 +384,7 @@ Pages.dashboard = {
     `;
   },
 
-  _renderAttendanceRows({ project, dates, row, members, expanded }) {
+  _renderAttendanceRows({ project, dates, row, members, expanded, projectHref }) {
     const expectedCount = Number(row.expected_count || project.expected_count || 0);
     const cells = this._orderedCells(row.cells || [], dates, { attendance_count: 0, attendance_rate: 0 });
     const attendedDays = cells.filter((cell) => Number(cell.attendance_count || 0) > 0).length;
@@ -376,7 +406,7 @@ Pages.dashboard = {
     return `
       <tr>
         <td class="sticky-col sticky-col-project">
-          <a href="#/project/${project.project_id}" class="proj-link">${Fmt.escape(project.project_name)}</a>
+          <a href="${projectHref || `#/project/${project.project_id}`}" class="proj-link">${Fmt.escape(project.project_name)}</a>
         </td>
         <td class="sticky-col sticky-col-people dash-value-cell">
           <button type="button" class="dash-toggle-members-btn" data-project-id="${project.project_id}">
@@ -396,6 +426,13 @@ Pages.dashboard = {
       </tr>
       ${memberRows}
     `;
+  },
+
+  _projectHref(projectId, mode, batchId) {
+    if (mode === 'attendance' || mode === 'coaching') {
+      return `#/dashboard/project/${projectId}?mode=${encodeURIComponent(mode)}&batch_id=${encodeURIComponent(String(batchId || ''))}`;
+    }
+    return `#/project/${projectId}`;
   },
 
   _orderedCells(cells, dates, fallback) {
