@@ -103,7 +103,7 @@
 }
 
 .dash-matrix-wrap {
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   width: 100%;
   max-width: 100%;
@@ -171,10 +171,12 @@
 }
 
 .dash-matrix-table .sticky-col-project {
-  left: 0;
+  left: 0 !important;
   min-width: var(--project-w);
   max-width: var(--project-w);
   text-align: left;
+  z-index: 7;
+  box-shadow: 1px 0 0 rgba(190, 205, 239, 0.95);
 }
 
 .dash-matrix-table .sticky-col-metric {
@@ -199,21 +201,26 @@
   max-width: var(--total-w);
   font-weight: 700;
   color: #1d3572;
+  z-index: 5;
+  box-shadow: 1px 0 0 rgba(190, 205, 239, 0.95);
 }
 .dash-attendance-table .sticky-col-people {
-  position: sticky;
-  left: var(--project-w);
-  z-index: 3;
+  position: sticky !important;
+  left: var(--project-w) !important;
+  z-index: 6;
   min-width: var(--people-w);
   max-width: var(--people-w);
   background: rgba(247, 250, 255, 0.98);
   text-align: center;
+  box-shadow: 1px 0 0 rgba(190, 205, 239, 0.95);
 }
 .dash-attendance-table thead .sticky-col-people {
-  z-index: 4;
+  z-index: 8;
 }
 .dash-attendance-table .sticky-col-total {
-  left: calc(var(--project-w) + var(--people-w));
+  position: sticky !important;
+  left: calc(var(--project-w) + var(--people-w)) !important;
+  z-index: 5;
 }
 .dash-progress-table .sticky-col-total,
 .dash-coaching-table .sticky-col-total,

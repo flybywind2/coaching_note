@@ -87,6 +87,49 @@ Pages.about = {
         const isIntroTab = state.tab === 'intro';
         const current = isIntroTab ? state.intro : state.coach;
         const selectedBatchName = state.batches.find((b) => b.batch_id === state.selectedBatchId)?.batch_name || '';
+        const normalizeColumn = (value) => (String(value || '').toLowerCase() === 'right' ? 'right' : 'left');
+        const coachColumns = {
+          left: state.coaches.filter((coach) => normalizeColumn(coach.layout_column) === 'left'),
+          right: state.coaches.filter((coach) => normalizeColumn(coach.layout_column) === 'right'),
+        };
+        const renderCoachCard = (coach) => {
+          const hasProfile = !!coach.coach_id;
+          const canEditCoach = isAdmin || (isCoach && !!coach.user_id && Number(coach.user_id) === Number(currentUserId));
+          const hiddenBadge = isAdmin && !coach.is_visible ? '<span class="tag tag-danger">숨김</span>' : '';
+          const dragHint = isAdmin && hasProfile ? '<span class="about-drag-hint">드래그 배치</span>' : '';
+          return `
+            <article
+              class="about-coach-card${isAdmin && !coach.is_visible ? ' is-hidden' : ''}"
+              data-coach-id="${coach.coach_id || ''}"
+              draggable="${isAdmin && hasProfile ? 'true' : 'false'}"
+            >
+              <header class="about-coach-head">
+                <div>
+                  <h3>${Fmt.escape(coach.name || '-')}</h3>
+                  <div class="inline-actions">
+                    <span class="tag">${Fmt.escape(coach.coach_type || 'internal')}</span>
+                    ${hiddenBadge}
+                    ${dragHint}
+                  </div>
+                </div>
+                ${coach.photo_url ? `<img class="about-coach-photo" src="${Fmt.escape(coach.photo_url)}" alt="${Fmt.escape(coach.name || 'coach')}" />` : '<div class="about-coach-photo placeholder">사진</div>'}
+              </header>
+              <div class="about-coach-body">
+                ${renderCoachField('소속:', coach.affiliation || coach.department)}
+                ${renderCoachField('코칭 분야:', coach.specialty)}
+                ${renderCoachField('경력:', coach.career)}
+                ${!coach.affiliation && !coach.department && !coach.specialty && !coach.career ? '<p class="hint">등록된 상세 정보가 없습니다.</p>' : ''}
+              </div>
+              ${(isAdmin || canEditCoach) ? `
+                <div class="page-actions">
+                  <button class="btn btn-sm btn-secondary edit-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}">편집</button>
+                  ${isAdmin ? `<button class="btn btn-sm ${coach.is_visible ? 'btn-danger' : 'btn-secondary'} toggle-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}" data-visible="${coach.is_visible ? '1' : '0'}">${coach.is_visible ? '숨김' : '표시'}</button>` : ''}
+                  ${isAdmin && coach.coach_id && !coach.user_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
+                </div>
+              ` : ''}
+            </article>
+          `;
+        };
 
         el.innerHTML = `
           <div class="page-container about-page">
@@ -118,44 +161,22 @@ Pages.about = {
 
                 ${state.selectedBatchId ? `
                   <div class="about-coach-grid" id="about-coach-grid">
-                    ${state.coaches.length ? state.coaches.map((coach) => {
-                      const hasProfile = !!coach.coach_id;
-                      const canEditCoach = isAdmin || (isCoach && !!coach.user_id && Number(coach.user_id) === Number(currentUserId));
-                      const hiddenBadge = isAdmin && !coach.is_visible ? '<span class="tag tag-danger">숨김</span>' : '';
-                      const dragHint = isAdmin && hasProfile ? '<span class="about-drag-hint">드래그 정렬</span>' : '';
-                      return `
-                        <article
-                          class="about-coach-card${isAdmin && !coach.is_visible ? ' is-hidden' : ''}"
-                          data-coach-id="${coach.coach_id || ''}"
-                          draggable="${isAdmin && hasProfile ? 'true' : 'false'}"
-                        >
-                          <header class="about-coach-head">
-                            <div>
-                              <h3>${Fmt.escape(coach.name || '-')}</h3>
-                              <div class="inline-actions">
-                                <span class="tag">${Fmt.escape(coach.coach_type || 'internal')}</span>
-                                ${hiddenBadge}
-                                ${dragHint}
-                              </div>
-                            </div>
-                            ${coach.photo_url ? `<img class="about-coach-photo" src="${Fmt.escape(coach.photo_url)}" alt="${Fmt.escape(coach.name || 'coach')}" />` : '<div class="about-coach-photo placeholder">사진</div>'}
-                          </header>
-                          <div class="about-coach-body">
-                            ${renderCoachField('소속:', coach.affiliation || coach.department)}
-                            ${renderCoachField('코칭 분야:', coach.specialty)}
-                            ${renderCoachField('경력:', coach.career)}
-                            ${!coach.affiliation && !coach.department && !coach.specialty && !coach.career ? '<p class="hint">등록된 상세 정보가 없습니다.</p>' : ''}
-                          </div>
-                          ${(isAdmin || canEditCoach) ? `
-                            <div class="page-actions">
-                              <button class="btn btn-sm btn-secondary edit-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}">편집</button>
-                              ${isAdmin ? `<button class="btn btn-sm ${coach.is_visible ? 'btn-danger' : 'btn-secondary'} toggle-coach-btn" data-coach-id="${coach.coach_id || ''}" data-user-id="${coach.user_id || ''}" data-visible="${coach.is_visible ? '1' : '0'}">${coach.is_visible ? '숨김' : '표시'}</button>` : ''}
-                              ${isAdmin && coach.coach_id && !coach.user_id ? `<button class="btn btn-sm btn-danger delete-coach-btn" data-coach-id="${coach.coach_id}" data-coach-name="${Fmt.escape(coach.name || '')}">삭제</button>` : ''}
-                            </div>
-                          ` : ''}
-                        </article>
-                      `;
-                    }).join('') : '<p class="empty-state">선택한 차수의 코치가 없습니다.</p>'}
+                    <section class="about-coach-column" data-column="left">
+                      <header class="about-coach-column-head">
+                        <h4>좌측 영역</h4>
+                      </header>
+                      <div class="about-coach-column-list" data-column="left">
+                        ${coachColumns.left.length ? coachColumns.left.map((coach) => renderCoachCard(coach)).join('') : '<p class="empty-state compact">코치 카드를 이 영역으로 드래그하세요.</p>'}
+                      </div>
+                    </section>
+                    <section class="about-coach-column" data-column="right">
+                      <header class="about-coach-column-head">
+                        <h4>우측 영역</h4>
+                      </header>
+                      <div class="about-coach-column-list" data-column="right">
+                        ${coachColumns.right.length ? coachColumns.right.map((coach) => renderCoachCard(coach)).join('') : '<p class="empty-state compact">코치 카드를 이 영역으로 드래그하세요.</p>'}
+                      </div>
+                    </section>
                   </div>
                 ` : '<p class="empty-state">차수를 선택하세요.</p>'}
                 ${selectedBatchName ? `<p class="hint mt">현재 차수: ${Fmt.escape(selectedBatchName)}</p>` : ''}
@@ -269,55 +290,80 @@ Pages.about = {
         }));
 
         if (isAdmin) {
-          const grid = document.getElementById('about-coach-grid');
-          if (grid) {
-            let draggedCoachId = null;
-
-            const getOrderedCoachIds = () => (
-              Array.from(grid.querySelectorAll('.about-coach-card[data-coach-id]'))
+          const board = document.getElementById('about-coach-grid');
+          if (board) {
+            let draggedCard = null;
+            let isSavingLayout = false;
+            const getCoachIdsByColumn = (column) => (
+              Array.from(board.querySelectorAll(`.about-coach-column-list[data-column="${column}"] .about-coach-card[data-coach-id]`))
                 .map((row) => Number.parseInt(row.dataset.coachId, 10))
                 .filter((v) => !Number.isNaN(v))
             );
+            const getDropAfterElement = (container, y) => {
+              const cards = [...container.querySelectorAll('.about-coach-card[draggable="true"]:not(.dragging)')];
+              return cards.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                  return { offset, element: child };
+                }
+                return closest;
+              }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+            };
+            const persistLayout = async () => {
+              if (isSavingLayout) return;
+              isSavingLayout = true;
+              try {
+                await API.reorderCoachProfiles({
+                  batch_id: state.selectedBatchId,
+                  left_coach_ids: getCoachIdsByColumn('left'),
+                  right_coach_ids: getCoachIdsByColumn('right'),
+                });
+                await loadCoachProfiles();
+                draw();
+              } catch (err) {
+                alert(err.message || '코치 배치 저장 실패');
+                await loadCoachProfiles();
+                draw();
+              } finally {
+                isSavingLayout = false;
+              }
+            };
 
-            grid.querySelectorAll('.about-coach-card[draggable="true"]').forEach((card) => {
+            board.querySelectorAll('.about-coach-card[draggable="true"]').forEach((card) => {
               card.addEventListener('dragstart', (e) => {
-                draggedCoachId = Number.parseInt(card.dataset.coachId, 10);
+                draggedCard = card;
                 card.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', String(draggedCoachId || ''));
+                e.dataTransfer.setData('text/plain', card.dataset.coachId || '');
               });
               card.addEventListener('dragend', () => {
                 card.classList.remove('dragging');
+                draggedCard = null;
+                board.querySelectorAll('.about-coach-column-list').forEach((list) => list.classList.remove('drag-over'));
               });
-              card.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                card.classList.add('drag-over');
-              });
-              card.addEventListener('dragleave', () => {
-                card.classList.remove('drag-over');
-              });
-              card.addEventListener('drop', async (e) => {
-                e.preventDefault();
-                card.classList.remove('drag-over');
-                const targetCoachId = Number.parseInt(card.dataset.coachId, 10);
-                if (!draggedCoachId || !targetCoachId || draggedCoachId === targetCoachId) return;
+            });
 
-                const order = getOrderedCoachIds();
-                const from = order.indexOf(draggedCoachId);
-                const to = order.indexOf(targetCoachId);
-                if (from < 0 || to < 0) return;
-                order.splice(to, 0, order.splice(from, 1)[0]);
-
-                try {
-                  await API.reorderCoachProfiles({
-                    batch_id: state.selectedBatchId,
-                    coach_ids: order,
-                  });
-                  await loadCoachProfiles();
-                  draw();
-                } catch (err) {
-                  alert(err.message || '코치 순서 저장 실패');
+            board.querySelectorAll('.about-coach-column-list').forEach((list) => {
+              list.addEventListener('dragover', (e) => {
+                if (!draggedCard) return;
+                e.preventDefault();
+                list.classList.add('drag-over');
+                const afterElement = getDropAfterElement(list, e.clientY);
+                if (!afterElement) {
+                  list.appendChild(draggedCard);
+                } else {
+                  list.insertBefore(draggedCard, afterElement);
                 }
+              });
+              list.addEventListener('dragleave', () => {
+                list.classList.remove('drag-over');
+              });
+              list.addEventListener('drop', async (e) => {
+                if (!draggedCard) return;
+                e.preventDefault();
+                list.classList.remove('drag-over');
+                await persistLayout();
               });
             });
           }

@@ -38,7 +38,11 @@ const Auth = {
     localStorage.setItem(this._key, data.access_token);
     localStorage.setItem(this._userKey, JSON.stringify(data.user));
     if ((data.user && this._coachRoles.includes(data.user.role)) || data.user?.role === 'participant') {
-      API.autoCheckInToday().catch(() => {});
+      try {
+        await API.autoCheckInToday();
+      } catch (_) {
+        // Ignore duplicate/not-allowed cases and continue login flow.
+      }
     }
     return data.user;
   },

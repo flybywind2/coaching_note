@@ -50,6 +50,7 @@ class Coach(Base):
     career = Column(Text)
     is_visible = Column(Boolean, default=True)
     display_order = Column(Integer, default=0)
+    layout_column = Column(String(10), default="left")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
 

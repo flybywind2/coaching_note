@@ -71,3 +71,13 @@ class ProjectMemberOut(ProjectMemberBase):
     model_config = {"from_attributes": True}
 
 
+class ProjectMemberCandidateOut(BaseModel):
+    user_id: int
+    emp_id: str
+    name: str
+    department: Optional[str] = None
+    role: str
+
+    model_config = {"from_attributes": True}
+
+

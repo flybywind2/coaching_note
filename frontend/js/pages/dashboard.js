@@ -31,17 +31,7 @@ Pages.dashboard = {
       const coachingDates = this._getCoachingDates(data);
       const coachingStartDate = data?.batch?.coaching_start_date || data?.batch?.start_date || null;
       const projects = this._getFilteredProjects(data, projectType);
-      const weekOptions = this._buildWeekOptions(coachingDates, coachingStartDate);
-      const supportsWeekView = mode === 'attendance' || mode === 'coaching';
-      let selectedWeek = String(State.get('dashWeekFilter') || '');
-      if (supportsWeekView && weekOptions.length && !weekOptions.some((opt) => opt.value === selectedWeek)) {
-        selectedWeek = this._recommendedWeekValue(coachingDates, coachingStartDate, weekOptions);
-        State.set('dashWeekFilter', selectedWeek);
-      }
-      const selectedWeekIndex = weekOptions.findIndex((opt) => opt.value === selectedWeek);
-      const visibleDates = supportsWeekView
-        ? this._filterDatesByWeek(coachingDates, coachingStartDate, selectedWeek)
-        : coachingDates;
+      const visibleDates = coachingDates;
 
       el.innerHTML = `
         <div class="page-container dashboard-page">
@@ -68,30 +58,6 @@ Pages.dashboard = {
                   <button type="button" class="btn btn-sm dash-type-btn${projectType === 'associate' ? ' btn-primary' : ' btn-secondary'}" data-type="associate">준참여과제</button>
                 </div>
               ` : ''}
-              ${supportsWeekView && weekOptions.length ? `
-                <div class="dash-week-group">
-                  <button
-                    type="button"
-                    id="dash-week-prev"
-                    class="btn btn-sm"
-                    title="이전 주차"
-                    aria-label="이전 주차"
-                    ${selectedWeekIndex <= 0 ? 'disabled' : ''}
-                  >◀</button>
-                  <label for="dash-week-filter">주차</label>
-                  <select id="dash-week-filter">
-                    ${weekOptions.map((opt) => `<option value="${Fmt.escape(opt.value)}"${opt.value === selectedWeek ? ' selected' : ''}>${Fmt.escape(opt.label)}</option>`).join('')}
-                  </select>
-                  <button
-                    type="button"
-                    id="dash-week-next"
-                    class="btn btn-sm"
-                    title="다음 주차"
-                    aria-label="다음 주차"
-                    ${selectedWeekIndex < 0 || selectedWeekIndex >= weekOptions.length - 1 ? 'disabled' : ''}
-                  >▶</button>
-                </div>
-              ` : ''}
             </div>
           </div>
           <section class="dash-panel">
@@ -114,7 +80,6 @@ Pages.dashboard = {
       document.getElementById('dash-batch')?.addEventListener('change', (e) => {
         State.set('currentBatchId', Number.parseInt(e.target.value, 10));
         State.set('dashExpandedProjects', {});
-        State.set('dashWeekFilter', '');
         this.render(el, params);
       });
       el.querySelectorAll('.dash-mode-btn').forEach((btn) => {
@@ -135,20 +100,6 @@ Pages.dashboard = {
           this.render(el, params);
         });
       });
-      document.getElementById('dash-week-filter')?.addEventListener('change', (e) => {
-        State.set('dashWeekFilter', String(e.target.value || ''));
-        this.render(el, params);
-      });
-      document.getElementById('dash-week-prev')?.addEventListener('click', () => {
-        if (selectedWeekIndex <= 0) return;
-        State.set('dashWeekFilter', weekOptions[selectedWeekIndex - 1].value);
-        this.render(el, params);
-      });
-      document.getElementById('dash-week-next')?.addEventListener('click', () => {
-        if (selectedWeekIndex < 0 || selectedWeekIndex >= weekOptions.length - 1) return;
-        State.set('dashWeekFilter', weekOptions[selectedWeekIndex + 1].value);
-        this.render(el, params);
-      });
       el.querySelectorAll('.dash-toggle-members-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           const projectId = Number.parseInt(btn.dataset.projectId, 10);
@@ -160,6 +111,7 @@ Pages.dashboard = {
         });
       });
 
+      this._setupStickyColumns('dash-matrix-wrap');
       if (mode === 'attendance' || mode === 'coaching') {
         this._scrollToFocusDate('dash-matrix-wrap', visibleDates);
       }
@@ -179,52 +131,6 @@ Pages.dashboard = {
     return list
       .filter((row) => (row.project_type || 'primary') === projectType)
       .sort((a, b) => String(a.project_name || '').localeCompare(String(b.project_name || '')));
-  },
-
-  _buildWeekOptions(dates, baselineIsoDate) {
-    const buckets = new Map();
-    (dates || []).forEach((isoDate) => {
-      const weekNo = this._weekNumberFromBaseline(isoDate, baselineIsoDate);
-      const key = String(weekNo);
-      if (!buckets.has(key)) {
-        buckets.set(key, { weekNo, start: isoDate, end: isoDate });
-        return;
-      }
-      const current = buckets.get(key);
-      if (isoDate < current.start) current.start = isoDate;
-      if (isoDate > current.end) current.end = isoDate;
-    });
-    return Array.from(buckets.entries())
-      .map(([value, meta]) => ({
-        value,
-        weekNo: meta.weekNo,
-        start: meta.start,
-        end: meta.end,
-      }))
-      .sort((a, b) => a.weekNo - b.weekNo)
-      .map((item) => ({
-        value: item.value,
-        label: `${item.weekNo}주차 (${this._dateLabel(item.start)}${item.start === item.end ? '' : ` ~ ${this._dateLabel(item.end)}`})`,
-      }));
-  },
-
-  _recommendedWeekValue(dates, baselineIsoDate, weekOptions) {
-    if (!Array.isArray(weekOptions) || !weekOptions.length) return '';
-    const orderedDates = [...(dates || [])].sort();
-    if (!orderedDates.length) return weekOptions[0].value;
-    const todayIso = this._todayIso();
-    const pivotDate = orderedDates.includes(todayIso)
-      ? todayIso
-      : (orderedDates.find((dateIso) => dateIso > todayIso) || orderedDates[orderedDates.length - 1]);
-    const targetWeek = String(this._weekNumberFromBaseline(pivotDate, baselineIsoDate));
-    return weekOptions.some((opt) => opt.value === targetWeek) ? targetWeek : weekOptions[0].value;
-  },
-
-  _filterDatesByWeek(dates, baselineIsoDate, weekValue) {
-    if (!Array.isArray(dates) || !dates.length) return [];
-    const targetWeek = Number.parseInt(String(weekValue || ''), 10);
-    if (Number.isNaN(targetWeek)) return dates;
-    return dates.filter((isoDate) => this._weekNumberFromBaseline(isoDate, baselineIsoDate) === targetWeek);
   },
 
   _renderMatrix({
@@ -470,6 +376,58 @@ Pages.dashboard = {
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
+  },
+
+  _isStickyWorking(wrap, sampleNode) {
+    if (!wrap || !sampleNode) return true;
+    const maxScroll = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+    if (maxScroll < 2) return true;
+
+    const original = wrap.scrollLeft;
+    const probe = Math.min(maxScroll, (original || 0) + 80);
+
+    wrap.scrollLeft = 0;
+    const leftAtStart = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = probe;
+    const leftAtProbe = sampleNode.getBoundingClientRect().left;
+    wrap.scrollLeft = original;
+
+    return Math.abs(leftAtProbe - leftAtStart) <= 1;
+  },
+
+  _setupStickyColumns(wrapId) {
+    const wrap = document.getElementById(wrapId);
+    if (!wrap) return;
+    const table = wrap.querySelector('.dash-matrix-table');
+    if (!table) return;
+
+    const stickyNodes = Array.from(table.querySelectorAll('.sticky-col-project, .sticky-col-people, .sticky-col-total'));
+    if (!stickyNodes.length) return;
+
+    if (wrap.__dashStickyFallbackHandler) {
+      wrap.removeEventListener('scroll', wrap.__dashStickyFallbackHandler);
+      delete wrap.__dashStickyFallbackHandler;
+    }
+    stickyNodes.forEach((node) => { node.style.transform = ''; });
+
+    if (this._isStickyWorking(wrap, stickyNodes[0])) return;
+
+    let rafId = 0;
+    const applyTransform = () => {
+      rafId = 0;
+      const x = wrap.scrollLeft;
+      stickyNodes.forEach((node) => {
+        node.style.transform = `translateX(${x}px)`;
+      });
+    };
+    const onScroll = () => {
+      if (rafId) return;
+      rafId = window.requestAnimationFrame(applyTransform);
+    };
+
+    wrap.__dashStickyFallbackHandler = onScroll;
+    wrap.addEventListener('scroll', onScroll, { passive: true });
+    applyTransform();
   },
 
   _scrollToFocusDate(wrapId, dates) {

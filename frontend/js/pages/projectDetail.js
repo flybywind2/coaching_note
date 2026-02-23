@@ -392,7 +392,7 @@ Pages.projectDetail = {
   async _openAddMemberModal({ projectId, currentMembers, onSaved }) {
     let users = [];
     try {
-      users = await API.getUsers();
+      users = await API.getProjectMemberCandidates(projectId);
     } catch (err) {
       alert(err.message || '사용자 목록을 불러오지 못했습니다.');
       return;
@@ -437,8 +437,8 @@ Pages.projectDetail = {
             <option value="member" selected>member</option>
             <option value="leader">leader</option>
           </select>
+          <p class="hint">leader는 과제 대표자로 자동 연동됩니다.</p>
         </div>
-        <div class="form-group"><label><input type="checkbox" name="is_representative" /> 대표자 지정 (여러 명 선택 시 첫 번째 사용자만 적용)</label></div>
         <button type="submit" class="btn btn-primary">추가</button>
         <p class="form-error" id="add-member-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
@@ -473,12 +473,12 @@ Pages.projectDetail = {
       }
       try {
         const role = (fd.get('role') || 'member').toString();
-        const representative = fd.has('is_representative');
         for (let i = 0; i < userIds.length; i += 1) {
+          const isLeaderSlot = role === 'leader' && i === 0;
           await API.addMember(projectId, {
             user_id: userIds[i],
-            role,
-            is_representative: representative && i === 0,
+            role: isLeaderSlot ? 'leader' : 'member',
+            is_representative: isLeaderSlot,
           });
         }
         Modal.close();

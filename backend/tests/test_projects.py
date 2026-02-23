@@ -236,6 +236,54 @@ def test_project_member_manage_allowed_for_participant_on_own_project(client, se
     assert remove_resp.status_code == 200
 
 
+def test_project_member_candidates_allowed_for_project_member(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member Candidates", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    join_resp = client.post(
+        f"/api/projects/{project_id}/members",
+        json={"user_id": seed_users["participant"].user_id, "role": "member", "is_representative": False},
+        headers=admin_headers,
+    )
+    assert join_resp.status_code == 200
+
+    candidates_resp = client.get(
+        f"/api/projects/{project_id}/member-candidates",
+        headers=participant_headers,
+    )
+    assert candidates_resp.status_code == 200, candidates_resp.text
+    rows = candidates_resp.json()
+    assert all(row["user_id"] != seed_users["participant"].user_id for row in rows)
+    assert any(row["user_id"] == seed_users["observer"].user_id for row in rows)
+
+
+def test_project_member_candidates_forbidden_for_non_member(client, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+    participant_headers = auth_headers(client, "user001")
+
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Member Candidates Forbidden", "organization": "Org"},
+        headers=admin_headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    candidates_resp = client.get(
+        f"/api/projects/{project_id}/member-candidates",
+        headers=participant_headers,
+    )
+    assert candidates_resp.status_code == 403
+
+
 def test_project_member_can_update_project_basic_info(client, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     participant_headers = auth_headers(client, "user001")
@@ -304,6 +352,11 @@ def test_project_member_can_set_representative(client, seed_users, seed_batch):
     rep_rows = [row for row in rows if row["is_representative"]]
     assert len(rep_rows) == 1
     assert rep_rows[0]["user_id"] == seed_users["observer"].user_id
+    assert rep_rows[0]["role"] == "leader"
+    previous_member = next((row for row in rows if row["user_id"] == seed_users["participant"].user_id), None)
+    assert previous_member is not None
+    assert previous_member["role"] == "member"
+    assert previous_member["is_representative"] is False
 
     project_resp = client.get(f"/api/projects/{project_id}", headers=admin_headers)
     assert project_resp.status_code == 200

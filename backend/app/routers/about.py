@@ -24,6 +24,7 @@ from app.schemas.about import (
 
 router = APIRouter(prefix="/api/about", tags=["about"])
 COACH_USER_ROLES = [LEGACY_COACH, INTERNAL_COACH, EXTERNAL_COACH]
+COACH_LAYOUT_COLUMNS = {"left", "right"}
 
 ALLOWED_CONTENT_KEYS = {
     "ssp_intro": "SSP+ 소개",
@@ -71,7 +72,19 @@ def _coach_to_out(coach: Coach) -> CoachProfileOut:
         photo_url=coach.photo_url,
         is_visible=bool(coach.is_visible),
         display_order=int(coach.display_order or 0),
+        layout_column=_normalize_layout_column(getattr(coach, "layout_column", None)),
     )
+
+
+def _normalize_layout_column(value: str | None) -> str:
+    text = (value or "left").strip().lower()
+    if text not in COACH_LAYOUT_COLUMNS:
+        return "left"
+    return text
+
+
+def _layout_sort_key(value: str | None) -> int:
+    return 0 if _normalize_layout_column(value) == "left" else 1
 
 
 def _validate_coach_user(db: Session, user_id: int) -> User:
@@ -271,7 +284,7 @@ def list_coaches(
             )
         )
 
-    merged.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
+    merged.sort(key=lambda row: (_layout_sort_key(row.layout_column), int(row.display_order or 9999), (row.name or "").lower()))
     return merged
 
 
@@ -332,6 +345,7 @@ def create_coach(
             if is_admin and data.display_order is not None
             else _next_display_order(db, data.batch_id)
         ),
+        layout_column=_normalize_layout_column(data.layout_column),
         is_active=True,
     )
     db.add(row)
@@ -385,6 +399,8 @@ def update_coach(
         for field in ("batch_id", "coach_type", "is_visible", "display_order"):
             payload.pop(field, None)
     for key, value in payload.items():
+        if key == "layout_column":
+            value = _normalize_layout_column(value)
         setattr(row, key, value)
 
     if row.display_order is None:
@@ -412,21 +428,65 @@ def reorder_coaches(
     )
     id_map = {row.coach_id: row for row in rows}
 
-    ordered_ids: list[int] = []
-    for coach_id in data.coach_ids:
-        if coach_id in id_map and coach_id not in ordered_ids:
-            ordered_ids.append(coach_id)
+    has_column_payload = bool(data.left_coach_ids or data.right_coach_ids)
+    if has_column_payload:
+        ordered_left: list[int] = []
+        for coach_id in data.left_coach_ids:
+            if coach_id in id_map and coach_id not in ordered_left:
+                ordered_left.append(coach_id)
+        ordered_right: list[int] = []
+        for coach_id in data.right_coach_ids:
+            if coach_id in id_map and coach_id not in ordered_left and coach_id not in ordered_right:
+                ordered_right.append(coach_id)
 
-    next_order = 1
-    for coach_id in ordered_ids:
-        id_map[coach_id].display_order = next_order
-        next_order += 1
+        next_left_order = 1
+        for coach_id in ordered_left:
+            row = id_map[coach_id]
+            row.layout_column = "left"
+            row.display_order = next_left_order
+            next_left_order += 1
 
-    remaining = [row for row in rows if row.coach_id not in ordered_ids]
-    remaining.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
-    for row in remaining:
-        row.display_order = next_order
-        next_order += 1
+        next_right_order = 1
+        for coach_id in ordered_right:
+            row = id_map[coach_id]
+            row.layout_column = "right"
+            row.display_order = next_right_order
+            next_right_order += 1
+
+        consumed_ids = set(ordered_left + ordered_right)
+        remaining = [row for row in rows if row.coach_id not in consumed_ids]
+        remaining.sort(
+            key=lambda row: (
+                _layout_sort_key(getattr(row, "layout_column", None)),
+                int(row.display_order or 9999),
+                (row.name or "").lower(),
+            )
+        )
+        for row in remaining:
+            current_column = _normalize_layout_column(getattr(row, "layout_column", None))
+            row.layout_column = current_column
+            if current_column == "left":
+                row.display_order = next_left_order
+                next_left_order += 1
+            else:
+                row.display_order = next_right_order
+                next_right_order += 1
+    else:
+        ordered_ids: list[int] = []
+        for coach_id in data.coach_ids:
+            if coach_id in id_map and coach_id not in ordered_ids:
+                ordered_ids.append(coach_id)
+
+        next_order = 1
+        for coach_id in ordered_ids:
+            id_map[coach_id].display_order = next_order
+            next_order += 1
+
+        remaining = [row for row in rows if row.coach_id not in ordered_ids]
+        remaining.sort(key=lambda row: (int(row.display_order or 9999), (row.name or "").lower()))
+        for row in remaining:
+            row.display_order = next_order
+            next_order += 1
 
     db.commit()
     return list_coaches(

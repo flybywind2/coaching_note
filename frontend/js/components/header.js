@@ -72,12 +72,8 @@ const Header = {
       const status = await API.getMyDailyAttendanceStatus();
       const log = status.attendance_log;
       const canCancelCheckout = !!(status.ip_allowed && log && log.check_out_time);
-      if (!status.ip_allowed && !log) {
-        box.innerHTML = '<span class="attendance-hint">허용 IP에서 로그인 시 자동 입실됩니다.</span>';
-        return;
-      }
       if (!log) {
-        box.innerHTML = '<span class="attendance-hint">로그인 시 자동 입실 기록됩니다.</span>';
+        box.innerHTML = '';
         return;
       }
       if (!log.check_out_time) {

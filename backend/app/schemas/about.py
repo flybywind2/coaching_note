@@ -31,6 +31,7 @@ class CoachProfileOut(BaseModel):
     photo_url: Optional[str] = None
     is_visible: bool = True
     display_order: int = 0
+    layout_column: str = "left"
 
 
 class CoachProfileCreate(BaseModel):
@@ -45,6 +46,7 @@ class CoachProfileCreate(BaseModel):
     photo_url: Optional[str] = None
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
+    layout_column: Optional[str] = None
 
 
 class CoachProfileUpdate(BaseModel):
@@ -59,8 +61,11 @@ class CoachProfileUpdate(BaseModel):
     photo_url: Optional[str] = None
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
+    layout_column: Optional[str] = None
 
 
 class CoachReorderRequest(BaseModel):
     batch_id: int
-    coach_ids: list[int]
+    coach_ids: list[int] = []
+    left_coach_ids: list[int] = []
+    right_coach_ids: list[int] = []
