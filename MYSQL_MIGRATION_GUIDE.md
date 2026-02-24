@@ -29,14 +29,14 @@ FLUSH PRIVILEGES;
 
 ## 3. MySQL 드라이버 설치
 
-현재 `requirements.txt`에는 MySQL 드라이버가 없으므로 설치가 필요합니다.
+현재 코드베이스의 `backend/requirements.txt`에는 MySQL 드라이버가 기본 포함되어 있지 않으므로, MySQL 사용 시 `pymysql` 설치가 필수입니다.
 
 ```bash
 cd backend
 pip install pymysql
 ```
 
-필요 시 `requirements.txt`에도 반영:
+팀 공통 환경 재현을 위해 `requirements.txt`에도 반영:
 
 ```txt
 pymysql==1.1.1
@@ -64,6 +64,11 @@ python scripts/init_db.py
 ```
 
 또는 앱 구동 시 `app.main`의 startup에서 `create_all()`이 실행되어 누락 테이블이 자동 생성됩니다.
+
+중요:
+- MySQL에서는 startup의 SQLite 전용 `ALTER TABLE` 보정 로직이 실행되지 않습니다.
+- 즉 MySQL에서는 `create_all()`로 **없는 테이블만 생성**되며, 기존 테이블의 컬럼 추가/변경은 자동 반영되지 않습니다.
+- 운영 반영 전 스키마 diff를 점검하거나, 장기적으로 Alembic 마이그레이션 리비전 관리로 전환하는 것을 권장합니다.
 
 ## 6. 데이터 이전 (SQLite -> MySQL)
 
@@ -159,4 +164,4 @@ copy /Y ssp_coaching_backup.db ssp_coaching.db
 
 - 운영 환경은 `--reload` 없이 실행
 - MySQL 연결 풀/timeout 설정 점검
-- 장기적으로는 Alembic 리비전 초기본 생성 후 스키마 변경 이력을 Alembic으로 관리 권장
+- 현재 `backend/alembic`에는 `versions/` 리비전 파일이 없으므로, 장기적으로는 Alembic 초기 리비전 생성 후 스키마 변경 이력을 Alembic으로 관리 권장
