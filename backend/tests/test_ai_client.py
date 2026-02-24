@@ -24,7 +24,7 @@ class _FakeResponse:
 
 def test_ai_client_resolves_base_url_with_model_hint():
     client = AIClient(model_name="openai/gpt-oss-120b", user_id="1")
-    assert client._resolved_base_url == settings.AI_MODEL_GPT_OSS_URL
+    assert client._resolve_base_url("openai/gpt-oss-120b") == settings.AI_MODEL_GPT_OSS_URL
 
 
 def test_ai_client_fallbacks_when_model_not_found():
