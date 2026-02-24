@@ -22,8 +22,8 @@ CREATE DATABASE coaching_note
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
-CREATE USER 'coaching_user'@'%' IDENTIFIED BY 'change_me_password';
-GRANT ALL PRIVILEGES ON coaching_note.* TO 'coaching_user'@'%';
+CREATE USER 'ssp'@'%' IDENTIFIED BY 'change_me_password';
+GRANT ALL PRIVILEGES ON coaching_note.* TO 'ssp'@'%';
 FLUSH PRIVILEGES;
 ```
 
@@ -47,7 +47,7 @@ pymysql==1.1.1
 `backend/.env`의 `DATABASE_URL`을 MySQL로 변경:
 
 ```env
-DATABASE_URL=mysql+pymysql://coaching_user:change_me_password@127.0.0.1:3306/coaching_note?charset=utf8mb4
+DATABASE_URL=mysql+pymysql://ssp:change_me_password@127.0.0.1:3306/coaching_note?charset=utf8mb4
 ```
 
 주의:
@@ -79,7 +79,7 @@ import sqlite3
 from sqlalchemy import create_engine, MetaData, Table, text
 
 SQLITE_PATH = "ssp_coaching.db"
-MYSQL_URL = "mysql+pymysql://coaching_user:change_me_password@127.0.0.1:3306/coaching_note?charset=utf8mb4"
+MYSQL_URL = "mysql+pymysql://ssp:change_me_password@127.0.0.1:3306/coaching_note?charset=utf8mb4"
 
 sqlite_conn = sqlite3.connect(SQLITE_PATH)
 sqlite_conn.row_factory = sqlite3.Row
