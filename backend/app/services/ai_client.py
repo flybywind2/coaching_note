@@ -19,6 +19,21 @@ class AIClient:
         self.model_name = model_name or settings.AI_DEFAULT_MODEL
         self.user_id = user_id or "system"
         self._client = None
+        self._resolved_base_url = self._resolve_base_url(self.model_name)
+
+    def _resolve_base_url(self, model_name: str) -> str:
+        key = (model_name or "").strip().lower()
+        if key in self.MODEL_URLS:
+            return self.MODEL_URLS[key]
+        if "qwen" in key:
+            return self.MODEL_URLS["qwen3"]
+        if "gemma" in key:
+            return self.MODEL_URLS["gemma3"]
+        if "deepseek" in key:
+            return self.MODEL_URLS["deepseek-r1"]
+        if "gpt-oss" in key or "gpt_oss" in key:
+            return self.MODEL_URLS["gpt-oss"]
+        return self.MODEL_URLS["qwen3"]
 
     def _build_headers(self) -> Dict[str, str]:
         return {
@@ -37,10 +52,9 @@ class AIClient:
             except ImportError:
                 raise RuntimeError("openai is not installed.")
 
-            base_url = self.MODEL_URLS.get(self.model_name, self.MODEL_URLS["qwen3"])
             self._client = OpenAI(
                 api_key=settings.OPENAI_API_KEY,
-                base_url=base_url,
+                base_url=self._resolved_base_url,
                 default_headers=self._build_headers(),
             )
         return self._client
@@ -62,18 +76,41 @@ class AIClient:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+        fallback_models = [
+            settings.AI_DEFAULT_MODEL,
+            settings.AI_QA_MODEL,
+            "qwen3",
+        ]
+        tried = []
+        candidates = [self.model_name] + [m for m in fallback_models if m and m != self.model_name]
 
-        response = client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2048,
-            extra_headers=self._build_headers(),
-        )
-        if not response.choices:
-            return ""
-        message = response.choices[0].message
-        return self._normalize_content(message.content if message else "")
+        for candidate in candidates:
+            tried.append(candidate)
+            try:
+                response = client.chat.completions.create(
+                    model=candidate,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=2048,
+                    extra_headers=self._build_headers(),
+                )
+                if not response.choices:
+                    return ""
+                message = response.choices[0].message
+                return self._normalize_content(message.content if message else "")
+            except Exception as exc:
+                text = str(exc)
+                invalid_model_error = (
+                    "does not exist" in text
+                    or '"code":404' in text
+                    or "NotFoundError" in text
+                )
+                if invalid_model_error and candidate != candidates[-1]:
+                    continue
+                raise RuntimeError(
+                    f"AI 모델 호출 실패(시도 모델: {', '.join(tried)}): {text}"
+                ) from exc
+        return ""
 
     @classmethod
     def get_client(cls, purpose: str, user_id: Optional[str] = None) -> "AIClient":

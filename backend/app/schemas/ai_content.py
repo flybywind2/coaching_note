@@ -18,7 +18,7 @@ class AIContentOut(BaseModel):
     updated_at: Optional[datetime]
     is_active: bool
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class AIGenerateRequest(BaseModel):
@@ -37,5 +37,7 @@ class AINoteEnhanceResponse(BaseModel):
     main_issue: Optional[str] = None
     next_action: Optional[str] = None
     model_used: Optional[str] = None
+
+    model_config = {"protected_namespaces": ()}
 
 
