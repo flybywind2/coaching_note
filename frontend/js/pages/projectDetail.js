@@ -718,6 +718,46 @@ Pages.projectDetail = {
       if (!hasText(value)) return '';
       return `<div class="note-field"><label>${label}</label><div class="field-val rich-content">${Fmt.rich(value)}</div></div>`;
     };
+    const runAIGeneration = async ({ type, force = false }) => {
+      const isSummary = type === 'summary';
+      const label = isSummary ? 'AI 요약' : 'AI Q&A';
+      Modal.open(
+        `<h2>${label}</h2><div class="loading">${label} ${force ? '재생성' : '생성'} 중입니다. 잠시만 기다려주세요...</div>`
+      );
+      try {
+        const data = isSummary
+          ? await API.generateSummary(projectId, force)
+          : await API.generateQASet(projectId, force);
+        Modal.open(`
+          <h2>${label}</h2>
+          <div class="ai-content">
+            <h4>${Fmt.escape(data.title || (isSummary ? '요약' : 'Q&A'))}</h4>
+            <pre>${Fmt.escape(data.content || '')}</pre>
+          </div>
+          <div class="page-actions" style="margin-top:12px;">
+            <button id="ai-regenerate-btn" class="btn btn-secondary">재생성</button>
+            <button id="ai-close-btn" class="btn btn-primary">닫기</button>
+          </div>
+        `, null, { className: 'modal-box-xxl' });
+        document.getElementById('ai-regenerate-btn')?.addEventListener('click', () => {
+          runAIGeneration({ type, force: true });
+        });
+        document.getElementById('ai-close-btn')?.addEventListener('click', () => Modal.close());
+      } catch (err) {
+        Modal.open(`
+          <h2>${label}</h2>
+          <p class="form-error" style="display:block;">${Fmt.escape(err.message || `${label} 생성 실패`)}</p>
+          <div class="page-actions" style="margin-top:12px;">
+            <button id="ai-retry-btn" class="btn btn-secondary">재시도</button>
+            <button id="ai-error-close-btn" class="btn btn-primary">닫기</button>
+          </div>
+        `, null, { className: 'modal-box-xxl' });
+        document.getElementById('ai-retry-btn')?.addEventListener('click', () => {
+          runAIGeneration({ type, force });
+        });
+        document.getElementById('ai-error-close-btn')?.addEventListener('click', () => Modal.close());
+      }
+    };
 
     const draw = async () => {
       const shown = notes.slice(0, state.visible);
@@ -732,7 +772,9 @@ Pages.projectDetail = {
         <div class="page-actions">
           ${canWrite ? `<button id="add-note-btn" class="btn btn-primary">+ 코칭노트 작성</button>` : ''}
           ${canWrite ? `<button id="note-ai-summary-btn" class="btn btn-secondary">AI 요약</button>` : ''}
+          ${canWrite ? `<button id="note-ai-summary-regen-btn" class="btn btn-secondary">AI 요약 재생성</button>` : ''}
           ${canWrite ? `<button id="note-ai-qa-btn" class="btn btn-secondary">AI Q&A</button>` : ''}
+          ${canWrite ? `<button id="note-ai-qa-regen-btn" class="btn btn-secondary">AI Q&A 재생성</button>` : ''}
           ${shown.length > 1 ? `<button id="toggle-all-notes-btn" class="btn btn-secondary">${state.expandAll ? '모두 접기' : '모두 펼치기'}</button>` : ''}
         </div>
         ${shown.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : shown.map((n, i) => {
@@ -842,21 +884,19 @@ Pages.projectDetail = {
       });
 
       document.getElementById('note-ai-summary-btn')?.addEventListener('click', async () => {
-        const data = await API.generateSummary(projectId).catch((err) => ({ error: err.message }));
-        if (data?.error) {
-          alert(data.error);
-          return;
-        }
-        Modal.open(`<h2>AI 요약</h2><div class="ai-content"><h4>${Fmt.escape(data.title || '요약')}</h4><pre>${Fmt.escape(data.content || '')}</pre></div>`);
+        await runAIGeneration({ type: 'summary', force: false });
+      });
+
+      document.getElementById('note-ai-summary-regen-btn')?.addEventListener('click', async () => {
+        await runAIGeneration({ type: 'summary', force: true });
       });
 
       document.getElementById('note-ai-qa-btn')?.addEventListener('click', async () => {
-        const data = await API.generateQASet(projectId).catch((err) => ({ error: err.message }));
-        if (data?.error) {
-          alert(data.error);
-          return;
-        }
-        Modal.open(`<h2>AI Q&A</h2><div class="ai-content"><h4>${Fmt.escape(data.title || 'Q&A')}</h4><pre>${Fmt.escape(data.content || '')}</pre></div>`);
+        await runAIGeneration({ type: 'qa', force: false });
+      });
+
+      document.getElementById('note-ai-qa-regen-btn')?.addEventListener('click', async () => {
+        await runAIGeneration({ type: 'qa', force: true });
       });
 
       document.getElementById('load-more-notes-btn')?.addEventListener('click', () => {

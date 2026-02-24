@@ -2531,6 +2531,7 @@ body.rte-resizing-row * { cursor: row-resize !important; }
 }
 .modal-box h2 { margin-bottom: 16px; color: #142754; }
 .modal-box-xl { max-width: 980px; }
+.modal-box-xxl { max-width: 1200px; }
 
 /* Pagination */
 .pagination { display: flex; gap: 6px; justify-content: center; margin-top: 20px; }
@@ -2589,6 +2590,7 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   .data-table { display: block; overflow-x: auto; white-space: nowrap; }
   .modal-box { padding: 22px 16px; }
   .modal-box-xl { max-width: 100%; }
+  .modal-box-xxl { max-width: 100%; }
   .notif-panel { width: min(92vw, 330px); right: 8px; }
 }
 
