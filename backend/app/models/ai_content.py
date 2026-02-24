@@ -12,6 +12,7 @@ class AIGeneratedContent(Base):
     content_id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("projects.project_id"), nullable=False)
     content_type = Column(String(30), nullable=False)  # summary/qa_set/insight
+    week_number = Column(Integer, nullable=True)
     title = Column(String(200))
     content = Column(Text, nullable=False)             # JSON or text
     model_used = Column(String(50))
@@ -26,6 +27,7 @@ class AIGeneratedContent(Base):
 
     __table_args__ = (
         Index("idx_ai_content_project", "project_id", "content_type"),
+        Index("idx_ai_content_project_week", "project_id", "content_type", "week_number", "is_active"),
     )
 
 

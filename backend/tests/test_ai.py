@@ -6,6 +6,7 @@ from tests.conftest import auth_headers
 from app.models.project import Project
 from app.models.coaching_note import CoachingNote
 from app.models.document import ProjectDocument
+from app.models.ai_content import AIGeneratedContent
 from datetime import date
 
 
@@ -152,6 +153,73 @@ def test_enhance_note_prompt_includes_records_and_existing_notes(client, seed_us
         assert "경쟁사 분석 및 기술 비교 내용" in called_prompt
         assert "[기존 코칭노트 참고]" in called_prompt
         assert "이전 이슈" in called_prompt
+
+
+def test_generate_summary_managed_separately_by_week(client, seed_users, project_with_notes, db):
+    note = db.query(CoachingNote).filter(CoachingNote.project_id == project_with_notes.project_id).first()
+    note.week_number = 1
+    week2_note = CoachingNote(
+        project_id=project_with_notes.project_id,
+        author_id=seed_users["coach"].user_id,
+        coaching_date=date(2026, 1, 15),
+        week_number=2,
+        current_status="2주차 상태",
+        progress_rate=70,
+        main_issue="2주차 이슈",
+        next_action="2주차 액션",
+    )
+    db.add(week2_note)
+    db.commit()
+
+    with patch("app.services.ai_service.AIClient") as MockClient:
+        mock_instance = MagicMock()
+        mock_instance.model_name = "qwen3"
+        mock_instance.invoke.side_effect = [
+            "week1 summary",
+            "week2 summary",
+        ]
+        MockClient.get_client.return_value = mock_instance
+
+        headers = auth_headers(client, "admin001")
+        week1_resp = client.post(
+            f"/api/projects/{project_with_notes.project_id}/summary",
+            json={"force_regenerate": False, "week_number": 1},
+            headers=headers,
+        )
+        assert week1_resp.status_code == 200, week1_resp.text
+        assert week1_resp.json()["week_number"] == 1
+        assert week1_resp.json()["content"] == "week1 summary"
+
+        week1_cached = client.post(
+            f"/api/projects/{project_with_notes.project_id}/summary",
+            json={"force_regenerate": False, "week_number": 1},
+            headers=headers,
+        )
+        assert week1_cached.status_code == 200, week1_cached.text
+        assert week1_cached.json()["content"] == "week1 summary"
+
+        week2_resp = client.post(
+            f"/api/projects/{project_with_notes.project_id}/summary",
+            json={"force_regenerate": False, "week_number": 2},
+            headers=headers,
+        )
+        assert week2_resp.status_code == 200, week2_resp.text
+        assert week2_resp.json()["week_number"] == 2
+        assert week2_resp.json()["content"] == "week2 summary"
+
+        assert mock_instance.invoke.call_count == 2
+
+    active_rows = (
+        db.query(AIGeneratedContent)
+        .filter(
+            AIGeneratedContent.project_id == project_with_notes.project_id,
+            AIGeneratedContent.content_type == "summary",
+            AIGeneratedContent.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+    assert len(active_rows) == 2
+    assert {row.week_number for row in active_rows} == {1, 2}
 
 
 def test_dashboard_forbidden_for_participant(client, seed_users, seed_batch):

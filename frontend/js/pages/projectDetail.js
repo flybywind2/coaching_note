@@ -718,20 +718,63 @@ Pages.projectDetail = {
       if (!hasText(value)) return '';
       return `<div class="note-field"><label>${label}</label><div class="field-val rich-content">${Fmt.rich(value)}</div></div>`;
     };
-    const runAIGeneration = async ({ type, force = false }) => {
+    const weekOptions = [...new Set(
+      (notes || [])
+        .map((n) => Number.parseInt(n.week_number, 10))
+        .filter((weekNo) => Number.isInteger(weekNo) && weekNo > 0)
+    )].sort((a, b) => b - a);
+    const openAIWeekModal = ({ type }) => {
       const isSummary = type === 'summary';
       const label = isSummary ? 'AI 요약' : 'AI Q&A';
+      if (!weekOptions.length) {
+        Modal.open(`
+          <h2>${label}</h2>
+          <p class="form-error" style="display:block;">주차 정보가 있는 코칭노트가 없어 생성할 수 없습니다.</p>
+          <div class="page-actions" style="margin-top:12px;">
+            <button id="ai-week-close-btn" class="btn btn-primary">닫기</button>
+          </div>
+        `);
+        document.getElementById('ai-week-close-btn')?.addEventListener('click', () => Modal.close());
+        return;
+      }
+      Modal.open(`
+        <h2>${label}</h2>
+        <form id="ai-week-form">
+          <div class="form-group">
+            <label>대상 주차</label>
+            <select name="week_number">
+              ${weekOptions.map((weekNo) => `<option value="${weekNo}">${weekNo}주차</option>`).join('')}
+            </select>
+          </div>
+          <div class="page-actions">
+            <button type="submit" class="btn btn-primary">생성</button>
+            <button type="button" id="ai-week-cancel-btn" class="btn btn-secondary">취소</button>
+          </div>
+        </form>
+      `);
+      document.getElementById('ai-week-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const weekNo = Number.parseInt((new FormData(e.target).get('week_number') || '').toString(), 10);
+        await runAIGeneration({ type, force: false, weekNumber: Number.isNaN(weekNo) ? null : weekNo });
+      });
+      document.getElementById('ai-week-cancel-btn')?.addEventListener('click', () => Modal.close());
+    };
+    const runAIGeneration = async ({ type, force = false, weekNumber = null }) => {
+      const isSummary = type === 'summary';
+      const label = isSummary ? 'AI 요약' : 'AI Q&A';
+      const weekLabel = Number.isInteger(weekNumber) ? `${weekNumber}주차` : '전체';
       Modal.open(
-        `<h2>${label}</h2><div class="loading">${label} ${force ? '재생성' : '생성'} 중입니다. 잠시만 기다려주세요...</div>`
+        `<h2>${label}</h2><div class="loading">${weekLabel} ${label} ${force ? '재생성' : '생성'} 중입니다. 잠시만 기다려주세요...</div>`
       );
       try {
         const data = isSummary
-          ? await API.generateSummary(projectId, force)
-          : await API.generateQASet(projectId, force);
+          ? await API.generateSummary(projectId, force, weekNumber)
+          : await API.generateQASet(projectId, force, weekNumber);
         Modal.open(`
           <h2>${label}</h2>
           <div class="ai-content">
             <h4>${Fmt.escape(data.title || (isSummary ? '요약' : 'Q&A'))}</h4>
+            <p class="hint">${Fmt.escape(weekLabel)}</p>
             <pre>${Fmt.escape(data.content || '')}</pre>
           </div>
           <div class="page-actions" style="margin-top:12px;">
@@ -740,7 +783,7 @@ Pages.projectDetail = {
           </div>
         `, null, { className: 'modal-box-xxl' });
         document.getElementById('ai-regenerate-btn')?.addEventListener('click', () => {
-          runAIGeneration({ type, force: true });
+          runAIGeneration({ type, force: true, weekNumber });
         });
         document.getElementById('ai-close-btn')?.addEventListener('click', () => Modal.close());
       } catch (err) {
@@ -753,7 +796,7 @@ Pages.projectDetail = {
           </div>
         `, null, { className: 'modal-box-xxl' });
         document.getElementById('ai-retry-btn')?.addEventListener('click', () => {
-          runAIGeneration({ type, force });
+          runAIGeneration({ type, force, weekNumber });
         });
         document.getElementById('ai-error-close-btn')?.addEventListener('click', () => Modal.close());
       }
@@ -772,9 +815,7 @@ Pages.projectDetail = {
         <div class="page-actions">
           ${canWrite ? `<button id="add-note-btn" class="btn btn-primary">+ 코칭노트 작성</button>` : ''}
           ${canWrite ? `<button id="note-ai-summary-btn" class="btn btn-secondary">AI 요약</button>` : ''}
-          ${canWrite ? `<button id="note-ai-summary-regen-btn" class="btn btn-secondary">AI 요약 재생성</button>` : ''}
           ${canWrite ? `<button id="note-ai-qa-btn" class="btn btn-secondary">AI Q&A</button>` : ''}
-          ${canWrite ? `<button id="note-ai-qa-regen-btn" class="btn btn-secondary">AI Q&A 재생성</button>` : ''}
           ${shown.length > 1 ? `<button id="toggle-all-notes-btn" class="btn btn-secondary">${state.expandAll ? '모두 접기' : '모두 펼치기'}</button>` : ''}
         </div>
         ${shown.length === 0 ? '<p class="empty-state">코칭노트가 없습니다.</p>' : shown.map((n, i) => {
@@ -884,19 +925,11 @@ Pages.projectDetail = {
       });
 
       document.getElementById('note-ai-summary-btn')?.addEventListener('click', async () => {
-        await runAIGeneration({ type: 'summary', force: false });
-      });
-
-      document.getElementById('note-ai-summary-regen-btn')?.addEventListener('click', async () => {
-        await runAIGeneration({ type: 'summary', force: true });
+        openAIWeekModal({ type: 'summary' });
       });
 
       document.getElementById('note-ai-qa-btn')?.addEventListener('click', async () => {
-        await runAIGeneration({ type: 'qa', force: false });
-      });
-
-      document.getElementById('note-ai-qa-regen-btn')?.addEventListener('click', async () => {
-        await runAIGeneration({ type: 'qa', force: true });
+        openAIWeekModal({ type: 'qa' });
       });
 
       document.getElementById('load-more-notes-btn')?.addEventListener('click', () => {

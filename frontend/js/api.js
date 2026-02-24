@@ -229,10 +229,32 @@ const API = {
   },
 
   // AI
-  generateSummary: (projectId, force = false) => apiFetch(`/api/projects/${projectId}/summary`, { method: 'POST', body: JSON.stringify({ force_regenerate: force }) }),
-  getSummary: (projectId) => apiFetch(`/api/projects/${projectId}/summary`),
-  generateQASet: (projectId, force = false) => apiFetch(`/api/projects/${projectId}/qa-set`, { method: 'POST', body: JSON.stringify({ force_regenerate: force }) }),
-  getQASets: (projectId) => apiFetch(`/api/projects/${projectId}/qa-sets`),
+  generateSummary: (projectId, force = false, weekNumber = null) => apiFetch(
+    `/api/projects/${projectId}/summary`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        force_regenerate: force,
+        week_number: weekNumber === null || weekNumber === undefined ? null : Number(weekNumber),
+      }),
+    }
+  ),
+  getSummary: (projectId, weekNumber = null) => apiFetch(
+    `/api/projects/${projectId}/summary${weekNumber === null || weekNumber === undefined ? '' : `?week_number=${encodeURIComponent(String(weekNumber))}`}`
+  ),
+  generateQASet: (projectId, force = false, weekNumber = null) => apiFetch(
+    `/api/projects/${projectId}/qa-set`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        force_regenerate: force,
+        week_number: weekNumber === null || weekNumber === undefined ? null : Number(weekNumber),
+      }),
+    }
+  ),
+  getQASets: (projectId, weekNumber = null) => apiFetch(
+    `/api/projects/${projectId}/qa-sets${weekNumber === null || weekNumber === undefined ? '' : `?week_number=${encodeURIComponent(String(weekNumber))}`}`
+  ),
   enhanceNote: (noteId, data) => apiFetch(`/api/notes/${noteId}/enhance`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Sessions (single)

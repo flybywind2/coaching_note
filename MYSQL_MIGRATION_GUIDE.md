@@ -150,6 +150,16 @@ SELECT COUNT(*) FROM coaching_notes;
 SELECT COUNT(*) FROM content_version;
 ```
 
+## 7-1. (이미 운영 중인 DB) AI 주차별 관리 컬럼 반영
+
+최근 코드에서 `ai_generated_content.week_number` 컬럼이 추가되었습니다.
+이미 운영 중인 DB(특히 MySQL)에는 아래 스크립트로 증분 반영하세요.
+
+```bash
+cd backend
+python scripts/migrate_ai_week_number.py
+```
+
 ## 8. 롤백 방법
 
 - `.env`의 `DATABASE_URL`을 SQLite로 되돌림

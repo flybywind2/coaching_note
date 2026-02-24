@@ -1,8 +1,8 @@
 """AI 기능 API 라우터입니다. 요청을 검증하고 서비스 레이어로 비즈니스 로직을 위임합니다."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from app.database import get_db
 from app.schemas.ai_content import (
     AIContentOut,
@@ -30,7 +30,12 @@ def generate_summary(
         raise HTTPException(status_code=403, detail="관리자/코치만 AI 요약을 생성할 수 있습니다.")
     try:
         svc = AIService(db)
-        return svc.generate_summary(project_id, str(current_user.user_id), req.force_regenerate)
+        return svc.generate_summary(
+            project_id,
+            str(current_user.user_id),
+            req.force_regenerate,
+            req.week_number,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -40,11 +45,12 @@ def generate_summary(
 @router.get("/api/projects/{project_id}/summary")
 def get_summary(
     project_id: int,
+    week_number: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     svc = AIService(db)
-    result = svc._get_existing(project_id, "summary")
+    result = svc._get_existing(project_id, "summary", week_number=week_number)
     if not result:
         raise HTTPException(status_code=404, detail="AI 요약이 없습니다. 먼저 생성해주세요.")
     return result
@@ -61,7 +67,12 @@ def generate_qa_set(
         raise HTTPException(status_code=403, detail="관리자/코치만 Q&A Set을 생성할 수 있습니다.")
     try:
         svc = AIService(db)
-        return svc.generate_qa_set(project_id, str(current_user.user_id), req.force_regenerate)
+        return svc.generate_qa_set(
+            project_id,
+            str(current_user.user_id),
+            req.force_regenerate,
+            req.week_number,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -71,11 +82,12 @@ def generate_qa_set(
 @router.get("/api/projects/{project_id}/qa-sets", response_model=List[AIContentOut])
 def get_qa_sets(
     project_id: int,
+    week_number: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     svc = AIService(db)
-    return svc.get_contents(project_id, "qa_set")
+    return svc.get_contents(project_id, "qa_set", week_number=week_number)
 
 
 @router.post("/api/notes/{note_id}/enhance", response_model=AINoteEnhanceResponse)

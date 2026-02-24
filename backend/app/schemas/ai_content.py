@@ -9,6 +9,7 @@ class AIContentOut(BaseModel):
     content_id: int
     project_id: int
     content_type: str
+    week_number: Optional[int] = None
     title: Optional[str]
     content: str
     model_used: Optional[str]
@@ -23,6 +24,7 @@ class AIContentOut(BaseModel):
 
 class AIGenerateRequest(BaseModel):
     force_regenerate: bool = False
+    week_number: Optional[int] = None
 
 
 class AINoteEnhanceRequest(BaseModel):

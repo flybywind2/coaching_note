@@ -4,6 +4,7 @@ import json
 import re
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from fastapi import HTTPException
 from app.models.coaching_note import CoachingNote
 from app.models.project import Project
@@ -17,34 +18,39 @@ class AIService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _get_existing(self, project_id: int, content_type: str) -> Optional[Dict]:
-        rec = (
-            self.db.query(AIGeneratedContent)
-            .filter(
-                AIGeneratedContent.project_id == project_id,
-                AIGeneratedContent.content_type == content_type,
-                AIGeneratedContent.is_active == True,
-            )
-            .order_by(AIGeneratedContent.created_at.desc())
-            .first()
-        )
+    def _get_existing(self, project_id: int, content_type: str, week_number: Optional[int] = None) -> Optional[Dict]:
+        conds = [
+            AIGeneratedContent.project_id == project_id,
+            AIGeneratedContent.content_type == content_type,
+            AIGeneratedContent.is_active == True,
+        ]
+        if week_number is not None:
+            conds.append(AIGeneratedContent.week_number == week_number)
+
+        rec = self.db.query(AIGeneratedContent).filter(and_(*conds)).order_by(AIGeneratedContent.created_at.desc()).first()
         if rec:
             return {"content_id": rec.content_id, "content": rec.content,
-                    "title": rec.title, "model_used": rec.model_used,
+                    "title": rec.title, "model_used": rec.model_used, "week_number": rec.week_number,
                     "created_at": rec.created_at}
         return None
 
     def _save(self, project_id: int, content_type: str, title: str, content: str,
-              model_used: str, source_notes: List[int], generated_by: int) -> AIGeneratedContent:
+              model_used: str, source_notes: List[int], generated_by: int, week_number: Optional[int] = None) -> AIGeneratedContent:
         # deactivate previous
-        self.db.query(AIGeneratedContent).filter(
+        deactivate_conds = [
             AIGeneratedContent.project_id == project_id,
             AIGeneratedContent.content_type == content_type,
-        ).update({"is_active": False})
+        ]
+        if week_number is None:
+            deactivate_conds.append(AIGeneratedContent.week_number.is_(None))
+        else:
+            deactivate_conds.append(AIGeneratedContent.week_number == week_number)
+        self.db.query(AIGeneratedContent).filter(and_(*deactivate_conds)).update({"is_active": False})
 
         rec = AIGeneratedContent(
             project_id=project_id,
             content_type=content_type,
+            week_number=week_number,
             title=title,
             content=content,
             model_used=model_used,
@@ -227,22 +233,28 @@ class AIService:
             "model_used": client.model_name,
         }
 
-    def generate_summary(self, project_id: int, user_id: str, force: bool = False) -> Dict[str, Any]:
+    def generate_summary(
+        self,
+        project_id: int,
+        user_id: str,
+        force: bool = False,
+        week_number: Optional[int] = None,
+    ) -> Dict[str, Any]:
         if not settings.AI_FEATURES_ENABLED:
             raise HTTPException(status_code=503, detail="AI 기능이 비활성화되어 있습니다.")
         if not force:
-            existing = self._get_existing(project_id, "summary")
+            existing = self._get_existing(project_id, "summary", week_number=week_number)
             if existing:
                 return existing
 
-        notes = (
-            self.db.query(CoachingNote)
-            .filter(CoachingNote.project_id == project_id)
-            .order_by(CoachingNote.coaching_date)
-            .all()
-        )
+        query = self.db.query(CoachingNote).filter(CoachingNote.project_id == project_id)
+        if week_number is not None:
+            query = query.filter(CoachingNote.week_number == week_number)
+        notes = query.order_by(CoachingNote.coaching_date).all()
         if not notes:
-            raise HTTPException(status_code=400, detail="요약할 코칭노트가 없습니다.")
+            if week_number is None:
+                raise HTTPException(status_code=400, detail="요약할 코칭노트가 없습니다.")
+            raise HTTPException(status_code=400, detail=f"{week_number}주차 코칭노트가 없습니다.")
 
         project = self.db.query(Project).filter(Project.project_id == project_id).first()
         notes_text = self._format_notes(notes)
@@ -256,7 +268,8 @@ class AIService:
             "4. **성장 포인트**: 참여자들이 배운 핵심 내용 (bullet points)\n"
             "5. **다음 단계 제안**: 향후 진행 방향 권고 (2-3문장)"
         )
-        prompt = f"다음은 '{project.project_name}' 과제의 코칭노트입니다.\n\n=== 코칭노트 ===\n{notes_text}"
+        week_label = f"{week_number}주차" if week_number is not None else "전체"
+        prompt = f"다음은 '{project.project_name}' 과제의 {week_label} 코칭노트입니다.\n\n=== 코칭노트 ===\n{notes_text}"
 
         client = AIClient.get_client("summary", user_id)
         summary_text = client.invoke(prompt, system_prompt)
@@ -264,35 +277,43 @@ class AIService:
         rec = self._save(
             project_id=project_id,
             content_type="summary",
-            title=f"{project.project_name} - AI 요약",
+            title=f"{project.project_name} - AI 요약{f' ({week_number}주차)' if week_number is not None else ''}",
             content=summary_text,
             model_used=client.model_name,
             source_notes=[n.note_id for n in notes],
             generated_by=int(user_id) if user_id.isdigit() else 0,
+            week_number=week_number,
         )
         # update project ai_summary shortcut
-        project.ai_summary = summary_text[:500]
-        self.db.commit()
+        if week_number is None:
+            project.ai_summary = summary_text[:500]
+            self.db.commit()
 
         return {"content_id": rec.content_id, "content": rec.content,
-                "title": rec.title, "model_used": rec.model_used, "created_at": rec.created_at}
+                "title": rec.title, "model_used": rec.model_used, "week_number": rec.week_number, "created_at": rec.created_at}
 
-    def generate_qa_set(self, project_id: int, user_id: str, force: bool = False) -> Dict[str, Any]:
+    def generate_qa_set(
+        self,
+        project_id: int,
+        user_id: str,
+        force: bool = False,
+        week_number: Optional[int] = None,
+    ) -> Dict[str, Any]:
         if not settings.AI_FEATURES_ENABLED:
             raise HTTPException(status_code=503, detail="AI 기능이 비활성화되어 있습니다.")
         if not force:
-            existing = self._get_existing(project_id, "qa_set")
+            existing = self._get_existing(project_id, "qa_set", week_number=week_number)
             if existing:
                 return existing
 
-        notes = (
-            self.db.query(CoachingNote)
-            .filter(CoachingNote.project_id == project_id)
-            .order_by(CoachingNote.coaching_date)
-            .all()
-        )
+        query = self.db.query(CoachingNote).filter(CoachingNote.project_id == project_id)
+        if week_number is not None:
+            query = query.filter(CoachingNote.week_number == week_number)
+        notes = query.order_by(CoachingNote.coaching_date).all()
         if not notes:
-            raise HTTPException(status_code=400, detail="코칭노트가 없습니다.")
+            if week_number is None:
+                raise HTTPException(status_code=400, detail="코칭노트가 없습니다.")
+            raise HTTPException(status_code=400, detail=f"{week_number}주차 코칭노트가 없습니다.")
 
         project = self.db.query(Project).filter(Project.project_id == project_id).first()
         notes_text = self._format_notes(notes)
@@ -303,7 +324,8 @@ class AIService:
             "형식: [{\"question\": \"질문\", \"answer\": \"답변\", \"category\": \"카테고리\"}]\n"
             "카테고리 예: 기술적 문제, 프로세스, 팀 협업, 데이터, 기타"
         )
-        prompt = f"'{project.project_name}' 과제 코칭노트에서 Q&A를 추출해주세요.\n\n{notes_text}"
+        week_label = f"{week_number}주차" if week_number is not None else "전체"
+        prompt = f"'{project.project_name}' 과제의 {week_label} 코칭노트에서 Q&A를 추출해주세요.\n\n{notes_text}"
 
         client = AIClient.get_client("qa", user_id)
         qa_text = client.invoke(prompt, system_prompt)
@@ -311,23 +333,27 @@ class AIService:
         rec = self._save(
             project_id=project_id,
             content_type="qa_set",
-            title=f"{project.project_name} - Q&A Set",
+            title=f"{project.project_name} - Q&A Set{f' ({week_number}주차)' if week_number is not None else ''}",
             content=qa_text,
             model_used=client.model_name,
             source_notes=[n.note_id for n in notes],
             generated_by=int(user_id) if user_id.isdigit() else 0,
+            week_number=week_number,
         )
         return {"content_id": rec.content_id, "content": rec.content,
-                "title": rec.title, "model_used": rec.model_used, "created_at": rec.created_at}
+                "title": rec.title, "model_used": rec.model_used, "week_number": rec.week_number, "created_at": rec.created_at}
 
-    def get_contents(self, project_id: int, content_type: str) -> List[AIGeneratedContent]:
+    def get_contents(self, project_id: int, content_type: str, week_number: Optional[int] = None) -> List[AIGeneratedContent]:
+        conds = [
+            AIGeneratedContent.project_id == project_id,
+            AIGeneratedContent.content_type == content_type,
+            AIGeneratedContent.is_active == True,
+        ]
+        if week_number is not None:
+            conds.append(AIGeneratedContent.week_number == week_number)
         return (
             self.db.query(AIGeneratedContent)
-            .filter(
-                AIGeneratedContent.project_id == project_id,
-                AIGeneratedContent.content_type == content_type,
-                AIGeneratedContent.is_active == True,
-            )
+            .filter(and_(*conds))
             .order_by(AIGeneratedContent.created_at.desc())
             .all()
         )

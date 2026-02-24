@@ -106,6 +106,10 @@ def ensure_schema():
         if "is_all_day" not in coaching_plan_columns:
             conn.execute(text("ALTER TABLE coach_daily_plan ADD COLUMN is_all_day BOOLEAN"))
             conn.execute(text("UPDATE coach_daily_plan SET is_all_day = 1 WHERE is_all_day IS NULL"))
+        ai_content_rows = conn.execute(text("PRAGMA table_info(ai_generated_content)")).fetchall()
+        ai_content_columns = {str(row[1]) for row in ai_content_rows}
+        if "week_number" not in ai_content_columns:
+            conn.execute(text("ALTER TABLE ai_generated_content ADD COLUMN week_number INTEGER"))
 
 
 @app.get("/api/health")
