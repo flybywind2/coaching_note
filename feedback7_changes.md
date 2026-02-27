@@ -83,3 +83,55 @@
     - 본인 차수 목록에서 차수공개 게시글 노출 확인
   - 참관자 `obs001`:
     - 본인과 무관한 차수공개 게시글 미노출 확인
+
+## Commit 3 - 과제별 의견 취합(조사) 페이지 추가
+
+### 추가/수정 파일
+
+- `backend/app/models/project_research.py` (신규)
+- `backend/app/models/__init__.py`
+- `backend/app/schemas/project_research.py` (신규)
+- `backend/app/services/project_research_service.py` (신규)
+- `backend/app/services/__init__.py`
+- `backend/app/routers/project_research.py` (신규)
+- `backend/app/main.py`
+- `backend/tests/test_project_research_feedback7.py` (신규)
+- `frontend/js/pages/projectResearch.js` (신규)
+- `frontend/js/api.js`
+- `frontend/js/app.js`
+- `frontend/js/router.js`
+- `frontend/js/components/header.js`
+- `frontend/index.html`
+- `frontend/css/style.css`
+- `tasks7.md`
+
+### 핵심 로직
+
+- `[FEEDBACK7]` 과제 조사 도메인 모델 추가
+  - 조사 아이템(`ProjectResearchItem`), 세부 질문(`ProjectResearchQuestion`), 과제별 응답(`ProjectResearchResponse`) 테이블 구성
+- `[FEEDBACK7]` 과제 조사 API/서비스 구현
+  - 관리자: 아이템/질문 CRUD, 공개/비공개 전환, 목적/기간 관리
+  - 관리자/코치: 전체 차수 접근 가능
+  - 참여자: 본인 차수 접근 + 본인 과제 행 응답만 수정 가능
+  - 참관자: 메뉴/엔드포인트 접근 차단
+  - 공개 전환 시 차수 참여자 대상 알림(`project_research`) 발송
+- `[FEEDBACK7]` 과제 조사 프론트 페이지 추가
+  - 상단 차수 선택, 좌측 조사 아이템 리스트(최신순), 우측 목적/기간/동적 질문 테이블
+  - 관리자 편집 UI(아이템 생성/수정/삭제, 질문 추가/수정/삭제, 공개 토글)
+  - 참여자 입력 UI(본인 과제 행 답변 저장)
+- `[FEEDBACK7]` 라우팅/메뉴 반영
+  - `#/project-research` 라우트 등록
+  - 헤더 메뉴 `과제 조사` 노출(관리자/코치/참여자), 참관자 비노출 및 직접 URL 차단
+
+### 테스트
+
+- 백엔드 자동화
+  - `python -m pytest tests/test_project_research_feedback7.py -q`
+  - `python -m pytest tests/test_about.py tests/test_about_news_feedback7.py tests/test_board_feedback5_p2.py tests/test_board_feedback6_p2.py tests/test_board_feedback7_batch_policy.py tests/test_project_research_feedback7.py -q`
+- Chrome DevTools 실동작
+  - 관리자 `admin001`:
+    - `과제 조사` 메뉴 진입, 조사 아이템 생성/공개 전환, 질문(주관식/객관식) 추가 확인
+  - 참여자 `user001`:
+    - 본인 차수 조사 목록만 조회, 본인 과제 행 답변 저장 성공 확인
+  - 참관자 `obs001`:
+    - 메뉴 미노출, `#/project-research` 직접 접근 시 차단/리다이렉트 확인

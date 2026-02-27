@@ -18,10 +18,6 @@
   - 기능별로 `추가/수정 파일`, `핵심 로직`, `테스트 결과`를 누적 기록
 - [ ] 회사 코드 대비 스키마/도메인 차이표 작성
   - 파일: `docs/feedback7_schema_gap.md`
-- [ ] MySQL -> SQLite 마이그레이션 유틸 구현
-  - 파일: `backend/scripts/migrate_mysql_to_sqlite.py`
-  - 옵션: `--mysql-url`, `--sqlite-path`, `--truncate`, `--tables`, `--dry-run`
-  - FK 순서/참조 무결성/타입 변환(`DATETIME`, `JSON`, `BOOLEAN`) 처리
 - [ ] 회귀 테스트 기본선 확보
   - `pytest backend/tests/test_about.py`
   - `pytest backend/tests/test_permissions.py`
@@ -69,24 +65,24 @@
 
 ### Commit 3. 과제별 의견 취합(조사) 페이지 추가
 
-- [ ] 메뉴명 확정
+- [x] 메뉴명 확정
   - 추천: `과제 조사` (짧고 목적이 명확함)
   - 대안: `의견 조사`, `과제 의견수렴`
-- [ ] 도메인 모델 구현
+- [x] 도메인 모델 구현
   - 후보 파일: `backend/app/models/project_research.py`, `backend/app/schemas/project_research.py`
   - 엔티티: 조사 아이템, 조사 세부항목(객관식/주관식), 과제별 응답
-- [ ] API/권한 구현
+- [x] API/권한 구현
   - 후보 파일: `backend/app/routers/project_research.py`, `backend/app/services/project_research_service.py`
   - 관리자: 아이템/목적/기간/공개/세부항목 CRUD
   - 관리자/코치: 전 차수 접근
   - 참여자: 본인 차수만 접근, 본인 과제 응답만 수정
   - 참관자: 메뉴/접근 차단
   - 공개 전환 시 알림 발송
-- [ ] 화면 구현
+- [x] 화면 구현
   - 후보 파일: `frontend/js/pages/projectResearch.js`(신규), `frontend/js/app.js`, `frontend/js/router.js`, `frontend/js/components/header.js`
   - 상단 차수 선택, 좌측 아이템 리스트(최신순), 우측 목적+동적 컬럼 테이블
   - 본인 과제 행 최상단 배치
-- [ ] 테스트 추가
+- [x] 테스트 추가
   - 후보 파일: `backend/tests/test_project_research_feedback7.py`
   - 기간 제어, 공개 제어, 역할 제어, 동적 컬럼 저장 검증
 
@@ -151,7 +147,7 @@
 
 - [x] Commit 1: 소식 메뉴
 - [x] Commit 2: 게시판 차수 정책
-- [ ] Commit 3: 과제 조사 페이지
+- [x] Commit 3: 과제 조사 페이지
 - [ ] Commit 4: 설문 페이지
 - [ ] Commit 5: 수강신청/강의관리/캘린더 연동
 

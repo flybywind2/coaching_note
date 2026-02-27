@@ -15,6 +15,7 @@ Router.register('/board', (el, p) => Pages.board.render(el, p));
 Router.register('/board/:boardId', (el, p) => Pages.board.render(el, p));
 Router.register('/board/post/:postId', (el, p) => Pages.board.renderPost(el, p));
 Router.register('/board/:boardId/post/:postId', (el, p) => Pages.board.renderPost(el, p));
+Router.register('/project-research', (el, p) => Pages.projectResearch.render(el, p));
 Router.register('/admin', (el, p) => Pages.admin.render(el, p));
 Router.register('/session/:id', (el, p) => Pages.sessionDetail.render(el, p));
 

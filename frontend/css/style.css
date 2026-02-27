@@ -1095,6 +1095,70 @@ body::after {
   margin: 0;
   color: #1a2f5f;
 }
+/* [FEEDBACK7] 과제 조사 페이지 */
+.research-page { display: grid; gap: 14px; }
+.research-board {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 420px;
+}
+.research-item-list {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: auto;
+  max-height: 70vh;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+.research-item-btn {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+  padding: 10px;
+  cursor: pointer;
+}
+.research-item-btn.active {
+  border-color: rgba(79, 124, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(79, 124, 255, 0.35);
+}
+.research-item-btn strong {
+  display: block;
+  color: #1c2f5d;
+}
+.research-item-btn span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.research-detail { display: grid; gap: 12px; align-content: start; }
+.research-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.research-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+}
+.research-table { min-width: 760px; }
+.research-table tr.my-row td { background: rgba(222, 242, 255, 0.38); }
+.research-q-head {
+  display: grid;
+  gap: 2px;
+}
+.research-q-head em {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.research-answer-input {
+  width: 100%;
+  min-width: 120px;
+}
 .empty-state.compact {
   margin: 0;
   font-size: 12px;
@@ -2647,6 +2711,8 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   .about-coach-grid { grid-template-columns: 1fr; }
   .about-coach-head { flex-direction: column-reverse; }
   .about-coach-photo { width: min(100%, 220px); height: auto; aspect-ratio: 1 / 1; }
+  .research-board { grid-template-columns: 1fr; }
+  .research-item-list { max-height: 280px; }
   .records-tab-layout { grid-template-columns: 1fr; }
   .records-tab-nav { grid-template-columns: 1fr; }
   .data-table { display: block; overflow-x: auto; white-space: nowrap; }

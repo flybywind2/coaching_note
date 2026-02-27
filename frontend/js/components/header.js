@@ -16,6 +16,7 @@ const Header = {
       { path: '/calendar', label: '캘린더', roles: ['admin', 'coach', 'internal_coach', 'participant', 'observer'] },
       { path: '/coaching-plan', label: '코칭 계획/실적', roles: ['admin', 'coach', 'internal_coach'] },
       { path: '/board', label: '게시판', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
+      { path: '/project-research', label: '과제 조사', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant'] },
       { path: '/dashboard', label: '대시보드', roles: ['admin', 'coach', 'internal_coach'] },
       { path: '/admin', label: '관리자', roles: ['admin'] },
     ];

@@ -8,6 +8,7 @@ from app.services import (
     task_service,
     board_service,
     notification_service,
+    project_research_service,
     mention_service,
     version_service,
 )

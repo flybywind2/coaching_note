@@ -168,6 +168,22 @@ const API = {
   updatePostComment: (commentId, data) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
   getBoardMentionCandidates: (q, limit = 8) => apiFetch(`/api/boards/mention-candidates?q=${encodeURIComponent(q)}&limit=${Math.max(1, Math.min(20, Number(limit) || 8))}`),
+  // [FEEDBACK7] Project Research
+  getProjectResearchBatches: () => apiFetch('/api/project-research/batches'),
+  getProjectResearchItems: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/project-research/items${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createProjectResearchItem: (data) => apiFetch('/api/project-research/items', { method: 'POST', body: JSON.stringify(data) }),
+  updateProjectResearchItem: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProjectResearchItem: (itemId) => apiFetch(`/api/project-research/items/${itemId}`, { method: 'DELETE' }),
+  getProjectResearchDetail: (itemId) => apiFetch(`/api/project-research/items/${itemId}/detail`),
+  createProjectResearchQuestion: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}/questions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateProjectResearchQuestion: (questionId, data) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProjectResearchQuestion: (questionId) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'DELETE' }),
+  upsertProjectResearchResponses: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),
