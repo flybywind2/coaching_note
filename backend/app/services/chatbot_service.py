@@ -55,6 +55,19 @@ class ChatbotService:
         raw = str(value or "")
         return raw if len(raw) <= limit else f"{raw[:limit]}...(truncated)"
 
+    def _emit_chat_debug(self, message: str, *args: Any) -> None:
+        # [chatbot] 로거 레벨과 무관하게 터미널에서 디버그 로그를 확인할 수 있도록 print를 병행한다.
+        if not self._is_chat_debug_enabled():
+            return
+        text = str(message or "")
+        if args:
+            try:
+                text = text % args
+            except Exception:
+                text = f"{text} | args={args}"
+        logger.info("%s", text)
+        print(text, flush=True)
+
     def _record_llm_history(
         self,
         *,
@@ -100,7 +113,7 @@ class ChatbotService:
     def _log_chat_debug_snapshot(self, *, question: str, current_user: User) -> None:
         if not self._is_chat_debug_enabled():
             return
-        logger.info(
+        self._emit_chat_debug(
             "[chatbot][debug] user_id=%s role=%s question=%s",
             getattr(current_user, "user_id", "-"),
             getattr(current_user, "role", "-"),
@@ -108,14 +121,14 @@ class ChatbotService:
         )
         if self._debug_rag_result is not None:
             rag_dump = json.dumps(self._debug_rag_result, ensure_ascii=False, default=str)
-            logger.info("[chatbot][debug] rag_result=%s", self._clip_debug_text(rag_dump, 12000))
+            self._emit_chat_debug("[chatbot][debug] rag_result=%s", self._clip_debug_text(rag_dump, 12000))
         else:
-            logger.info("[chatbot][debug] rag_result=<none>")
+            self._emit_chat_debug("[chatbot][debug] rag_result=<none>")
         if not self._debug_llm_history:
-            logger.info("[chatbot][debug] llm_history=<none>")
+            self._emit_chat_debug("[chatbot][debug] llm_history=<none>")
             return
         for idx, item in enumerate(self._debug_llm_history, start=1):
-            logger.info(
+            self._emit_chat_debug(
                 "[chatbot][debug][llm %d] stage=%s model=%s | system=%s | prompt=%s | response=%s",
                 idx,
                 item.get("stage"),
