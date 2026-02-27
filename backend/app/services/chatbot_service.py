@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -192,6 +193,237 @@ class ChatbotService:
         )
         return body, public_comments, coach_only_count
 
+    def _parse_route_decision(self, raw_text: str) -> str:
+        # [chatbot] LLM이 반환한 JSON(route=sql|rag)을 파싱
+        candidate = str(raw_text or "").strip()
+        if not candidate:
+            return "rag"
+        fenced_match = re.search(r"```(?:json)?\s*(.*?)```", candidate, flags=re.DOTALL | re.IGNORECASE)
+        if fenced_match:
+            candidate = fenced_match.group(1).strip()
+        parsed: dict[str, Any] | None = None
+        try:
+            loaded = json.loads(candidate)
+            if isinstance(loaded, dict):
+                parsed = loaded
+        except json.JSONDecodeError:
+            block_match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+            if block_match:
+                try:
+                    loaded = json.loads(block_match.group(0))
+                    if isinstance(loaded, dict):
+                        parsed = loaded
+                except json.JSONDecodeError:
+                    parsed = None
+        route = str((parsed or {}).get("route") or "").strip().lower()
+        return route if route in {"sql", "rag"} else "rag"
+
+    def _decide_route_with_llm(self, *, question: str, user_id: str) -> str:
+        # [chatbot] 관리자 질문은 LLM이 SQL/RAG 라우팅을 JSON으로 결정
+        if not settings.AI_FEATURES_ENABLED:
+            return "rag"
+        try:
+            client = AIClient.get_client("general", user_id=user_id)
+            system_prompt = (
+                "당신은 질문 라우터입니다.\n"
+                "관리자 질문을 SQL 조회 또는 RAG 검색 중 하나로 분류하세요.\n"
+                "반드시 JSON 한 줄만 응답: {\"route\":\"sql|rag\",\"reason\":\"...\"}"
+            )
+            prompt = (
+                "분류 기준:\n"
+                "- SQL: 집계/순위/비교/개수/최저/최고/현황 등 DB 수치 조회가 필요한 질문\n"
+                "- RAG: 코칭노트/게시글/문서 요약, 근거 기반 설명, 내용 해석 질문\n\n"
+                f"question: {self._normalize_text(question)}"
+            )
+            raw = client.invoke(prompt, system_prompt)
+            return self._parse_route_decision(raw)
+        except Exception as exc:
+            logger.warning("[chatbot] route decision failed: %s", exc)
+            return "rag"
+
+    def _db_dialect(self) -> str:
+        bind = getattr(self.db, "bind", None)
+        dialect = getattr(getattr(bind, "dialect", None), "name", None)
+        return str(dialect or "").lower()
+
+    def _sql_schema_guide(self) -> str:
+        # [chatbot] SQL 생성 프롬프트용 주요 테이블/컬럼 가이드
+        return (
+            "tables:\n"
+            "1) projects(project_id, batch_id, project_name, organization, status, progress_rate, visibility, created_at, updated_at)\n"
+            "2) coaching_notes(note_id, project_id, author_id, coaching_date, week_number, current_status, progress_rate, main_issue, next_action, created_at, updated_at)\n"
+            "3) batch(batch_id, batch_name, start_date, end_date, status, coaching_start_date)\n"
+            "4) users(user_id, emp_id, name, role, department, is_active)\n"
+            "relations:\n"
+            "- coaching_notes.project_id = projects.project_id\n"
+            "- projects.batch_id = batch.batch_id\n"
+            "- coaching_notes.author_id = users.user_id\n"
+        )
+
+    def _extract_sql_from_text(self, raw_text: str) -> str:
+        candidate = str(raw_text or "").strip()
+        if not candidate:
+            return ""
+        fenced_match = re.search(r"```(?:json|sql)?\s*(.*?)```", candidate, flags=re.DOTALL | re.IGNORECASE)
+        if fenced_match:
+            candidate = fenced_match.group(1).strip()
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                sql_value = parsed.get("sql")
+                if isinstance(sql_value, str):
+                    return sql_value.strip()
+        except json.JSONDecodeError:
+            pass
+        return candidate.strip()
+
+    def _normalize_sql(self, sql: str) -> str:
+        cleaned = str(sql or "").strip()
+        cleaned = re.sub(r";+\s*$", "", cleaned)
+        return cleaned
+
+    def _is_safe_select_sql(self, sql: str) -> bool:
+        candidate = self._normalize_sql(sql)
+        if not candidate:
+            return False
+        upper = candidate.upper()
+        if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+            return False
+        if ";" in candidate:
+            return False
+        if "--" in candidate or "/*" in candidate or "*/" in candidate:
+            return False
+        forbidden = (
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "DROP",
+            "ALTER",
+            "TRUNCATE",
+            "CREATE",
+            "REPLACE",
+            "MERGE",
+            "GRANT",
+            "REVOKE",
+            "EXEC",
+            "CALL",
+            "ATTACH",
+            "DETACH",
+            "PRAGMA",
+            "INTO",
+        )
+        pattern = r"\b(" + "|".join(forbidden) + r")\b"
+        return re.search(pattern, upper) is None
+
+    def _apply_default_limit(self, sql: str) -> str:
+        normalized = self._normalize_sql(sql)
+        if re.search(r"\bLIMIT\s+\d+", normalized, flags=re.IGNORECASE):
+            return normalized
+        return f"SELECT * FROM ({normalized}) AS chatbot_sql_result LIMIT 50"
+
+    def _generate_sql_with_llm(self, *, question: str, user_id: str) -> str | None:
+        if not settings.AI_FEATURES_ENABLED:
+            return None
+        try:
+            client = AIClient.get_client("general", user_id=user_id)
+            dialect = self._db_dialect() or "sqlite"
+            system_prompt = (
+                "당신은 SQL 생성기입니다.\n"
+                "질문을 만족하는 단일 조회 SQL만 생성하세요.\n"
+                "반드시 JSON 한 줄로만 응답하세요: {\"sql\":\"...\"}\n"
+                "SELECT 또는 WITH만 허용하고, 데이터 변경/DDL/다중문/주석은 금지합니다."
+            )
+            prompt = (
+                f"DB dialect: {dialect}\n"
+                f"{self._sql_schema_guide()}\n"
+                "rules:\n"
+                "- 질문이 '이번주'를 포함하면 현재 주차 기준 조건을 사용하세요.\n"
+                "- 결과는 최대 50건 이내가 되도록 LIMIT을 사용하세요.\n"
+                "- 의미있는 컬럼명(project_name, progress_rate 등)을 반환하세요.\n\n"
+                f"question: {question}"
+            )
+            raw = client.invoke(prompt, system_prompt)
+            sql = self._extract_sql_from_text(raw)
+            return self._normalize_sql(sql) if sql else None
+        except Exception as exc:
+            logger.warning("[chatbot] sql generation failed: %s", exc)
+            return None
+
+    def _execute_sql_query(self, sql: str) -> list[dict[str, Any]]:
+        limited_sql = self._apply_default_limit(sql)
+        result = self.db.execute(text(limited_sql))
+        rows = result.mappings().all()
+        return [dict(row) for row in rows]
+
+    def _render_sql_rows(self, rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return "- 결과 없음"
+        lines: list[str] = []
+        for idx, row in enumerate(rows[:10], start=1):
+            pairs = [f"{key}={value}" for key, value in row.items()]
+            lines.append(f"{idx}. " + ", ".join(pairs))
+        return "\n".join(lines)
+
+    def _summarize_sql_result(self, *, question: str, sql: str, rows: list[dict[str, Any]], user_id: str) -> str:
+        if not rows:
+            return f"조건에 맞는 데이터가 없습니다.\n\n[SQL]\n{sql}"
+        if settings.AI_FEATURES_ENABLED:
+            try:
+                client = AIClient.get_client("general", user_id=user_id)
+                system_prompt = (
+                    "당신은 SQL 조회 결과를 해석해 간결하게 답변하는 분석가입니다.\n"
+                    "질문에 바로 답하고 필요한 근거 숫자만 포함하세요."
+                )
+                payload = json.dumps(rows[:10], ensure_ascii=False)
+                prompt = (
+                    f"[질문]\n{question}\n\n"
+                    f"[SQL]\n{sql}\n\n"
+                    f"[결과(JSON)]\n{payload}\n\n"
+                    "한국어로 3문장 이내로 답변하세요."
+                )
+                summary = self._normalize_text(client.invoke(prompt, system_prompt))
+                if summary:
+                    return f"{summary}\n\n[SQL]\n{sql}"
+            except Exception as exc:
+                logger.warning("[chatbot] sql summary failed: %s", exc)
+        return f"DB 조회 결과입니다.\n{self._render_sql_rows(rows)}\n\n[SQL]\n{sql}"
+
+    def _answer_with_sql(self, *, current_user: User, question: str) -> dict[str, Any] | None:
+        # [chatbot] 관리자 질문 중 SQL 경로로 분류된 질의는 SQL 생성/실행 기반으로 답변
+        generated_sql = self._generate_sql_with_llm(
+            question=question,
+            user_id=str(current_user.user_id),
+        )
+        if not generated_sql:
+            return None
+        sql = self._normalize_sql(generated_sql)
+        if not self._is_safe_select_sql(sql):
+            logger.warning("[chatbot] blocked unsafe sql: %s", sql)
+            return None
+        try:
+            rows = self._execute_sql_query(sql)
+        except Exception as exc:
+            logger.warning("[chatbot] sql execution failed: %s", exc)
+            return None
+        answer = self._summarize_sql_result(
+            question=question,
+            sql=sql,
+            rows=rows,
+            user_id=str(current_user.user_id),
+        )
+        return {
+            "answer": answer,
+            "references": [
+                {
+                    "doc_id": "sql:auto",
+                    "title": "DB 조회(SQL 기반)",
+                    "score": None,
+                    "source_type": "sql",
+                    "batch_id": None,
+                }
+            ],
+        }
+
     def generate_ai_summary(self, *, content: str, source_label: str, user_id: str) -> str:
         # [chatbot] RAG 추가 메타에 들어갈 AI 요약 생성
         plain = self._strip_html(content)
@@ -325,7 +557,7 @@ class ChatbotService:
             )
         return refs
 
-    def answer_with_rag(
+    def _answer_with_rag(
         self,
         *,
         current_user: User,
@@ -385,6 +617,33 @@ class ChatbotService:
                 for row in refs[: max(1, min(int(num_result_doc), 20))]
             ],
         }
+
+    def answer_with_rag(
+        self,
+        *,
+        current_user: User,
+        question: str,
+        num_result_doc: int = 5,
+    ) -> dict[str, Any]:
+        query = self._normalize_text(question)
+        if not query:
+            raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
+
+        # [chatbot] 관리자 질문은 LLM JSON 라우팅 결과에 따라 SQL/RAG 경로를 선택
+        if is_admin(current_user) and self._decide_route_with_llm(
+            question=query,
+            user_id=str(current_user.user_id),
+        ) == "sql":
+            sql_result = self._answer_with_sql(current_user=current_user, question=query)
+            if sql_result is not None:
+                return sql_result
+
+        # [chatbot] 비관리자이거나 SQL 경로 실패 시 RAG 경로 사용
+        return self._answer_with_rag(
+            current_user=current_user,
+            question=query,
+            num_result_doc=num_result_doc,
+        )
 
     def safe_sync_board_post(
         self,

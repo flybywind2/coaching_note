@@ -4,6 +4,12 @@
 - `doc_id`가 동일하면 RAG가 기존 문서를 덮어쓴다는 전제에 맞춰, 게시글/코칭노트의 본문 변경과 댓글 변경을 **같은 문서 ID**로 재입력합니다.
 - 댓글 생성/수정/삭제가 발생하면 본문+댓글을 합친 content를 다시 upsert 합니다.
 
+## 챗봇 응답 경로
+- 기본: RAG 기반 답변
+- 관리자 질문: LLM이 `{"route":"sql|rag","reason":"..."}` JSON으로 SQL/RAG 경로를 결정
+- 비관리자 질문: RAG 경로 고정
+- SQL 경로는 `SELECT/ WITH` 조회문만 허용하며, 안전성 검사 실패 시 RAG로 폴백합니다.
+
 ## 문서 ID 규칙
 - 게시글: `board_post:{post_id}`
 - 코칭노트: `coaching_note:{note_id}`

@@ -291,3 +291,130 @@ def test_chatbot_safe_sync_board_post_merges_comments_into_same_doc_id(db, seed_
     assert "댓글(1)" in captured["content"]
     assert "댓글 내용" in captured["content"]
     assert captured["metadata"]["comment_count"] == 1
+
+
+def test_chatbot_admin_route_sql_selected_by_llm_json(db, seed_users, monkeypatch):
+    # [chatbot] 관리자 질문은 LLM JSON 라우팅(route=sql)에 따라 SQL 경로를 사용해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    called = {"sql": 0, "rag": 0}
+
+    def _fake_sql(self, *, current_user, question):  # noqa: ANN001
+        called["sql"] += 1
+        return {"answer": "SQL 답변", "references": [{"title": "SQL 결과", "source_type": "sql"}]}
+
+    def _fake_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        called["rag"] += 1
+        return {"answer": "RAG 답변", "references": []}
+
+    def _fake_route(self, *, question, user_id):  # noqa: ANN001
+        return "sql"
+
+    monkeypatch.setattr(ChatbotService, "_decide_route_with_llm", _fake_route, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_sql", _fake_sql, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_rag", _fake_rag, raising=False)
+
+    svc = ChatbotService(db)
+    out = svc.answer_with_rag(
+        current_user=seed_users["admin"],
+        question="이번주 진행률이 가장 낮은 과제가 뭐야?",
+        num_result_doc=5,
+    )
+    assert out["answer"] == "SQL 답변"
+    assert called["sql"] == 1
+    assert called["rag"] == 0
+
+
+def test_chatbot_admin_route_rag_selected_by_llm_json(db, seed_users, monkeypatch):
+    # [chatbot] 관리자 질문은 LLM JSON 라우팅(route=rag)에 따라 RAG 경로를 사용해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    called = {"sql": 0, "rag": 0}
+
+    def _fake_sql(self, *, current_user, question):  # noqa: ANN001
+        called["sql"] += 1
+        return {"answer": "SQL 답변", "references": []}
+
+    def _fake_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        called["rag"] += 1
+        return {"answer": "RAG 답변", "references": []}
+
+    def _fake_route(self, *, question, user_id):  # noqa: ANN001
+        return "rag"
+
+    monkeypatch.setattr(ChatbotService, "_decide_route_with_llm", _fake_route, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_sql", _fake_sql, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_rag", _fake_rag, raising=False)
+
+    svc = ChatbotService(db)
+    out = svc.answer_with_rag(
+        current_user=seed_users["admin"],
+        question="A과제 이번주 코칭 노트 요약해줘",
+        num_result_doc=5,
+    )
+    assert out["answer"] == "RAG 답변"
+    assert called["sql"] == 0
+    assert called["rag"] == 1
+
+
+def test_chatbot_non_admin_question_does_not_use_sql_path(db, seed_users, monkeypatch):
+    # [chatbot] SQL 경로는 관리자 질문에서만 사용되어야 하며 비관리자는 RAG 고정이다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    called = {"sql": 0, "rag": 0}
+
+    def _fake_sql(self, *, current_user, question):  # noqa: ANN001
+        called["sql"] += 1
+        return {"answer": "SQL 답변", "references": []}
+
+    def _fake_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        called["rag"] += 1
+        return {"answer": "RAG 답변", "references": []}
+
+    def _fake_route(self, *, question, user_id):  # noqa: ANN001
+        called["sql"] += 100  # non-admin에서 호출되면 안됨
+        return "sql"
+
+    monkeypatch.setattr(ChatbotService, "_decide_route_with_llm", _fake_route, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_sql", _fake_sql, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_rag", _fake_rag, raising=False)
+
+    svc = ChatbotService(db)
+    out = svc.answer_with_rag(
+        current_user=seed_users["participant"],
+        question="이번주 진행률이 가장 낮은 과제가 뭐야?",
+        num_result_doc=5,
+    )
+    assert out["answer"] == "RAG 답변"
+    assert called["sql"] == 0
+    assert called["rag"] == 1
+
+
+def test_chatbot_route_json_parser_handles_fenced_json(db):
+    # [chatbot] 라우팅 JSON 파서는 코드블록/문자열에서도 route 값을 올바르게 읽어야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    svc = ChatbotService(db)
+    route = svc._parse_route_decision("""```json\n{"route":"sql","reason":"집계 질문"}\n```""")
+    assert route == "sql"
