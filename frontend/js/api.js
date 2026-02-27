@@ -182,6 +182,14 @@ const API = {
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
   getAboutContent: (key) => apiFetch(`/api/about/content?key=${encodeURIComponent(key)}`),
   updateAboutContent: (key, data) => apiFetch(`/api/about/content/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  // [FEEDBACK7] SSP+ 소식 메뉴 API
+  getAboutNews: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/about/news${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createAboutNews: (data) => apiFetch('/api/about/news', { method: 'POST', body: JSON.stringify(data) }),
+  updateAboutNews: (newsId, data) => apiFetch(`/api/about/news/${newsId}`, { method: 'PUT', body: JSON.stringify(data) }),
   getCoachProfiles: (params = {}) => {
     const q = new URLSearchParams();
     if (params.batch_id != null) q.set('batch_id', String(params.batch_id));

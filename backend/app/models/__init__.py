@@ -16,6 +16,7 @@ from app.models.ai_content import AIGeneratedContent
 from app.models.content_version import ContentVersion
 from app.models.coaching_template import CoachingNoteTemplate
 from app.models.site_content import SiteContent
+from app.models.about_news import AboutNews
 from app.models.coaching_plan import CoachDailyPlan, CoachActualOverride
 from app.models.access_scope import UserBatchAccess, UserProjectAccess
 from app.models.attendance import DailyAttendanceLog
@@ -37,6 +38,7 @@ __all__ = [
     "ContentVersion",
     "CoachingNoteTemplate",
     "SiteContent",
+    "AboutNews",
     "CoachDailyPlan", "CoachActualOverride",
     "UserBatchAccess", "UserProjectAccess",
     "DailyAttendanceLog",

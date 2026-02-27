@@ -11,6 +11,7 @@ from app.models.access_scope import UserBatchAccess
 from app.models.batch import Batch
 from app.models.project import Project, ProjectMember
 from app.models.site_content import SiteContent
+from app.models.about_news import AboutNews
 from app.models.user import User, Coach
 from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH
 from app.schemas.about import (
@@ -20,6 +21,9 @@ from app.schemas.about import (
     CoachProfileCreate,
     CoachProfileUpdate,
     CoachReorderRequest,
+    AboutNewsCreate,
+    AboutNewsOut,
+    AboutNewsUpdate,
 )
 
 router = APIRouter(prefix="/api/about", tags=["about"])
@@ -214,6 +218,73 @@ def update_content(
         updated_by=row.updated_by,
         updated_at=row.updated_at,
     )
+
+
+@router.get("/news", response_model=List[AboutNewsOut])
+def list_news(
+    include_hidden: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if include_hidden and current_user.role != "admin":
+        include_hidden = False
+
+    q = db.query(AboutNews)
+    if not include_hidden:
+        q = q.filter(AboutNews.is_visible == True)  # noqa: E712
+    return q.order_by(AboutNews.published_at.desc(), AboutNews.news_id.desc()).all()
+
+
+@router.post("/news", response_model=AboutNewsOut)
+def create_news(
+    data: AboutNewsCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    title = (data.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="소식 제목을 입력하세요.")
+    content = (data.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="소식 내용을 입력하세요.")
+
+    row = AboutNews(
+        title=title,
+        content=data.content,
+        published_at=data.published_at,
+        is_visible=bool(data.is_visible),
+        created_by=current_user.user_id,
+        updated_by=current_user.user_id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.put("/news/{news_id:int}", response_model=AboutNewsOut)
+def update_news(
+    news_id: int,
+    data: AboutNewsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    row = db.query(AboutNews).filter(AboutNews.news_id == news_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="소식 항목을 찾을 수 없습니다.")
+
+    payload = data.model_dump(exclude_none=True)
+    if "title" in payload and not str(payload["title"]).strip():
+        raise HTTPException(status_code=400, detail="소식 제목을 입력하세요.")
+    if "content" in payload and not str(payload["content"]).strip():
+        raise HTTPException(status_code=400, detail="소식 내용을 입력하세요.")
+    for key, value in payload.items():
+        setattr(row, key, value)
+    row.updated_by = current_user.user_id
+
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.get("/coaches", response_model=List[CoachProfileOut])

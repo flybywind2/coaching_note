@@ -69,3 +69,31 @@ class CoachReorderRequest(BaseModel):
     coach_ids: list[int] = []
     left_coach_ids: list[int] = []
     right_coach_ids: list[int] = []
+
+
+class AboutNewsBase(BaseModel):
+    title: str
+    content: str
+    published_at: datetime
+    is_visible: bool = True
+
+
+class AboutNewsCreate(AboutNewsBase):
+    pass
+
+
+class AboutNewsUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    published_at: Optional[datetime] = None
+    is_visible: Optional[bool] = None
+
+
+class AboutNewsOut(AboutNewsBase):
+    news_id: int
+    created_by: int
+    updated_by: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
