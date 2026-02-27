@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from app.config import settings
 from app.database import Base, engine
+from app.utils.schema_sync import sync_missing_schema_objects
 import app.models  # noqa: F401 - 모델 import로 metadata 등록
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
@@ -62,6 +63,8 @@ def ensure_schema():
     # 신규 기능 배포 시 누락된 테이블을 자동 생성합니다.
     Base.metadata.create_all(bind=engine)
     if "sqlite" not in settings.DATABASE_URL:
+        # MySQL 포함 non-sqlite DB는 모델 기준으로 누락 컬럼/인덱스를 자동 보정합니다.
+        sync_missing_schema_objects(engine, Base.metadata)
         return
     with engine.begin() as conn:
         rows = conn.execute(text("PRAGMA table_info(batch)")).fetchall()

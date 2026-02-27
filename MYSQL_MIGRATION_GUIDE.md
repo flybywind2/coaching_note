@@ -57,11 +57,14 @@ cd backend
 python scripts/init_db.py
 ```
 
-또는 앱 구동 시 `app.main`의 startup에서 `create_all()`이 실행되어 누락 테이블이 생성됩니다.
+또는 앱 구동 시 `app.main`의 startup에서 자동으로 아래가 실행됩니다.
+- `create_all()`로 누락 테이블 생성
+- non-sqlite(MySQL 포함)에서 모델 기준 누락 컬럼/인덱스 자동 보정
 
 중요:
-- MySQL에서는 startup의 SQLite 전용 `ALTER TABLE` 보정 로직이 실행되지 않습니다.
-- 즉 MySQL에서는 `create_all()`로 **없는 테이블만 생성**되며, 기존 테이블의 컬럼 추가/변경은 자동 반영되지 않습니다.
+- SQLite 전용 수동 `ALTER TABLE` 보정 코드는 여전히 SQLite에서만 동작합니다.
+- MySQL 자동 보정은 **누락 컬럼/인덱스 추가** 범위입니다.
+- 컬럼 타입 변경/삭제, 제약조건 재정의, 데이터 변환(backfill)이 필요한 변경은 별도 마이그레이션 스크립트가 필요합니다.
 
 ## 6. 데이터 이전 (SQLite -> MySQL)
 
@@ -136,4 +139,5 @@ copy /Y ssp_coaching_backup.db ssp_coaching.db
 
 - 운영 환경은 `--reload` 없이 실행
 - MySQL 연결 풀/timeout 설정 점검
+- startup 자동 스키마 동기화는 편의 기능이므로, 운영에서는 주요 스키마 변경 시 사전 검증된 마이그레이션 절차를 권장
 - 현재 `backend/alembic`에는 `versions/` 리비전 파일이 없으므로, 장기적으로는 Alembic 초기 리비전 생성 후 스키마 변경 이력을 Alembic으로 관리 권장
