@@ -16,6 +16,7 @@ const Header = {
       { path: '/calendar', label: '캘린더', roles: ['admin', 'coach', 'internal_coach', 'participant', 'observer'] },
       { path: '/coaching-plan', label: '코칭 계획/실적', roles: ['admin', 'coach', 'internal_coach'] },
       { path: '/board', label: '게시판', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
+      // [FEEDBACK7] 신규 메뉴: 수강신청/과제 조사/설문
       { path: '/course-registration', label: '수강신청', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
       { path: '/project-research', label: '과제 조사', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant'] },
       { path: '/survey', label: '설문', roles: ['admin', 'participant'] },

@@ -8,6 +8,7 @@ const Router = {
   roleRestrictedRoots: {
     '/calendar': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'participant' || user.role === 'observer')),
     '/coaching-plan': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
+    // [FEEDBACK7] 과제 조사/설문 접근 제어
     '/project-research': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'external_coach' || user.role === 'participant')),
     '/survey': (user) => !!(user && (user.role === 'admin' || user.role === 'participant')),
     '/dashboard': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),

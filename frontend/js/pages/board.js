@@ -22,6 +22,7 @@ Pages.board = {
       const boardFromPath = Number.isNaN(boardIdFromPath)
         ? null
         : boards.find((b) => b.board_id === boardIdFromPath) || null;
+      // [FEEDBACK7] 게시판 차수 분리 기본 선택 로직
       const requestedBatchId = Number.parseInt(params.batch_id, 10);
       const stateBatchId = Number.parseInt(State.get('currentBatchId'), 10);
       const selectedBatchId = [requestedBatchId, stateBatchId, batches[0].batch_id]

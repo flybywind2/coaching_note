@@ -11,6 +11,7 @@ import app.models  # noqa: F401 - 모델 import로 metadata 등록
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
+    # [FEEDBACK7] 기능 3~5 라우터를 메인 앱에 등록합니다.
     admin_ip, users, uploads, workspace, about, coaching_plan, attendance, project_research, surveys, lectures,
 )
 
@@ -113,6 +114,7 @@ def ensure_schema():
         ai_content_columns = {str(row[1]) for row in ai_content_rows}
         if "week_number" not in ai_content_columns:
             conn.execute(text("ALTER TABLE ai_generated_content ADD COLUMN week_number INTEGER"))
+        # [FEEDBACK7] 게시판 차수 분리 컬럼 자동 보정
         board_post_rows = conn.execute(text("PRAGMA table_info(board_post)")).fetchall()
         board_post_columns = {str(row[1]) for row in board_post_rows}
         if "batch_id" not in board_post_columns:

@@ -32,6 +32,7 @@ def list_posts(
     board_id: int,
     skip: int = 0,
     limit: int = 20,
+    # [FEEDBACK7] 게시판 차수 분리 필터
     batch_id: int | None = Query(None, ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

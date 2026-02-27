@@ -16,6 +16,7 @@ from app.models.ai_content import AIGeneratedContent
 from app.models.content_version import ContentVersion
 from app.models.coaching_template import CoachingNoteTemplate
 from app.models.site_content import SiteContent
+# [FEEDBACK7] 소개/조사/설문/강의 도메인 모델 export
 from app.models.about_news import AboutNews
 from app.models.project_research import ProjectResearchItem, ProjectResearchQuestion, ProjectResearchResponse
 from app.models.survey import Survey, SurveyQuestion, SurveyResponse

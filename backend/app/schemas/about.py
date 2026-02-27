@@ -71,6 +71,7 @@ class CoachReorderRequest(BaseModel):
     right_coach_ids: list[int] = []
 
 
+# [FEEDBACK7] 소식(news) 응답/요청 스키마
 class AboutNewsBase(BaseModel):
     title: str
     content: str

@@ -8,6 +8,7 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
+# [FEEDBACK7] 강의관리 데이터와 캘린더 연동
 from app.models.lecture import Lecture
 from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession, SessionAttendee
@@ -228,7 +229,7 @@ def get_calendar(
             "scope": scope,
         })
 
-    # 1.5. Lecture schedules
+    # [FEEDBACK7] 1.5. Lecture schedules
     lecture_rows = (
         db.query(Lecture)
         .filter(

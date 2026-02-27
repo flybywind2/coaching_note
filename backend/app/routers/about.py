@@ -11,6 +11,7 @@ from app.models.access_scope import UserBatchAccess
 from app.models.batch import Batch
 from app.models.project import Project, ProjectMember
 from app.models.site_content import SiteContent
+# [FEEDBACK7] 소식(news) 탭 백엔드 리소스
 from app.models.about_news import AboutNews
 from app.models.user import User, Coach
 from app.utils.permissions import EXTERNAL_COACH, INTERNAL_COACH, LEGACY_COACH
@@ -220,6 +221,7 @@ def update_content(
     )
 
 
+# [FEEDBACK7] SSP+ 소개 > 소식 CRUD
 @router.get("/news", response_model=List[AboutNewsOut])
 def list_news(
     include_hidden: bool = Query(False),

@@ -72,6 +72,7 @@ Pages.admin = {
       return;
     }
 
+    // [FEEDBACK7] 관리자 탭에 강의 관리 탭을 포함합니다.
     el.innerHTML = `
       <div class="page-container">
         <h1>관리자 메뉴</h1>

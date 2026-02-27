@@ -43,6 +43,7 @@ Pages.calendar = {
       const batchId = State.get('currentBatchId') || batches[0].batch_id;
       State.set('currentBatchId', batchId);
 
+      // [FEEDBACK7] 캘린더 범례에 강의일정을 추가합니다.
       el.innerHTML = `
         <div class="page-container">
           <div class="page-header">
@@ -688,6 +689,7 @@ Pages.calendar = {
       || canManageProjectSession
     );
     const canDelete = canEdit;
+    // [FEEDBACK7] 강의 일정 상세에서 강의 소개 페이지 링크 제공
     const canOpenLecturePage = event.manage_type === 'lecture' && !!event.link_url;
 
     const lines = [];
