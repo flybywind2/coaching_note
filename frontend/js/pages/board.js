@@ -7,10 +7,14 @@ Pages.board = {
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
       const user = Auth.getUser();
-      const boards = await API.getBoards();
+      const [boards, batches] = await Promise.all([API.getBoards(), API.getBatches()]);
 
       if (!boards.length) {
         el.innerHTML = '<div class="empty-state">게시판 설정이 없습니다.</div>';
+        return;
+      }
+      if (!batches.length) {
+        el.innerHTML = '<div class="empty-state">차수 정보가 없습니다.</div>';
         return;
       }
 
@@ -18,6 +22,12 @@ Pages.board = {
       const boardFromPath = Number.isNaN(boardIdFromPath)
         ? null
         : boards.find((b) => b.board_id === boardIdFromPath) || null;
+      // [FEEDBACK7] 게시판 차수 분리 기본 선택 로직
+      const requestedBatchId = Number.parseInt(params.batch_id, 10);
+      const stateBatchId = Number.parseInt(State.get('currentBatchId'), 10);
+      const selectedBatchId = [requestedBatchId, stateBatchId, batches[0].batch_id]
+        .find((id) => Number.isInteger(id) && batches.some((b) => b.batch_id === id));
+      State.set('currentBatchId', selectedBatchId);
       const initialCategory = boardFromPath?.board_type || 'all';
       const selectedCategory = params.category || initialCategory;
       const searchQuery = (params.q || '').trim();
@@ -26,12 +36,14 @@ Pages.board = {
         limit: 300,
         category: selectedCategory === 'all' ? null : selectedCategory,
         q: searchQuery || null,
+        batch_id: selectedBatchId,
       });
 
-      const buildListUrl = (category, q) => {
+      const buildListUrl = (category, q, batchId) => {
         const query = new URLSearchParams();
         if (category && category !== 'all') query.set('category', category);
         if (q) query.set('q', q);
+        if (batchId != null) query.set('batch_id', String(batchId));
         return `/board${query.toString() ? `?${query.toString()}` : ''}`;
       };
 
@@ -40,6 +52,10 @@ Pages.board = {
           <div class="page-header">
             <h1>게시판</h1>
             <div class="inline-actions">
+              <label class="hint" for="board-batch-filter">차수</label>
+              <select id="board-batch-filter">
+                ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === selectedBatchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
+              </select>
               <label class="hint" for="board-category-filter">분류</label>
               <select id="board-category-filter">
                 <option value="all"${selectedCategory === 'all' ? ' selected' : ''}>전체</option>
@@ -81,7 +97,10 @@ Pages.board = {
                     <tr class="board-row ${p.is_notice ? 'notice' : ''}" data-post-id="${p.post_id}">
                       <td>${p.post_no != null ? p.post_no : ''}</td>
                       <td>${p.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(p.board_name || p.board_type || '-')}</span>`}</td>
-                      <td><a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a></td>
+                      <td>
+                        <a href="#/board/post/${p.post_id}" class="post-title">${Fmt.escape(p.title)}</a>
+                        ${p.is_batch_private ? '<span class="tag tag-batch-private">차수공개</span>' : ''}
+                      </td>
                       <td>${Fmt.escape(p.author_name || `#${p.author_id}`)}</td>
                       <td>${Fmt.date(p.created_at)}</td>
                       <td>${p.view_count || 0}</td>
@@ -94,24 +113,34 @@ Pages.board = {
           </div>
         </div>`;
 
+      document.getElementById('board-batch-filter')?.addEventListener('change', (e) => {
+        const nextBatchId = Number.parseInt(e.target.value, 10);
+        if (!Number.isNaN(nextBatchId)) {
+          State.set('currentBatchId', nextBatchId);
+          Router.go(buildListUrl(selectedCategory, searchQuery, nextBatchId));
+        }
+      });
+
       document.getElementById('board-category-filter')?.addEventListener('change', (e) => {
         const next = e.target.value || 'all';
-        Router.go(buildListUrl(next, searchQuery));
+        Router.go(buildListUrl(next, searchQuery, selectedBatchId));
       });
 
       document.getElementById('board-search-form')?.addEventListener('submit', (e) => {
         e.preventDefault();
         const keyword = (document.getElementById('board-search-input')?.value || '').trim();
-        Router.go(buildListUrl(selectedCategory, keyword));
+        Router.go(buildListUrl(selectedCategory, keyword, selectedBatchId));
       });
 
       document.getElementById('board-search-clear-btn')?.addEventListener('click', () => {
-        Router.go(buildListUrl(selectedCategory, ''));
+        Router.go(buildListUrl(selectedCategory, '', selectedBatchId));
       });
 
       document.getElementById('new-post-btn')?.addEventListener('click', () => {
         this._openPostModal({
           boards,
+          batches,
+          selectedBatchId,
           user,
           initialBoardId: boardFromPath?.board_id || boards[0].board_id,
           onSaved: async () => {
@@ -124,7 +153,7 @@ Pages.board = {
     }
   },
 
-  _openPostModal({ boards, user, post = null, initialBoardId = null, onSaved }) {
+  _openPostModal({ boards, batches, selectedBatchId = null, user, post = null, initialBoardId = null, onSaved }) {
     const isEdit = !!post;
     let selectableBoards = user.role === 'admin'
       ? boards
@@ -141,8 +170,16 @@ Pages.board = {
     const isBoardLocked = isEdit && post?.board_type === 'notice';
     const fallbackBoardId = selectableBoards[0]?.board_id || boards[0]?.board_id;
     const defaultBoardId = post?.board_id || initialBoardId || fallbackBoardId;
+    const fallbackBatchId = selectedBatchId || batches[0]?.batch_id || null;
+    const defaultBatchId = post?.batch_id || fallbackBatchId;
     Modal.open(`<h2>${isEdit ? '게시글 수정' : '글쓰기'}</h2>
       <form id="board-post-form">
+        <div class="form-group">
+          <label>차수 *</label>
+          <select name="batch_id" required>
+            ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === defaultBatchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
+          </select>
+        </div>
         <div class="form-group">
           <label>분류 *</label>
           <select name="board_id" required ${isBoardLocked ? 'disabled' : ''}>
@@ -152,6 +189,12 @@ Pages.board = {
           ${isBoardLocked ? `<input type="hidden" name="board_id" value="${defaultBoardId}" />` : ''}
         </div>
         <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(post?.title || '')}" /></div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" name="is_batch_private" ${post?.is_batch_private ? 'checked' : ''} />
+            해당 차수에게만 공개
+          </label>
+        </div>
         <div class="form-group"><label>내용 *</label><div id="board-post-editor"></div></div>
         <div class="form-group mention-picker-group">
           <label>멘션 추가</label>
@@ -181,7 +224,9 @@ Pages.board = {
       const fd = new FormData(e.target);
       const title = (fd.get('title') || '').toString().trim();
       const boardId = Number.parseInt((fd.get('board_id') || '').toString(), 10);
-      if (!title || Number.isNaN(boardId)) return;
+      const batchId = Number.parseInt((fd.get('batch_id') || '').toString(), 10);
+      const isBatchPrivate = fd.get('is_batch_private') === 'on';
+      if (!title || Number.isNaN(boardId) || Number.isNaN(batchId)) return;
       if (postEditor.isEmpty()) {
         const errEl = document.getElementById('board-post-err');
         errEl.textContent = '내용을 입력하세요.';
@@ -195,11 +240,15 @@ Pages.board = {
             title,
             content,
             board_id: boardId,
+            batch_id: batchId,
+            is_batch_private: isBatchPrivate,
           });
         } else {
           await API.createPost(boardId, {
             title,
             content,
+            batch_id: batchId,
+            is_batch_private: isBatchPrivate,
           });
         }
         Modal.close();
@@ -275,10 +324,11 @@ Pages.board = {
 
     el.innerHTML = '<div class="loading">로딩 중...</div>';
     try {
-      const [post, comments, boards] = await Promise.all([
+      const [post, comments, boards, batches] = await Promise.all([
         API.getPost(params.boardId, postId),
         API.getPostComments(postId),
         API.getBoards(),
+        API.getBatches(),
       ]);
       const user = Auth.getUser();
       const canManagePost = user.role === 'admin' || post.author_id === user.user_id;
@@ -289,6 +339,7 @@ Pages.board = {
           <div class="post-detail">
             <div class="inline-actions">
               ${post.board_type === 'notice' ? '<span class="tag tag-notice">공지사항</span>' : `<span class="tag">${Fmt.escape(post.board_name || post.board_type || '-')}</span>`}
+              ${post.is_batch_private ? '<span class="tag tag-batch-private">차수공개</span>' : ''}
             </div>
             <h2>${Fmt.escape(post.title)}</h2>
             <div class="post-meta">${Fmt.escape(post.author_name || `#${post.author_id}`)} · ${Fmt.datetime(post.created_at)} · 조회 ${post.view_count}</div>
@@ -326,6 +377,8 @@ Pages.board = {
       document.getElementById('edit-post-btn')?.addEventListener('click', () => {
         this._openPostModal({
           boards,
+          batches,
+          selectedBatchId: post.batch_id,
           user,
           post,
           onSaved: async () => {

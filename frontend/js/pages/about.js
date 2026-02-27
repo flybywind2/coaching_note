@@ -8,6 +8,11 @@ Pages.about = {
     try {
       const user = Auth.getUser();
       const isAdmin = user.role === 'admin';
+      if (params.tab === 'news') {
+        // [FEEDBACK7] 소식 탭은 별도 렌더러로 분기
+        await this._renderNewsView(el, { isAdmin });
+        return;
+      }
       const isCoach = Auth.isCoach();
       const currentUserId = user?.user_id || null;
       const initialTab = params.tab === 'coach' ? 'coach' : 'intro';
@@ -136,6 +141,7 @@ Pages.about = {
             <div class="page-header">
               <h1>SSP+ 소개</h1>
               <div class="tabs">
+                <a href="#/about?tab=news" class="tab-btn">소식</a>
                 <button class="tab-btn${isIntroTab ? ' active' : ''}" data-tab="intro">SSP+ 소개</button>
                 <button class="tab-btn${!isIntroTab ? ' active' : ''}" data-tab="coach">코치 소개</button>
               </div>
@@ -377,6 +383,173 @@ Pages.about = {
     } catch (e) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(e.message)}</div>`;
     }
+  },
+
+  // [FEEDBACK7] SSP+ 소개 > 소식 탭 렌더링
+  async _renderNewsView(el, { isAdmin }) {
+    const loadNews = async () => {
+      const rows = await API.getAboutNews({ include_hidden: isAdmin });
+      return (Array.isArray(rows) ? rows : []).sort((a, b) => {
+        const aTime = new Date(a.published_at || 0).getTime();
+        const bTime = new Date(b.published_at || 0).getTime();
+        if (aTime !== bTime) return bTime - aTime;
+        return Number(b.news_id || 0) - Number(a.news_id || 0);
+      });
+    };
+
+    let newsItems = await loadNews();
+    let selectedNewsId = newsItems[0]?.news_id || null;
+
+    const draw = () => {
+      const selected = newsItems.find((row) => Number(row.news_id) === Number(selectedNewsId)) || newsItems[0] || null;
+      el.innerHTML = `
+        <div class="page-container about-page">
+          <div class="page-header">
+            <h1>SSP+ 소개</h1>
+            <div class="tabs">
+              <button class="tab-btn active" disabled>소식</button>
+              <a href="#/about?tab=intro" class="tab-btn">SSP+ 소개</a>
+              <a href="#/about?tab=coach" class="tab-btn">코치 소개</a>
+            </div>
+            ${isAdmin ? `
+              <div class="inline-actions">
+                <button id="about-news-add-btn" class="btn btn-secondary">소식 추가</button>
+              </div>
+            ` : ''}
+          </div>
+
+          <section class="card about-news-board">
+            <aside class="about-news-list">
+              ${newsItems.length
+                ? newsItems.map((news) => `
+                  <button class="about-news-item${Number(news.news_id) === Number(selected?.news_id) ? ' active' : ''}" data-news-id="${news.news_id}">
+                    <strong>${Fmt.escape(news.title || '-')}</strong>
+                    <span>${Fmt.date(news.published_at)}</span>
+                    ${isAdmin && !news.is_visible ? '<em class="tag tag-danger">숨김</em>' : ''}
+                  </button>
+                `).join('')
+                : '<p class="empty-state compact">등록된 소식이 없습니다.</p>'}
+            </aside>
+            <article class="about-news-content">
+              ${selected ? `
+                <header class="about-news-content-head">
+                  <h3>${Fmt.escape(selected.title || '-')}</h3>
+                  <div class="inline-actions">
+                    <span class="hint">${Fmt.datetime(selected.published_at)}</span>
+                    ${isAdmin ? `<button id="about-news-edit-btn" class="btn btn-sm btn-secondary" data-news-id="${selected.news_id}">수정</button>` : ''}
+                  </div>
+                </header>
+                <div class="rich-content">${Fmt.rich(selected.content, '<p class="empty-state">내용이 없습니다.</p>')}</div>
+              ` : '<p class="empty-state">표시할 소식이 없습니다.</p>'}
+            </article>
+          </section>
+        </div>
+      `;
+
+      el.querySelectorAll('.about-news-item').forEach((btn) => btn.addEventListener('click', () => {
+        const newsId = Number.parseInt(btn.dataset.newsId, 10);
+        if (Number.isNaN(newsId)) return;
+        selectedNewsId = newsId;
+        draw();
+      }));
+
+      document.getElementById('about-news-add-btn')?.addEventListener('click', async () => {
+        await this._openNewsModal({
+          mode: 'create',
+          onSaved: async (saved) => {
+            newsItems = await loadNews();
+            if (saved?.news_id) selectedNewsId = saved.news_id;
+            draw();
+          },
+        });
+      });
+
+      document.getElementById('about-news-edit-btn')?.addEventListener('click', async () => {
+        if (!selected) return;
+        await this._openNewsModal({
+          mode: 'edit',
+          news: selected,
+          onSaved: async () => {
+            newsItems = await loadNews();
+            draw();
+          },
+        });
+      });
+    };
+
+    draw();
+  },
+
+  async _openNewsModal({ mode = 'create', news = null, onSaved }) {
+    const isEdit = mode === 'edit';
+    const toDateTimeLocal = (value) => {
+      if (!value) return '';
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return String(value).slice(0, 16);
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      const hh = String(parsed.getHours()).padStart(2, '0');
+      const mm = String(parsed.getMinutes()).padStart(2, '0');
+      return `${y}-${m}-${d}T${hh}:${mm}`;
+    };
+
+    Modal.open(`<h2>${isEdit ? '소식 수정' : '소식 추가'}</h2>
+      <form id="about-news-form">
+        <div class="form-group"><label>제목 *</label><input name="title" required value="${Fmt.escape(news?.title || '')}" /></div>
+        <div class="form-group"><label>게시일시 *</label><input type="datetime-local" name="published_at" required value="${Fmt.escape(toDateTimeLocal(news?.published_at))}" /></div>
+        <div class="form-group"><label><input type="checkbox" name="is_visible"${news?.is_visible !== false ? ' checked' : ''} /> 공개 상태</label></div>
+        <div class="form-group"><label>내용 *</label><div id="about-news-editor-wrap"></div></div>
+        <div class="page-actions">
+          <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
+        </div>
+        <p class="form-error" id="about-news-err" style="display:none;"></p>
+      </form>`, null, { className: 'modal-box-xl' });
+
+    const editor = RichEditor.create(document.getElementById('about-news-editor-wrap'), {
+      initialHTML: news?.content || '',
+      placeholder: '소식 본문을 입력하세요.',
+      onImageUpload: (file) => API.uploadEditorImage(file, { scope: 'about' }),
+      onFileUpload: (file) => API.uploadEditorFile(file, { scope: 'about' }),
+    });
+
+    document.getElementById('about-news-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const errEl = document.getElementById('about-news-err');
+      errEl.style.display = 'none';
+
+      const title = (fd.get('title') || '').toString().trim();
+      const publishedAtRaw = (fd.get('published_at') || '').toString();
+      if (!title || !publishedAtRaw) {
+        errEl.textContent = '제목과 게시일시를 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (editor.isEmpty()) {
+        errEl.textContent = '내용을 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      const payload = {
+        title,
+        content: editor.getSanitizedHTML(),
+        published_at: publishedAtRaw.length === 16 ? `${publishedAtRaw}:00` : publishedAtRaw,
+        is_visible: fd.has('is_visible'),
+      };
+
+      try {
+        const saved = isEdit
+          ? await API.updateAboutNews(news.news_id, payload)
+          : await API.createAboutNews(payload);
+        Modal.close();
+        if (onSaved) onSaved(saved);
+      } catch (err) {
+        errEl.textContent = err.message || `소식 ${isEdit ? '수정' : '등록'} 실패`;
+        errEl.style.display = 'block';
+      }
+    });
   },
 
   async _openEditModal({ key, content, onSaved }) {

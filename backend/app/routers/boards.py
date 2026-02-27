@@ -32,10 +32,12 @@ def list_posts(
     board_id: int,
     skip: int = 0,
     limit: int = 20,
+    # [FEEDBACK7] 게시판 차수 분리 필터
+    batch_id: int | None = Query(None, ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return board_service.get_posts(db, board_id, skip, limit)
+    return board_service.get_posts(db, board_id, current_user, skip, limit, batch_id=batch_id)
 
 
 @router.get("/posts", response_model=List[BoardPostOut])
@@ -43,11 +45,12 @@ def list_all_posts(
     skip: int = 0,
     limit: int = 40,
     category: str = None,
+    batch_id: int | None = Query(None, ge=1),
     q: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return board_service.get_all_posts(db, skip, limit, category, search_q=q)
+    return board_service.get_all_posts(db, current_user, skip, limit, category, search_q=q, batch_id=batch_id)
 
 
 @router.get("/mention-candidates", response_model=List[MentionCandidateOut])
@@ -72,8 +75,9 @@ def create_post(
 
 @router.get("/posts/{post_id}", response_model=BoardPostOut)
 def get_post(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    board_service.get_post_with_meta(db, post_id, current_user=current_user)
     board_service.increment_view(db, post_id, current_user.user_id)
-    return board_service.get_post_with_meta(db, post_id)
+    return board_service.get_post_with_meta(db, post_id, current_user=current_user)
 
 
 @router.put("/posts/{post_id}", response_model=BoardPostOut)
@@ -94,7 +98,7 @@ def delete_post(post_id: int, db: Session = Depends(get_db), current_user: User 
 
 @router.get("/posts/{post_id}/comments", response_model=List[PostCommentOut])
 def list_comments(post_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return board_service.get_comments(db, post_id)
+    return board_service.get_comments(db, post_id, current_user)
 
 
 @router.post("/posts/{post_id}/comments", response_model=PostCommentOut)

@@ -258,6 +258,7 @@ body::after {
 .tag-planned { background: rgba(245, 158, 11, 0.16); color: #975a06; border-color: rgba(245, 158, 11, 0.3); }
 .tag-cancelled { background: rgba(239, 68, 68, 0.14); color: #b12030; border-color: rgba(239, 68, 68, 0.3); }
 .tag-notice { background: rgba(168, 85, 247, 0.16); color: #6d30c5; border-color: rgba(168, 85, 247, 0.3); }
+.tag-batch-private { background: rgba(14, 165, 233, 0.15); color: #03678d; border-color: rgba(14, 165, 233, 0.3); margin-left: 8px; } /* [FEEDBACK7] 차수 비공개 표시 */
 .tag-done { background: rgba(47, 182, 125, 0.14); color: #0f7f52; border-color: rgba(47, 182, 125, 0.3); }
 .badge {
   background: var(--danger);
@@ -700,11 +701,14 @@ body::after {
   padding-bottom: 8px;
 }
 .tab-btn {
+  display: inline-flex;
+  align-items: center;
   padding: 8px 14px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.62);
   background: var(--glass-bg-soft);
   color: #42547f;
+  text-decoration: none;
   cursor: pointer;
   transition: 0.2s ease;
 }
@@ -1035,9 +1039,349 @@ body::after {
 }
 .about-drag-hint { font-size: 11px; color: #4462a3; }
 .about-coach-board { display: grid; gap: 12px; }
+.about-news-board {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.about-news-list {
+  border: 1px solid rgba(68, 95, 156, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.4);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  max-height: 640px;
+  overflow: auto;
+}
+.about-news-item {
+  width: 100%;
+  border: 1px solid rgba(101, 126, 183, 0.34);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #243a6e;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.about-news-item strong {
+  font-size: 14px;
+}
+.about-news-item span {
+  font-size: 12px;
+  color: #4b6192;
+}
+.about-news-item.active {
+  border-color: rgba(47, 102, 255, 0.82);
+  background: rgba(224, 236, 255, 0.72);
+}
+.about-news-content {
+  border: 1px solid rgba(68, 95, 156, 0.24);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  padding: 14px;
+  min-height: 320px;
+}
+.about-news-content-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.about-news-content-head h3 {
+  margin: 0;
+  color: #1a2f5f;
+}
+/* [FEEDBACK7] 과제 조사 페이지 */
+.research-page { display: grid; gap: 14px; }
+.research-board {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 420px;
+}
+.research-item-list {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: auto;
+  max-height: 70vh;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+.research-item-btn {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+  padding: 10px;
+  cursor: pointer;
+}
+.research-item-btn.active {
+  border-color: rgba(79, 124, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(79, 124, 255, 0.35);
+}
+.research-item-btn strong {
+  display: block;
+  color: #1c2f5d;
+}
+.research-item-btn span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.research-detail { display: grid; gap: 12px; align-content: start; }
+.research-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.research-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+}
+.research-table { min-width: 760px; }
+.research-table tr.my-row td { background: rgba(222, 242, 255, 0.38); }
+.research-q-head {
+  display: grid;
+  gap: 2px;
+}
+.research-q-head em {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.research-answer-input {
+  width: 100%;
+  min-width: 120px;
+}
 .empty-state.compact {
   margin: 0;
   font-size: 12px;
+}
+/* [FEEDBACK7] 설문 페이지 */
+.survey-page { display: grid; gap: 14px; }
+.survey-board {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 420px;
+}
+.survey-list {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: auto;
+  max-height: 70vh;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+}
+.survey-item-btn {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+  padding: 10px;
+  cursor: pointer;
+}
+.survey-item-btn.active {
+  border-color: rgba(79, 124, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(79, 124, 255, 0.35);
+}
+.survey-item-btn strong {
+  display: block;
+  color: #1c2f5d;
+}
+.survey-item-btn span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.survey-detail { display: grid; gap: 12px; align-content: start; }
+.survey-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.survey-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+}
+.survey-table { min-width: 760px; }
+.survey-table tr.my-row td { background: rgba(222, 242, 255, 0.38); }
+.survey-q-head {
+  display: grid;
+  gap: 2px;
+}
+.survey-q-head em {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.required-mark {
+  color: #b12030;
+  font-style: normal;
+}
+.survey-answer-input {
+  width: 100%;
+  min-width: 120px;
+}
+.survey-option-list {
+  display: grid;
+  gap: 5px;
+  min-width: 160px;
+}
+.survey-option-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.survey-option-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.survey-required-missing {
+  outline: 2px solid rgba(239, 68, 68, 0.5);
+  outline-offset: -2px;
+  background: rgba(255, 235, 238, 0.75);
+}
+.survey-stats {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.28);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.survey-stats h4 {
+  color: #1c2f5d;
+  margin: 0;
+}
+.survey-stats-table-wrap {
+  overflow: auto;
+  border-radius: 10px;
+}
+/* [FEEDBACK7] 수강신청 페이지 */
+.course-registration-page {
+  display: grid;
+  gap: 14px;
+}
+.cr-intro h1 {
+  margin-bottom: 6px;
+}
+.cr-intro p {
+  color: #2f4778;
+}
+.cr-content {
+  display: grid;
+  gap: 12px;
+}
+.cr-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 12px;
+}
+.cr-list {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: auto;
+  max-height: 68vh;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.cr-card {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.52);
+  padding: 10px;
+  cursor: pointer;
+  color: #1c2f5d;
+}
+.cr-card strong {
+  display: block;
+}
+.cr-card span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cr-card.active {
+  border-color: rgba(79, 124, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(79, 124, 255, 0.35);
+}
+.cr-card-tags {
+  margin-top: 6px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.cr-detail {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.cr-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cr-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.cr-summary-item {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.36);
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+}
+.cr-summary-item label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cr-summary-item strong {
+  color: #1c2f5d;
+  font-size: 17px;
+}
+.cr-body {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.28);
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+}
+.cr-body h4 {
+  color: #1c2f5d;
+}
+.cr-member-list {
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.36);
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+.cr-member-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .coach-photo-upload-tools {
   display: flex;
@@ -2582,9 +2926,18 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   .doc-type-row { flex-direction: column; align-items: flex-start; }
   .doc-actions { width: 100%; justify-content: flex-start; }
   .project-list-table { min-width: 640px; }
+  .about-news-board { grid-template-columns: 1fr; }
+  .about-news-list { max-height: 280px; }
   .about-coach-grid { grid-template-columns: 1fr; }
   .about-coach-head { flex-direction: column-reverse; }
   .about-coach-photo { width: min(100%, 220px); height: auto; aspect-ratio: 1 / 1; }
+  .research-board { grid-template-columns: 1fr; }
+  .research-item-list { max-height: 280px; }
+  .survey-board { grid-template-columns: 1fr; }
+  .survey-list { max-height: 280px; }
+  .cr-layout { grid-template-columns: 1fr; }
+  .cr-list { max-height: 280px; }
+  .cr-summary-grid { grid-template-columns: 1fr; }
   .records-tab-layout { grid-template-columns: 1fr; }
   .records-tab-nav { grid-template-columns: 1fr; }
   .data-table { display: block; overflow-x: auto; white-space: nowrap; }

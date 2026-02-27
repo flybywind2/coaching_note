@@ -146,13 +146,15 @@ const API = {
 
   // Boards
   getBoards: () => apiFetch('/api/boards'),
-  getPosts: (boardId, skip = 0, limit = 20) => apiFetch(`/api/boards/${boardId}/posts?skip=${skip}&limit=${limit}`),
+  getPosts: (boardId, skip = 0, limit = 20, batchId = null) =>
+    apiFetch(`/api/boards/${boardId}/posts?skip=${skip}&limit=${limit}${batchId != null ? `&batch_id=${encodeURIComponent(String(batchId))}` : ''}`),
   getAllPosts: (params = {}) => {
     const q = new URLSearchParams();
     if (params.skip != null) q.set('skip', String(params.skip));
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.category) q.set('category', String(params.category));
     if (params.q) q.set('q', String(params.q));
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id)); // [FEEDBACK7] 게시판 차수 분리
     return apiFetch(`/api/boards/posts${q.toString() ? `?${q.toString()}` : ''}`);
   },
   getPost: (boardId, postId) => apiFetch(`/api/boards/posts/${postId}`),
@@ -166,6 +168,72 @@ const API = {
   updatePostComment: (commentId, data) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePostComment: (commentId) => apiFetch(`/api/boards/comments/${commentId}`, { method: 'DELETE' }),
   getBoardMentionCandidates: (q, limit = 8) => apiFetch(`/api/boards/mention-candidates?q=${encodeURIComponent(q)}&limit=${Math.max(1, Math.min(20, Number(limit) || 8))}`),
+  // [FEEDBACK7] Project Research
+  getProjectResearchBatches: () => apiFetch('/api/project-research/batches'),
+  getProjectResearchItems: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/project-research/items${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createProjectResearchItem: (data) => apiFetch('/api/project-research/items', { method: 'POST', body: JSON.stringify(data) }),
+  updateProjectResearchItem: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProjectResearchItem: (itemId) => apiFetch(`/api/project-research/items/${itemId}`, { method: 'DELETE' }),
+  getProjectResearchDetail: (itemId) => apiFetch(`/api/project-research/items/${itemId}/detail`),
+  createProjectResearchQuestion: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}/questions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateProjectResearchQuestion: (questionId, data) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteProjectResearchQuestion: (questionId) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'DELETE' }),
+  upsertProjectResearchResponses: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
+  // [FEEDBACK7] Survey
+  getSurveyBatches: () => apiFetch('/api/surveys/batches'),
+  getSurveys: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/surveys${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createSurvey: (data) => apiFetch('/api/surveys', { method: 'POST', body: JSON.stringify(data) }),
+  updateSurvey: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSurvey: (surveyId) => apiFetch(`/api/surveys/${surveyId}`, { method: 'DELETE' }),
+  getSurveyDetail: (surveyId) => apiFetch(`/api/surveys/${surveyId}/detail`),
+  createSurveyQuestion: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/questions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateSurveyQuestion: (questionId, data) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSurveyQuestion: (questionId) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'DELETE' }),
+  upsertSurveyResponses: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
+  cancelSurveyResponses: (surveyId, projectId) => apiFetch(`/api/surveys/${surveyId}/responses?project_id=${encodeURIComponent(String(projectId))}`, { method: 'DELETE' }),
+  getSurveyStats: (surveyId) => apiFetch(`/api/surveys/${surveyId}/stats`),
+  downloadSurveyCsv: async (surveyId) => {
+    const token = Auth.getToken();
+    const res = await fetch(`/api/surveys/${surveyId}/export.csv`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 401) {
+      Auth.clear();
+      Router.go('/login');
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'CSV 다운로드 실패');
+    }
+    return res.text();
+  },
+  // [FEEDBACK7] Lectures / Course Registration
+  getLectures: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/lectures${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  getLectureDetail: (lectureId) => apiFetch(`/api/lectures/${lectureId}`),
+  createLecture: (data) => apiFetch('/api/lectures', { method: 'POST', body: JSON.stringify(data) }),
+  updateLecture: (lectureId, data) => apiFetch(`/api/lectures/${lectureId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLecture: (lectureId) => apiFetch(`/api/lectures/${lectureId}`, { method: 'DELETE' }),
+  bulkUpdateLectures: (data) => apiFetch('/api/lectures/bulk-update', { method: 'PUT', body: JSON.stringify(data) }),
+  listLectureRegistrations: (lectureId) => apiFetch(`/api/lectures/${lectureId}/registrations`),
+  registerLecture: (lectureId, data) => apiFetch(`/api/lectures/${lectureId}/register`, { method: 'POST', body: JSON.stringify(data) }),
+  cancelLectureRegistration: (lectureId, projectId) => apiFetch(`/api/lectures/${lectureId}/register?project_id=${encodeURIComponent(String(projectId))}`, { method: 'DELETE' }),
+  setLectureApproval: (registrationId, data) => apiFetch(`/api/lectures/registrations/${registrationId}/approval`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),
@@ -182,6 +250,14 @@ const API = {
   getDashboard: (batchId) => apiFetch(`/api/dashboard${batchId ? '?batch_id=' + batchId : ''}`),
   getAboutContent: (key) => apiFetch(`/api/about/content?key=${encodeURIComponent(key)}`),
   updateAboutContent: (key, data) => apiFetch(`/api/about/content/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  // [FEEDBACK7] SSP+ 소식 메뉴 API
+  getAboutNews: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/about/news${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createAboutNews: (data) => apiFetch('/api/about/news', { method: 'POST', body: JSON.stringify(data) }),
+  updateAboutNews: (newsId, data) => apiFetch(`/api/about/news/${newsId}`, { method: 'PUT', body: JSON.stringify(data) }),
   getCoachProfiles: (params = {}) => {
     const q = new URLSearchParams();
     if (params.batch_id != null) q.set('batch_id', String(params.batch_id));

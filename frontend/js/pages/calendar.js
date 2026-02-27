@@ -43,6 +43,7 @@ Pages.calendar = {
       const batchId = State.get('currentBatchId') || batches[0].batch_id;
       State.set('currentBatchId', batchId);
 
+      // [FEEDBACK7] 캘린더 범례에 강의일정을 추가합니다.
       el.innerHTML = `
         <div class="page-container">
           <div class="page-header">
@@ -61,6 +62,7 @@ Pages.calendar = {
             <span class="legend-item"><span class="dot" style="background:#4CAF50"></span>공통 일정</span>
             <span class="legend-item"><span class="dot" style="background:#00ACC1"></span>코칭 일정</span>
             <span class="legend-item"><span class="dot" style="background:#2196F3"></span>과제 일정</span>
+            <span class="legend-item"><span class="dot" style="background:#8E24AA"></span>강의일정</span>
           </div>
         </div>`;
 
@@ -398,6 +400,7 @@ Pages.calendar = {
     if (scope === 'global') return '공통';
     if (scope === 'coaching') return '코칭';
     if (scope === 'project') return '과제';
+    if (scope === 'lecture') return '강의일정';
     return scope || '-';
   },
 
@@ -686,6 +689,8 @@ Pages.calendar = {
       || canManageProjectSession
     );
     const canDelete = canEdit;
+    // [FEEDBACK7] 강의 일정 상세에서 강의 소개 페이지 링크 제공
+    const canOpenLecturePage = event.manage_type === 'lecture' && !!event.link_url;
 
     const lines = [];
     lines.push(`<div class="info-item full"><label>제목</label><span>${Fmt.escape(event.title || '-')}</span></div>`);
@@ -703,10 +708,16 @@ Pages.calendar = {
 
     Modal.open(`<h2>일정 상세</h2>
       <div class="info-grid">${lines.join('')}</div>
-      ${(canEdit || canDelete) ? `<div class="page-actions">
+      ${(canEdit || canDelete || canOpenLecturePage) ? `<div class="page-actions">
+        ${canOpenLecturePage ? '<button id="cal-open-lecture-btn" class="btn btn-secondary">강의 소개 페이지 이동</button>' : ''}
         ${canEdit ? '<button id="cal-edit-event-btn" class="btn btn-secondary">일정 수정</button>' : ''}
         ${canDelete ? '<button id="cal-delete-event-btn" class="btn btn-danger">일정 삭제</button>' : ''}
       </div>` : ''}`);
+
+    document.getElementById('cal-open-lecture-btn')?.addEventListener('click', () => {
+      Modal.close();
+      Router.go(event.link_url);
+    });
 
     document.getElementById('cal-edit-event-btn')?.addEventListener('click', async () => {
       await this._openEventEditModal(event, batchId, policy);

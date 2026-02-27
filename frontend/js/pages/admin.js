@@ -72,12 +72,14 @@ Pages.admin = {
       return;
     }
 
+    // [FEEDBACK7] 관리자 탭에 강의 관리 탭을 포함합니다.
     el.innerHTML = `
       <div class="page-container">
         <h1>관리자 메뉴</h1>
         <div class="admin-tabs">
           <button class="admin-tab active" data-tab="users">사용자 관리</button>
           <button class="admin-tab" data-tab="batches">차수 관리</button>
+          <button class="admin-tab" data-tab="lectures">강의 관리</button>
           <button class="admin-tab" data-tab="ip-ranges">IP 대역 관리</button>
         </div>
         <div id="admin-content"></div>
@@ -88,6 +90,7 @@ Pages.admin = {
       el.querySelectorAll('.admin-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       if (tab === 'batches') await this._renderBatches(content);
       if (tab === 'users') await this._renderUsers(content);
+      if (tab === 'lectures') await this._renderLectures(content);
       if (tab === 'ip-ranges') await this._renderIPRanges(content);
     };
 
@@ -179,6 +182,307 @@ Pages.admin = {
         await this._renderBatches(el);
       } catch (err) {
         alert(err.message || '차수 삭제 실패');
+      }
+    }));
+  },
+
+  _toDateTimeLocalValue(value) {
+    if (!value) return '';
+    return String(value).slice(0, 16);
+  },
+
+  async _renderLectures(el) {
+    const batches = await API.getBatches().catch(() => []);
+    if (!batches.length) {
+      el.innerHTML = '<div class="empty-state">차수가 없습니다.</div>';
+      return;
+    }
+    const storedBatchId = Number.parseInt(State.get('adminLectureBatchId'), 10);
+    const selectedBatchId = batches.some((b) => b.batch_id === storedBatchId) ? storedBatchId : batches[0].batch_id;
+    State.set('adminLectureBatchId', selectedBatchId);
+    const lectures = await API.getLectures({ batch_id: selectedBatchId, include_hidden: true }).catch(() => []);
+
+    el.innerHTML = `
+      <div class="admin-section">
+        <div class="section-header">
+          <h3>강의 관리</h3>
+          <div class="inline-actions">
+            <select id="admin-lecture-batch">
+              ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === selectedBatchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
+            </select>
+            <button id="admin-lecture-bulk-btn" class="btn btn-secondary">선택 일괄수정</button>
+            <button id="admin-lecture-add-btn" class="btn btn-primary">+ 강의 추가</button>
+          </div>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="admin-lecture-select-all" /></th>
+              <th>ID</th>
+              <th>강의명</th>
+              <th>강사</th>
+              <th>강의일정</th>
+              <th>신청기간</th>
+              <th>정원(총/팀)</th>
+              <th>상태</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lectures.map((lecture) => `
+              <tr>
+                <td><input type="checkbox" class="admin-lecture-row-chk" value="${lecture.lecture_id}" /></td>
+                <td>${lecture.lecture_id}</td>
+                <td>${Fmt.escape(lecture.title)}</td>
+                <td>${Fmt.escape(lecture.instructor || '-')}</td>
+                <td>${Fmt.datetime(lecture.start_datetime)} ~ ${Fmt.datetime(lecture.end_datetime)}</td>
+                <td>${Fmt.date(lecture.apply_start_date)} ~ ${Fmt.date(lecture.apply_end_date)}</td>
+                <td>${lecture.capacity_total != null ? lecture.capacity_total : '∞'} / ${lecture.capacity_team != null ? lecture.capacity_team : '∞'}</td>
+                <td>${lecture.is_visible ? '공개' : '비공개'}</td>
+                <td>
+                  <div class="inline-actions">
+                    <button class="btn btn-sm btn-secondary admin-lecture-reg-btn" data-id="${lecture.lecture_id}">신청현황</button>
+                    <button class="btn btn-sm btn-secondary admin-lecture-edit-btn" data-id="${lecture.lecture_id}">수정</button>
+                    <button class="btn btn-sm btn-danger admin-lecture-del-btn" data-id="${lecture.lecture_id}">삭제</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('') || '<tr><td colspan="9" class="empty-state">등록된 강의가 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    const getSelectedLectureIds = () => (
+      Array.from(el.querySelectorAll('.admin-lecture-row-chk:checked'))
+        .map((chk) => Number.parseInt(chk.value, 10))
+        .filter((v) => !Number.isNaN(v))
+    );
+
+    document.getElementById('admin-lecture-batch')?.addEventListener('change', async (e) => {
+      const nextBatchId = Number.parseInt(e.target.value, 10);
+      State.set('adminLectureBatchId', nextBatchId);
+      await this._renderLectures(el);
+    });
+    document.getElementById('admin-lecture-select-all')?.addEventListener('change', (e) => {
+      const checked = !!e.target.checked;
+      el.querySelectorAll('.admin-lecture-row-chk').forEach((chk) => { chk.checked = checked; });
+    });
+    document.getElementById('admin-lecture-add-btn')?.addEventListener('click', async () => {
+      await this._openLectureModal({
+        batchId: selectedBatchId,
+        onSaved: async () => this._renderLectures(el),
+      });
+    });
+    document.getElementById('admin-lecture-bulk-btn')?.addEventListener('click', async () => {
+      const lectureIds = getSelectedLectureIds();
+      if (!lectureIds.length) {
+        alert('일괄수정할 강의를 선택하세요.');
+        return;
+      }
+      await this._openLectureBulkModal({
+        lectureIds,
+        onSaved: async () => this._renderLectures(el),
+      });
+    });
+
+    el.querySelectorAll('.admin-lecture-edit-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const lectureId = Number.parseInt(btn.dataset.id, 10);
+      const lecture = lectures.find((row) => row.lecture_id === lectureId);
+      if (!lecture) return;
+      await this._openLectureModal({
+        lecture,
+        batchId: selectedBatchId,
+        onSaved: async () => this._renderLectures(el),
+      });
+    }));
+    el.querySelectorAll('.admin-lecture-del-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const lectureId = Number.parseInt(btn.dataset.id, 10);
+      if (Number.isNaN(lectureId)) return;
+      if (!confirm('강의를 삭제하시겠습니까?')) return;
+      await API.deleteLecture(lectureId);
+      await this._renderLectures(el);
+    }));
+    el.querySelectorAll('.admin-lecture-reg-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const lectureId = Number.parseInt(btn.dataset.id, 10);
+      if (Number.isNaN(lectureId)) return;
+      await this._openLectureRegistrationsModal({
+        lectureId,
+        lectureTitle: lectures.find((row) => row.lecture_id === lectureId)?.title || '강의',
+      });
+    }));
+  },
+
+  async _openLectureModal({ lecture = null, batchId, onSaved }) {
+    const isEdit = !!lecture;
+    const nowIso = new Date().toISOString().slice(0, 16);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    Modal.open(`
+      <h2>${isEdit ? '강의 수정' : '강의 추가'}</h2>
+      <form id="admin-lecture-form">
+        <div class="form-group"><label>강의명 *</label><input name="title" required value="${Fmt.escape(lecture?.title || '')}" /></div>
+        <div class="form-group"><label>강의 요약</label><textarea name="summary" rows="3">${Fmt.escape(lecture?.summary || '')}</textarea></div>
+        <div class="form-group"><label>강의 상세</label><textarea name="description" rows="4">${Fmt.escape(lecture?.description || '')}</textarea></div>
+        <div class="form-group"><label>강사</label><input name="instructor" value="${Fmt.escape(lecture?.instructor || '')}" /></div>
+        <div class="form-group"><label>장소</label><input name="location" value="${Fmt.escape(lecture?.location || '')}" /></div>
+        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.start_datetime || nowIso))}" /></div>
+        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.end_datetime || nowIso))}" /></div>
+        <div class="form-group"><label>신청 시작일 *</label><input type="date" name="apply_start_date" required value="${Fmt.escape(String(lecture?.apply_start_date || todayIso))}" /></div>
+        <div class="form-group"><label>신청 종료일 *</label><input type="date" name="apply_end_date" required value="${Fmt.escape(String(lecture?.apply_end_date || todayIso))}" /></div>
+        <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" value="${Fmt.escape(String(lecture?.capacity_total || ''))}" /></div>
+        <div class="form-group"><label>팀별 정원</label><input type="number" min="1" name="capacity_team" value="${Fmt.escape(String(lecture?.capacity_team || ''))}" /></div>
+        <div class="form-group"><label><input type="checkbox" name="is_visible" ${lecture?.is_visible !== false ? 'checked' : ''} /> 공개</label></div>
+        <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '생성'}</button>
+        <p id="admin-lecture-form-err" class="form-error" style="display:none;"></p>
+      </form>
+    `, null, { className: 'modal-box-xl' });
+
+    document.getElementById('admin-lecture-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const payload = {
+        batch_id: batchId,
+        title: String(fd.get('title') || '').trim(),
+        summary: String(fd.get('summary') || '').trim() || null,
+        description: String(fd.get('description') || '').trim() || null,
+        instructor: String(fd.get('instructor') || '').trim() || null,
+        location: String(fd.get('location') || '').trim() || null,
+        start_datetime: String(fd.get('start_datetime') || ''),
+        end_datetime: String(fd.get('end_datetime') || ''),
+        apply_start_date: String(fd.get('apply_start_date') || ''),
+        apply_end_date: String(fd.get('apply_end_date') || ''),
+        capacity_total: fd.get('capacity_total') ? Number.parseInt(String(fd.get('capacity_total')), 10) : null,
+        capacity_team: fd.get('capacity_team') ? Number.parseInt(String(fd.get('capacity_team')), 10) : null,
+        is_visible: fd.get('is_visible') === 'on',
+      };
+      const errEl = document.getElementById('admin-lecture-form-err');
+      if (!payload.title || !payload.start_datetime || !payload.end_datetime || !payload.apply_start_date || !payload.apply_end_date) {
+        errEl.textContent = '필수 값을 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        if (isEdit) await API.updateLecture(lecture.lecture_id, payload);
+        else await API.createLecture(payload);
+        Modal.close();
+        if (onSaved) await onSaved();
+      } catch (err) {
+        errEl.textContent = err.message || '강의 저장 실패';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  async _openLectureBulkModal({ lectureIds, onSaved }) {
+    Modal.open(`
+      <h2>강의 일괄수정</h2>
+      <form id="admin-lecture-bulk-form">
+        <p class="hint">선택한 ${lectureIds.length}개 강의에 입력한 항목만 반영됩니다.</p>
+        <div class="form-group"><label>장소</label><input name="location" placeholder="입력 시 반영" /></div>
+        <div class="form-group"><label>강의 시작</label><input type="datetime-local" name="start_datetime" /></div>
+        <div class="form-group"><label>강의 종료</label><input type="datetime-local" name="end_datetime" /></div>
+        <div class="form-group"><label>신청 시작일</label><input type="date" name="apply_start_date" /></div>
+        <div class="form-group"><label>신청 종료일</label><input type="date" name="apply_end_date" /></div>
+        <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" /></div>
+        <div class="form-group"><label>팀별 정원</label><input type="number" min="1" name="capacity_team" /></div>
+        <div class="form-group">
+          <label>공개 상태</label>
+          <select name="is_visible">
+            <option value="">변경 안함</option>
+            <option value="true">공개</option>
+            <option value="false">비공개</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">일괄 반영</button>
+        <p id="admin-lecture-bulk-err" class="form-error" style="display:none;"></p>
+      </form>
+    `);
+
+    document.getElementById('admin-lecture-bulk-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const payload = { lecture_ids: lectureIds };
+      const location = String(fd.get('location') || '').trim();
+      if (location) payload.location = location;
+      const startDateTime = String(fd.get('start_datetime') || '').trim();
+      if (startDateTime) payload.start_datetime = startDateTime;
+      const endDateTime = String(fd.get('end_datetime') || '').trim();
+      if (endDateTime) payload.end_datetime = endDateTime;
+      const applyStartDate = String(fd.get('apply_start_date') || '').trim();
+      if (applyStartDate) payload.apply_start_date = applyStartDate;
+      const applyEndDate = String(fd.get('apply_end_date') || '').trim();
+      if (applyEndDate) payload.apply_end_date = applyEndDate;
+      const capacityTotal = String(fd.get('capacity_total') || '').trim();
+      if (capacityTotal) payload.capacity_total = Number.parseInt(capacityTotal, 10);
+      const capacityTeam = String(fd.get('capacity_team') || '').trim();
+      if (capacityTeam) payload.capacity_team = Number.parseInt(capacityTeam, 10);
+      const isVisibleRaw = String(fd.get('is_visible') || '').trim();
+      if (isVisibleRaw === 'true') payload.is_visible = true;
+      if (isVisibleRaw === 'false') payload.is_visible = false;
+      const errEl = document.getElementById('admin-lecture-bulk-err');
+
+      if (Object.keys(payload).length === 1) {
+        errEl.textContent = '변경할 항목을 1개 이상 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      try {
+        await API.bulkUpdateLectures(payload);
+        Modal.close();
+        if (onSaved) await onSaved();
+      } catch (err) {
+        errEl.textContent = err.message || '일괄수정 실패';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  async _openLectureRegistrationsModal({ lectureId, lectureTitle }) {
+    const registrations = await API.listLectureRegistrations(lectureId).catch(() => []);
+    const renderRows = (rows) => (
+      rows.map((row) => `
+        <tr>
+          <td>${Fmt.escape(row.project_name || `과제#${row.project_id}`)}</td>
+          <td>${(row.member_user_ids || []).join(', ') || '-'}</td>
+          <td>${row.member_count}</td>
+          <td>${Fmt.escape(row.approval_status)}</td>
+          <td>
+            <div class="inline-actions">
+              <button class="btn btn-xs btn-secondary admin-lecture-approve-btn" data-id="${row.registration_id}" data-status="approved">승인</button>
+              <button class="btn btn-xs btn-danger admin-lecture-approve-btn" data-id="${row.registration_id}" data-status="rejected">반려</button>
+            </div>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" class="empty-state">신청 내역이 없습니다.</td></tr>'
+    );
+
+    Modal.open(`
+      <h2>신청 현황 · ${Fmt.escape(lectureTitle)}</h2>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>과제</th>
+            <th>신청 팀원 ID</th>
+            <th>인원</th>
+            <th>상태</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="admin-lecture-reg-rows">
+          ${renderRows(registrations)}
+        </tbody>
+      </table>
+    `, null, { className: 'modal-box-xl' });
+
+    document.querySelectorAll('.admin-lecture-approve-btn').forEach((btn) => btn.addEventListener('click', async () => {
+      const registrationId = Number.parseInt(btn.dataset.id, 10);
+      const status = String(btn.dataset.status || 'approved');
+      if (Number.isNaN(registrationId)) return;
+      try {
+        await API.setLectureApproval(registrationId, { approval_status: status });
+        await this._openLectureRegistrationsModal({ lectureId, lectureTitle });
+      } catch (err) {
+        alert(err.message || '승인 상태 변경 실패');
       }
     }));
   },
