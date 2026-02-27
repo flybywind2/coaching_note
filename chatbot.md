@@ -11,6 +11,7 @@
 CHATBOT_ENABLED=True
 CHAT_DEBUG_MODE=False
 RAG_ENABLED=True
+RAG_INPUT_ENABLED=True
 RAG_BASE_URL=http://localhost:8000
 RAG_INSERT_ENDPOINT=/insert-doc
 RAG_RETRIEVE_RRF_ENDPOINT=/retrieve-rrf
@@ -31,6 +32,7 @@ AI_IMAGE_MODEL_MAX_IMAGES=3
 - 관리자: UI 노출/질의 허용 (운영 점검 예외)
 - `RAG_ENABLED=True`이면 `CHATBOT_ENABLED`와 무관하게 RAG 입력 동기화는 계속 수행
 - `RAG_ENABLED=False`면 RAG insert/retrieve 비활성화
+- `RAG_INPUT_ENABLED=False`면 RAG 검색은 유지하고 입력 동기화(upsert)만 비활성화
 - `CHAT_DEBUG_MODE=True`이면 챗봇 질의 시 서버 터미널에 RAG 검색 원문과 LLM 호출 이력을 출력
 
 ## 4. API

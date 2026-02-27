@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     CHATBOT_ENABLED: bool = False
     CHAT_DEBUG_MODE: bool = False
     RAG_ENABLED: bool = False
+    RAG_INPUT_ENABLED: bool = True
     RAG_BASE_URL: str = "http://localhost:8000"
     RAG_INSERT_ENDPOINT: str = "/insert-doc"
     RAG_RETRIEVE_RRF_ENDPOINT: str = "/retrieve-rrf"

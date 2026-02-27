@@ -179,6 +179,35 @@ def test_chatbot_upsert_rag_document_works_when_chatbot_disabled(db, monkeypatch
     assert called["count"] == 1
 
 
+def test_chatbot_upsert_rag_document_blocked_when_rag_input_disabled(db, monkeypatch):
+    # [chatbot] RAG_INPUT_ENABLED=false면 RAG 입력(upsert)은 비활성화되어야 한다.
+    from fastapi import HTTPException
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_INPUT_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_INSERT_ENDPOINT", "/insert-doc", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+    monkeypatch.setattr(settings, "RAG_INDEX_NAME", "rp-ssp", raising=False)
+
+    svc = ChatbotService(db)
+    try:
+        svc.upsert_rag_document(
+            doc_id="board_post:99",
+            title="제목",
+            content="본문",
+            metadata={"source_type": "board_post"},
+            user_id="1",
+        )
+        assert False, "HTTPException expected"
+    except HTTPException as exc:
+        assert exc.status_code == 503
+        assert "입력" in str(exc.detail)
+
+
 def test_chatbot_board_create_triggers_rag_sync(client, seed_users, seed_boards, monkeypatch):
     # [chatbot] 게시글 생성 시 safe_sync_board_post가 호출되어야 한다.
     from app.services.chatbot_service import ChatbotService

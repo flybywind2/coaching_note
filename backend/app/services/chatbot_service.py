@@ -126,7 +126,7 @@ class ChatbotService:
             )
 
     def _is_rag_enabled(self) -> bool:
-        # [chatbot] RAG 동기화/검색 가능 여부는 챗봇 UI 토글(CHATBOT_ENABLED)과 분리한다.
+        # [chatbot] RAG 검색 가능 여부는 챗봇 UI 토글(CHATBOT_ENABLED)과 분리한다.
         return bool(
             settings.RAG_ENABLED
             and str(settings.RAG_BASE_URL or "").strip()
@@ -134,9 +134,17 @@ class ChatbotService:
             and str(settings.AI_CREDENTIAL_KEY or "").strip()
         )
 
+    def _is_rag_input_enabled(self) -> bool:
+        # [chatbot] RAG 입력은 RAG_INPUT_ENABLED로 별도 제어한다.
+        return bool(self._is_rag_enabled() and bool(getattr(settings, "RAG_INPUT_ENABLED", True)))
+
     def _ensure_rag_ready(self):
         if not self._is_rag_enabled():
             raise HTTPException(status_code=503, detail="RAG 기능이 비활성화되어 있습니다.")
+
+    def _ensure_rag_input_ready(self):
+        if not self._is_rag_input_enabled():
+            raise HTTPException(status_code=503, detail="RAG 입력 기능이 비활성화되어 있습니다.")
 
     def _rag_headers(self) -> dict[str, str]:
         return {
@@ -864,7 +872,7 @@ class ChatbotService:
         created_time: datetime | date | None = None,
     ) -> None:
         # [chatbot] RAG insert-doc payload 전송
-        self._ensure_rag_ready()
+        self._ensure_rag_input_ready()
         summary = self._normalize_text(ai_summary) or self.generate_ai_summary(
             content=content,
             source_label=str(metadata.get("source_type") or "document"),
@@ -1110,7 +1118,7 @@ class ChatbotService:
         event_type: str,
     ) -> None:
         # [chatbot] 게시글 등록/수정 시 RAG 자동 동기화
-        if not self._is_rag_enabled():
+        if not self._is_rag_input_enabled():
             return
         try:
             from app.models.board import BoardPost  # local import to avoid cyclic side effects
@@ -1166,7 +1174,7 @@ class ChatbotService:
         event_type: str,
     ) -> None:
         # [chatbot] 코칭노트 등록/수정 시 RAG 자동 동기화
-        if not self._is_rag_enabled():
+        if not self._is_rag_input_enabled():
             return
         try:
             note = self.db.query(CoachingNote).filter(CoachingNote.note_id == int(note_id)).first()
