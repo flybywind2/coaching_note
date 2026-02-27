@@ -73,6 +73,8 @@ const Router = {
 
     if (path === '/login') {
       header.style.display = 'none';
+      // [chatbot] 로그인 화면에서는 챗봇 위젯 숨김
+      if (window.ChatbotWidget) ChatbotWidget.syncVisibility();
       content.innerHTML = '';
       Pages.login.render(content);
       return;
@@ -81,6 +83,8 @@ const Router = {
     header.style.display = '';
     Header.render();
     Notifications.refreshBadge();
+    // [chatbot] 라우트 전환 시 챗봇 위젯 가시성 동기화
+    if (window.ChatbotWidget) ChatbotWidget.syncVisibility();
 
     // Match dynamic routes
     for (const [pattern, handler] of Object.entries(this.routes)) {

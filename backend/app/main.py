@@ -14,6 +14,7 @@ from app.routers import (
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
     # [FEEDBACK7] 기능 3~5 라우터를 메인 앱에 등록합니다.
     admin_ip, users, uploads, workspace, about, coaching_plan, attendance, project_research, surveys, lectures,
+    chatbot,  # [chatbot] 챗봇 API 라우터
 )
 
 app = FastAPI(
@@ -56,6 +57,7 @@ app.include_router(attendance.router)
 app.include_router(project_research.router)
 app.include_router(surveys.router)
 app.include_router(lectures.router)
+app.include_router(chatbot.router)  # [chatbot] 챗봇 API 라우터 등록
 
 
 @app.on_event("startup")

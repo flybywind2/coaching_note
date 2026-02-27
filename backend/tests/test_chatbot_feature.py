@@ -1,0 +1,293 @@
+"""[chatbot] 챗봇/RAG 연동 기능을 검증하는 테스트입니다."""
+
+import json
+from datetime import date
+
+from tests.conftest import auth_headers
+
+
+def test_chatbot_ask_endpoint_returns_answer_and_references(client, seed_users, monkeypatch):
+    # [chatbot] 챗봇 질의 API는 answer/references를 반환해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+
+    def _fake_answer_with_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        assert question == "테스트 질문"
+        assert num_result_doc == 3
+        assert int(current_user.user_id) == int(seed_users["participant"].user_id)
+        return {
+            "answer": "테스트 답변",
+            "references": [{"doc_id": "board_post:1", "title": "게시글", "score": 0.9}],
+        }
+
+    monkeypatch.setattr(ChatbotService, "answer_with_rag", _fake_answer_with_rag)
+
+    headers = auth_headers(client, "user001")
+    resp = client.post(
+        "/api/chatbot/ask",
+        json={"question": "테스트 질문", "num_result_doc": 3},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["answer"] == "테스트 답변"
+    assert len(body["references"]) == 1
+    assert body["references"][0]["doc_id"] == "board_post:1"
+
+
+def test_chatbot_config_endpoint_reflects_env(client, monkeypatch):
+    # [chatbot] .env 토글값이 프론트 설정 API로 그대로 노출되어야 한다.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", False, raising=False)
+    disabled = client.get("/api/chatbot/config")
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["enabled"] is False
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    enabled = client.get("/api/chatbot/config")
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["enabled"] is True
+
+
+def test_chatbot_ask_endpoint_disabled_when_feature_off(client, seed_users, monkeypatch):
+    # [chatbot] 챗봇 기능 토글이 꺼지면 질문 API는 503을 반환해야 한다.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", False, raising=False)
+    headers = auth_headers(client, "user001")
+    resp = client.post(
+        "/api/chatbot/ask",
+        json={"question": "테스트 질문", "num_result_doc": 3},
+        headers=headers,
+    )
+    assert resp.status_code == 503, resp.text
+    assert "비활성화" in resp.json().get("detail", "")
+
+
+def test_chatbot_upsert_rag_document_includes_metadata_and_ai_summary(db, monkeypatch):
+    # [chatbot] RAG 입력 payload의 additional_field에는 메타데이터 + AI요약이 포함되어야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_INSERT_ENDPOINT", "/insert-doc", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+    monkeypatch.setattr(settings, "RAG_INDEX_NAME", "rp-ssp", raising=False)
+
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, headers=None, json=None, timeout=None):  # noqa: ANN001
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _FakeResponse()
+
+    monkeypatch.setattr("httpx.post", _fake_post)
+
+    svc = ChatbotService(db)
+    svc.upsert_rag_document(
+        doc_id="board_post:77",
+        title="제목",
+        content="본문 내용입니다.",
+        metadata={
+            "source_type": "board_post",
+            "batch_id": 2,
+            "board_type": "tip",
+        },
+        user_id="1",
+        ai_summary="요약 텍스트",
+        permission_groups=["rag-public", "batch-2"],
+    )
+
+    assert captured["url"] == "http://rag.local/insert-doc"
+    payload = captured["json"]
+    assert payload["index_name"] == "rp-ssp"
+    assert payload["data"]["doc_id"] == "board_post:77"
+    assert payload["data"]["permission_groups"] == ["rag-public", "batch-2"]
+    additional_field = json.loads(payload["data"]["additional_field"])
+    assert additional_field["source_type"] == "board_post"
+    assert additional_field["batch_id"] == 2
+    assert additional_field["ai_summary"] == "요약 텍스트"
+
+
+def test_chatbot_board_create_triggers_rag_sync(client, seed_users, seed_boards, monkeypatch):
+    # [chatbot] 게시글 생성 시 safe_sync_board_post가 호출되어야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, post_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"post_id": post_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_board_post", _fake_sync)
+
+    headers = auth_headers(client, "coach001")
+    board_id = seed_boards[2].board_id
+    resp = client.post(
+        f"/api/boards/{board_id}/posts",
+        json={"title": "RAG 연동 테스트", "content": "본문", "is_notice": False},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert calls and calls[0]["event_type"] == "create"
+
+
+def test_chatbot_board_comment_create_triggers_rag_sync(client, seed_users, seed_boards, monkeypatch):
+    # [chatbot] 게시글 댓글 등록 시에도 같은 게시글 doc_id를 재동기화해야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, post_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"post_id": post_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_board_post", _fake_sync)
+
+    headers = auth_headers(client, "coach001")
+    board_id = seed_boards[2].board_id
+    post_resp = client.post(
+        f"/api/boards/{board_id}/posts",
+        json={"title": "댓글 훅 테스트", "content": "본문", "is_notice": False},
+        headers=headers,
+    )
+    assert post_resp.status_code == 200, post_resp.text
+    post_id = int(post_resp.json()["post_id"])
+
+    comment_resp = client.post(
+        f"/api/boards/posts/{post_id}/comments",
+        json={"content": "첫 댓글"},
+        headers=headers,
+    )
+    assert comment_resp.status_code == 200, comment_resp.text
+    assert any(row["event_type"] == "comment_create" and int(row["post_id"]) == post_id for row in calls)
+
+
+def test_chatbot_note_create_triggers_rag_sync(client, db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] 코칭노트 생성 시 safe_sync_coaching_note가 호출되어야 한다.
+    from app.models.project import Project
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, note_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"note_id": note_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_coaching_note", _fake_sync)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="챗봇 훅 테스트 과제",
+        organization="테스트팀",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    headers = auth_headers(client, "coach001")
+    resp = client.post(
+        f"/api/projects/{project.project_id}/notes",
+        json={"coaching_date": str(date.today()), "current_status": "진행중"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert calls and calls[0]["event_type"] == "create"
+
+
+def test_chatbot_note_comment_create_triggers_rag_sync(client, db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] 코칭노트 댓글 등록 시에도 같은 코칭노트 doc_id를 재동기화해야 한다.
+    from app.models.project import Project
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, note_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"note_id": note_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_coaching_note", _fake_sync)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="챗봇 댓글 훅 테스트 과제",
+        organization="테스트팀",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    coach_headers = auth_headers(client, "coach001")
+    note_resp = client.post(
+        f"/api/projects/{project.project_id}/notes",
+        json={"coaching_date": str(date.today()), "current_status": "진행중"},
+        headers=coach_headers,
+    )
+    assert note_resp.status_code == 200, note_resp.text
+    note_id = int(note_resp.json()["note_id"])
+
+    participant_headers = auth_headers(client, "user001")
+    comment_resp = client.post(
+        f"/api/notes/{note_id}/comments",
+        json={"content": "참여자 메모"},
+        headers=participant_headers,
+    )
+    assert comment_resp.status_code == 200, comment_resp.text
+    assert any(row["event_type"] == "comment_create" and int(row["note_id"]) == note_id for row in calls)
+
+
+def test_chatbot_safe_sync_board_post_merges_comments_into_same_doc_id(db, seed_users, seed_boards, monkeypatch):
+    # [chatbot] 댓글이 붙어도 동일한 board_post:{post_id} doc_id로 덮어써야 한다.
+    from app.config import settings
+    from app.models.board import BoardPost, PostComment
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    post = BoardPost(
+        board_id=seed_boards[1].board_id,
+        author_id=seed_users["coach"].user_id,
+        title="문서 통합 테스트",
+        content="본문",
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    db.add(
+        PostComment(
+            post_id=post.post_id,
+            author_id=seed_users["participant"].user_id,
+            content="댓글 내용",
+        )
+    )
+    db.commit()
+
+    captured = {}
+
+    def _fake_upsert(self, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+
+    monkeypatch.setattr(ChatbotService, "upsert_rag_document", _fake_upsert)
+
+    svc = ChatbotService(db)
+    svc.safe_sync_board_post(post_id=int(post.post_id), user_id=str(seed_users["coach"].user_id), event_type="comment_create")
+
+    assert captured["doc_id"] == f"board_post:{post.post_id}"
+    assert "댓글(1)" in captured["content"]
+    assert "댓글 내용" in captured["content"]
+    assert captured["metadata"]["comment_count"] == 1

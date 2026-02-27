@@ -10,6 +10,7 @@ from app.models.user import User
 from app.schemas.coaching_note import CoachingNoteCreate, CoachingNoteUpdate, CoachingCommentCreate
 from app.schemas.coaching_template import CoachingNoteTemplateCreate, CoachingNoteTemplateUpdate
 from app.services import mention_service, version_service
+from app.services.chatbot_service import ChatbotService  # [chatbot] 코칭노트 RAG 동기화
 from app.utils.permissions import can_view_project, can_write_coaching_note, can_view_coach_only_comment, is_coach
 from typing import List
 from datetime import date
@@ -100,6 +101,12 @@ def create_note(db: Session, project_id: int, data: CoachingNoteCreate, current_
         link_url=f"#/project/{project_id}/notes/{note.note_id}",
         new_texts=[note.current_status, note.main_issue, note.next_action],
     )
+    # [chatbot] 코칭노트 신규 등록 시 RAG 입력
+    ChatbotService(db).safe_sync_coaching_note(
+        note_id=int(note.note_id),
+        user_id=str(current_user.user_id),
+        event_type="create",
+    )
     return note
 
 
@@ -132,6 +139,12 @@ def update_note(db: Session, note_id: int, data: CoachingNoteUpdate, current_use
         link_url=f"#/project/{note.project_id}/notes/{note.note_id}",
         new_texts=[note.current_status, note.main_issue, note.next_action],
         previous_texts=before_texts,
+    )
+    # [chatbot] 코칭노트 수정 시 RAG 입력 갱신
+    ChatbotService(db).safe_sync_coaching_note(
+        note_id=int(note.note_id),
+        user_id=str(current_user.user_id),
+        event_type="update",
     )
     return note
 
@@ -176,6 +189,12 @@ def create_comment(db: Session, note_id: int, data: CoachingCommentCreate, curre
         link_url=f"#/project/{comment.note.project_id}/notes/{note_id}",
         new_texts=[comment.content],
     )
+    # [chatbot] 코칭노트 댓글 등록 시 같은 doc_id 문서를 공개댓글 포함 상태로 재동기화
+    ChatbotService(db).safe_sync_coaching_note(
+        note_id=int(note_id),
+        user_id=str(current_user.user_id),
+        event_type="comment_create",
+    )
     return comment
 
 
@@ -189,8 +208,15 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
     _get_accessible_project(db, note.project_id, current_user)
     if comment.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
+    note_id = int(comment.note_id)
     db.delete(comment)
     db.commit()
+    # [chatbot] 코칭노트 댓글 삭제 시 같은 doc_id 문서를 공개댓글 포함 상태로 재동기화
+    ChatbotService(db).safe_sync_coaching_note(
+        note_id=note_id,
+        user_id=str(current_user.user_id),
+        event_type="comment_delete",
+    )
 
 
 def get_note_versions(db: Session, note_id: int, current_user: User) -> List[dict]:
@@ -230,6 +256,12 @@ def restore_note_version(db: Session, note_id: int, version_id: int, current_use
         changed_by=current_user.user_id,
         change_type="restore",
         snapshot=_note_snapshot(note),
+    )
+    # [chatbot] 코칭노트 복원 시 같은 doc_id 문서를 복원 상태로 재동기화
+    ChatbotService(db).safe_sync_coaching_note(
+        note_id=int(note.note_id),
+        user_id=str(current_user.user_id),
+        event_type="restore",
     )
     return note
 

@@ -332,6 +332,19 @@ const API = {
     `/api/projects/${projectId}/qa-sets${weekNumber === null || weekNumber === undefined ? '' : `?week_number=${encodeURIComponent(String(weekNumber))}`}`
   ),
   enhanceNote: (noteId, data) => apiFetch(`/api/notes/${noteId}/enhance`, { method: 'POST', body: JSON.stringify(data) }),
+  // [chatbot] 챗봇 기능 토글 조회 API
+  getChatbotConfig: () => apiFetch('/api/chatbot/config'),
+  // [chatbot] 챗봇 질문 API
+  askChatbot: (question, numResultDoc = 5) => apiFetch(
+    '/api/chatbot/ask',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        question: String(question || ''),
+        num_result_doc: Number(numResultDoc) || 5,
+      }),
+    }
+  ),
 
   // Sessions (single)
   getSession: (id) => apiFetch(`/api/sessions/${id}`),

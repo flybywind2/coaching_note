@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate, PostCommentUpdate
 from app.services import mention_service, version_service
 from app.services import notification_service
+from app.services.chatbot_service import ChatbotService  # [chatbot] 게시글 RAG 동기화
 from typing import List
 from app.utils.permissions import is_admin_or_coach, is_participant
 
@@ -370,6 +371,12 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
     )
     if post.is_notice:
         _notify_notice_post(db, post, current_user)
+    # [chatbot] 게시글 신규 등록 시 RAG 입력
+    ChatbotService(db).safe_sync_board_post(
+        post_id=int(post.post_id),
+        user_id=str(current_user.user_id),
+        event_type="create",
+    )
     return get_post_with_meta(db, post.post_id, current_user=current_user)
 
 
@@ -419,6 +426,12 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     )
     if post.is_notice:
         _notify_notice_post(db, post, current_user)
+    # [chatbot] 게시글 수정 시 RAG 입력 갱신
+    ChatbotService(db).safe_sync_board_post(
+        post_id=int(post.post_id),
+        user_id=str(current_user.user_id),
+        event_type="update",
+    )
     return get_post_with_meta(db, post.post_id, current_user=current_user)
 
 
@@ -487,6 +500,12 @@ def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_u
         link_url=f"#/board/{comment.post.board_id}/post/{post_id}",
         new_texts=[comment.content],
     )
+    # [chatbot] 게시글 댓글 등록 시 같은 doc_id 문서를 댓글 포함 내용으로 재동기화
+    ChatbotService(db).safe_sync_board_post(
+        post_id=int(post_id),
+        user_id=str(current_user.user_id),
+        event_type="comment_create",
+    )
     return _serialize_comment(comment)
 
 
@@ -510,6 +529,12 @@ def update_comment(db: Session, comment_id: int, data: PostCommentUpdate, curren
         new_texts=[comment.content],
         previous_texts=[previous],
     )
+    # [chatbot] 게시글 댓글 수정 시 같은 doc_id 문서를 댓글 포함 내용으로 재동기화
+    ChatbotService(db).safe_sync_board_post(
+        post_id=int(comment.post_id),
+        user_id=str(current_user.user_id),
+        event_type="comment_update",
+    )
     return _serialize_comment(comment)
 
 
@@ -520,8 +545,15 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
     if comment.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
     _ensure_can_write_batch(db, current_user, comment.post.batch_id)
+    post_id = int(comment.post_id)
     db.delete(comment)
     db.commit()
+    # [chatbot] 게시글 댓글 삭제 시 같은 doc_id 문서를 댓글 포함 내용으로 재동기화
+    ChatbotService(db).safe_sync_board_post(
+        post_id=post_id,
+        user_id=str(current_user.user_id),
+        event_type="comment_delete",
+    )
 
 
 def get_post_versions(db: Session, post_id: int, current_user: User) -> List[dict]:
@@ -556,6 +588,12 @@ def restore_post_version(db: Session, post_id: int, version_id: int, current_use
         changed_by=current_user.user_id,
         change_type="restore",
         snapshot=_post_snapshot(post),
+    )
+    # [chatbot] 게시글 복원 시 같은 doc_id 문서를 복원 상태로 재동기화
+    ChatbotService(db).safe_sync_board_post(
+        post_id=int(post.post_id),
+        user_id=str(current_user.user_id),
+        event_type="restore",
     )
     return get_post_with_meta(db, post.post_id, current_user=current_user)
 

@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     AI_CODE_MODEL: str = "deepseek-r1"
     AI_FEATURES_ENABLED: bool = True
 
+    # [chatbot] RAG/챗봇 설정
+    CHATBOT_ENABLED: bool = False
+    RAG_ENABLED: bool = False
+    RAG_BASE_URL: str = "http://localhost:8000"
+    RAG_INSERT_ENDPOINT: str = "/insert-doc"
+    RAG_RETRIEVE_RRF_ENDPOINT: str = "/retrieve-rrf"
+    RAG_API_KEY: str = ""
+    RAG_INDEX_NAME: str = "rp-ssp"
+    RAG_PERMISSION_GROUP: str = "rag-public"
+    RAG_TIMEOUT_SECONDS: float = 10.0
+
     class Config:
         env_file = ".env"
 

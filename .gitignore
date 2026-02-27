@@ -35,6 +35,7 @@ feedback3.txt
 feedback4.txt
 tasks*.md
 feedback*.txt
+rag.md
 
 pytest-cache-files-*
 

@@ -36,5 +36,8 @@ document.getElementById('notif-read-all').addEventListener('click', async () => 
 });
 document.getElementById('notif-settings-btn').addEventListener('click', () => Notifications.openSettingsModal());
 
+// [chatbot] 챗봇 위젯 초기화
+if (window.ChatbotWidget) ChatbotWidget.init();
+
 // Start routing
 Router.init();
