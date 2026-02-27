@@ -6,6 +6,7 @@ const ChatbotWidget = {
   _initialized: false,
   _featureEnabled: false,
   _featureLoaded: false,
+  _welcomeMessage: '무엇이 궁금한가요? RAG 기반으로 답변해드릴게요.',
 
   init() {
     if (this._initialized) return;
@@ -37,10 +38,13 @@ const ChatbotWidget = {
       <section id="chatbot-modal" class="chatbot-modal" style="display:none;">
         <header class="chatbot-modal-head">
           <strong>SSP+ 챗봇</strong>
-          <button id="chatbot-close" class="btn btn-xs btn-secondary" type="button">닫기</button>
+          <div class="chatbot-head-actions">
+            <button id="chatbot-new-chat" class="btn btn-xs btn-secondary" type="button">새 대화</button>
+            <button id="chatbot-close" class="btn btn-xs btn-secondary" type="button">닫기</button>
+          </div>
         </header>
         <div id="chatbot-messages" class="chatbot-messages">
-          <article class="chatbot-msg chatbot-msg-assistant">무엇이 궁금한가요? RAG 기반으로 답변해드릴게요.</article>
+          <article class="chatbot-msg chatbot-msg-assistant">${Fmt.escape(this._welcomeMessage)}</article>
         </div>
         <form id="chatbot-form" class="chatbot-form">
           <textarea id="chatbot-input" rows="2" placeholder="질문을 입력하세요"></textarea>
@@ -51,6 +55,7 @@ const ChatbotWidget = {
     document.body.appendChild(host);
 
     document.getElementById('chatbot-fab')?.addEventListener('click', () => this.toggleModal());
+    document.getElementById('chatbot-new-chat')?.addEventListener('click', () => this.resetConversation());
     document.getElementById('chatbot-close')?.addEventListener('click', () => this.closeModal());
     document.getElementById('chatbot-form')?.addEventListener('submit', (e) => this._onSubmit(e));
     document.getElementById('chatbot-input')?.addEventListener('keydown', (e) => {
@@ -86,6 +91,14 @@ const ChatbotWidget = {
     const modal = document.getElementById('chatbot-modal');
     if (!modal) return;
     modal.style.display = 'none';
+  },
+
+  resetConversation() {
+    // [chatbot] 새 대화 버튼 클릭 시 채팅 버블을 초기 상태로 리셋
+    const wrap = document.getElementById('chatbot-messages');
+    if (!wrap) return;
+    wrap.innerHTML = `<article class="chatbot-msg chatbot-msg-assistant">${Fmt.escape(this._welcomeMessage)}</article>`;
+    document.getElementById('chatbot-input')?.focus();
   },
 
   _appendMessage(role, html) {

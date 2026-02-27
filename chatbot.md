@@ -9,6 +9,7 @@
 ## 2. 환경변수(.env)
 ```env
 CHATBOT_ENABLED=True
+CHAT_DEBUG_MODE=False
 RAG_ENABLED=True
 RAG_BASE_URL=http://localhost:8000
 RAG_INSERT_ENDPOINT=/insert-doc
@@ -30,6 +31,7 @@ AI_IMAGE_MODEL_MAX_IMAGES=3
 - 관리자: UI 노출/질의 허용 (운영 점검 예외)
 - `RAG_ENABLED=True`이면 `CHATBOT_ENABLED`와 무관하게 RAG 입력 동기화는 계속 수행
 - `RAG_ENABLED=False`면 RAG insert/retrieve 비활성화
+- `CHAT_DEBUG_MODE=True`이면 챗봇 질의 시 서버 터미널에 RAG 검색 원문과 LLM 호출 이력을 출력
 
 ## 4. API
 ### 4.1 설정 조회
@@ -101,6 +103,7 @@ AI_IMAGE_MODEL_MAX_IMAGES=3
 ## 9. 프론트 UI 동작
 - 우하단 원형 `AI` 버튼 + 모달 UI
 - 로그인 상태에서 `enabled=true` 또는 관리자면 노출
+- 모달 헤더 `새 대화` 버튼으로 현재 대화 버블을 초기 상태로 리셋
 - 질문 응답 시 references 렌더링
 - `references.image_urls`가 있으면 썸네일 이미지와 링크를 함께 표시
 

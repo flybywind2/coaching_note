@@ -2857,6 +2857,11 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   border-bottom: 1px solid rgba(255, 255, 255, 0.78);
   color: #1a2d5a;
 }
+.chatbot-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .chatbot-messages {
   padding: 10px 12px;
   overflow: auto;

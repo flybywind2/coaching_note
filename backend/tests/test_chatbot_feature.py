@@ -664,3 +664,63 @@ def test_chatbot_answer_with_sql_uses_fallback_rule_when_llm_sql_missing(db, see
     assert out is not None
     assert out["references"][0]["source_type"] == "sql"
     assert "정수연 테스트 과제" in out["answer"]
+
+
+def test_chatbot_debug_mode_logs_rag_result_and_llm_history(db, seed_users, monkeypatch):
+    # [chatbot] CHAT_DEBUG_MODE=true면 RAG 결과와 LLM 호출 이력이 터미널 로그에 남아야 한다.
+    from app.config import settings
+    from app.services.ai_client import AIClient
+    from app.services.chatbot_service import ChatbotService
+
+    logs: list[str] = []
+
+    def _fake_info(msg, *args, **kwargs):  # noqa: ANN001
+        text = str(msg)
+        if args:
+            try:
+                text = text % args
+            except Exception:
+                text = f"{text} | args={args}"
+        logs.append(text)
+
+    class _FakeClient:
+        model_name = "qwen3"
+
+        def invoke(self, prompt, system_prompt=None):  # noqa: ANN001
+            return "테스트 LLM 답변"
+
+    def _fake_retrieve(self, *, query_text, num_result_doc, permission_groups):  # noqa: ANN001
+        return {
+            "hits": {
+                "hits": [
+                    {
+                        "_score": 1.1,
+                        "_source": {
+                            "doc_id": "board_post:1",
+                            "title": "RAG 문서",
+                            "content": "검색 문맥",
+                            "source_type": "board_post",
+                            "batch_id": 1,
+                        },
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(settings, "CHAT_DEBUG_MODE", True, raising=False)
+    monkeypatch.setattr(settings, "AI_FEATURES_ENABLED", True, raising=False)
+    monkeypatch.setattr(ChatbotService, "_retrieve_rag_documents", _fake_retrieve, raising=False)
+    monkeypatch.setattr("app.services.chatbot_service.logger.info", _fake_info)
+    monkeypatch.setattr(AIClient, "get_client", staticmethod(lambda purpose, user_id=None: _FakeClient()))
+
+    svc = ChatbotService(db)
+    out = svc.answer_with_rag(
+        current_user=seed_users["participant"],
+        question="테스트 질문",
+        num_result_doc=5,
+    )
+
+    assert out["answer"] == "테스트 LLM 답변"
+    assert any("[chatbot][debug] rag_result=" in row for row in logs)
+    assert any("board_post:1" in row for row in logs)
+    assert any("[chatbot][debug][llm 1]" in row for row in logs)

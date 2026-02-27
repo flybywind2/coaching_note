@@ -45,6 +45,85 @@ class ChatbotService:
     def __init__(self, db: Session):
         self.db = db
         self._sql_schema_cache: str | None = None
+        self._debug_llm_history: list[dict[str, Any]] = []
+        self._debug_rag_result: dict[str, Any] | None = None
+
+    def _is_chat_debug_enabled(self) -> bool:
+        return bool(getattr(settings, "CHAT_DEBUG_MODE", False))
+
+    def _clip_debug_text(self, value: Any, limit: int = 4000) -> str:
+        raw = str(value or "")
+        return raw if len(raw) <= limit else f"{raw[:limit]}...(truncated)"
+
+    def _record_llm_history(
+        self,
+        *,
+        stage: str,
+        model: str,
+        system_prompt: str | None,
+        prompt: str,
+        response: str,
+    ) -> None:
+        if not self._is_chat_debug_enabled():
+            return
+        self._debug_llm_history.append(
+            {
+                "stage": stage,
+                "model": model,
+                "system_prompt": self._clip_debug_text(system_prompt, 1500),
+                "prompt": self._clip_debug_text(prompt, 3000),
+                "response": self._clip_debug_text(response, 3000),
+            }
+        )
+
+    def _invoke_llm(
+        self,
+        *,
+        purpose: str,
+        user_id: str,
+        prompt: str,
+        system_prompt: str | None,
+        stage: str,
+    ) -> str:
+        # [chatbot] debug 모드에서 LLM 프롬프트/응답 이력을 수집한다.
+        client = AIClient.get_client(purpose, user_id=user_id)
+        output = self._normalize_text(client.invoke(prompt, system_prompt))
+        self._record_llm_history(
+            stage=stage,
+            model=str(getattr(client, "model_name", purpose)),
+            system_prompt=system_prompt,
+            prompt=prompt,
+            response=output,
+        )
+        return output
+
+    def _log_chat_debug_snapshot(self, *, question: str, current_user: User) -> None:
+        if not self._is_chat_debug_enabled():
+            return
+        logger.info(
+            "[chatbot][debug] user_id=%s role=%s question=%s",
+            getattr(current_user, "user_id", "-"),
+            getattr(current_user, "role", "-"),
+            self._clip_debug_text(question, 1000),
+        )
+        if self._debug_rag_result is not None:
+            rag_dump = json.dumps(self._debug_rag_result, ensure_ascii=False, default=str)
+            logger.info("[chatbot][debug] rag_result=%s", self._clip_debug_text(rag_dump, 12000))
+        else:
+            logger.info("[chatbot][debug] rag_result=<none>")
+        if not self._debug_llm_history:
+            logger.info("[chatbot][debug] llm_history=<none>")
+            return
+        for idx, item in enumerate(self._debug_llm_history, start=1):
+            logger.info(
+                "[chatbot][debug][llm %d] stage=%s model=%s | system=%s | prompt=%s | response=%s",
+                idx,
+                item.get("stage"),
+                item.get("model"),
+                item.get("system_prompt"),
+                item.get("prompt"),
+                item.get("response"),
+            )
 
     def _is_rag_enabled(self) -> bool:
         # [chatbot] RAG 동기화/검색 가능 여부는 챗봇 UI 토글(CHATBOT_ENABLED)과 분리한다.
@@ -216,7 +295,15 @@ class ChatbotService:
                 if not response.choices:
                     return ""
                 message = response.choices[0].message
-                return self._normalize_llm_message_text(getattr(message, "content", ""))
+                output = self._normalize_llm_message_text(getattr(message, "content", ""))
+                self._record_llm_history(
+                    stage="image_caption",
+                    model=str(settings.AI_IMAGE_MODEL_NAME).strip() or "image-model",
+                    system_prompt="",
+                    prompt=f"{prompt_text} | image_url={normalized_url}",
+                    response=output,
+                )
+                return output
 
             primary = [
                 {"type": "text", "text": prompt_text},
@@ -443,7 +530,6 @@ class ChatbotService:
         if not settings.AI_FEATURES_ENABLED:
             return "rag"
         try:
-            client = AIClient.get_client("general", user_id=user_id)
             system_prompt = (
                 "당신은 질문 라우터입니다.\n"
                 "관리자 질문을 SQL 조회 또는 RAG 검색 중 하나로 분류하세요.\n"
@@ -456,7 +542,13 @@ class ChatbotService:
                 f"{self._sql_schema_guide()}\n\n"
                 f"question: {self._normalize_text(question)}"
             )
-            raw = client.invoke(prompt, system_prompt)
+            raw = self._invoke_llm(
+                purpose="general",
+                user_id=user_id,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                stage="route_decision",
+            )
             return self._parse_route_decision(raw)
         except Exception as exc:
             logger.warning("[chatbot] route decision failed: %s", exc)
@@ -600,7 +692,6 @@ class ChatbotService:
         if not settings.AI_FEATURES_ENABLED:
             return None
         try:
-            client = AIClient.get_client("general", user_id=user_id)
             dialect = self._db_dialect() or "sqlite"
             system_prompt = (
                 "당신은 SQL 생성기입니다.\n"
@@ -618,7 +709,13 @@ class ChatbotService:
                 "- 의미있는 컬럼명(project_name, progress_rate 등)을 반환하세요.\n\n"
                 f"question: {question}"
             )
-            raw = client.invoke(prompt, system_prompt)
+            raw = self._invoke_llm(
+                purpose="general",
+                user_id=user_id,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                stage="sql_generation",
+            )
             sql = self._extract_sql_from_text(raw)
             return self._normalize_sql(sql) if sql else None
         except Exception as exc:
@@ -664,7 +761,6 @@ class ChatbotService:
             return f"조건에 맞는 데이터가 없습니다.\n\n[SQL]\n{sql}"
         if settings.AI_FEATURES_ENABLED:
             try:
-                client = AIClient.get_client("general", user_id=user_id)
                 system_prompt = (
                     "당신은 SQL 조회 결과를 해석해 간결하게 답변하는 분석가입니다.\n"
                     "질문에 바로 답하고 필요한 근거 숫자만 포함하세요."
@@ -676,7 +772,13 @@ class ChatbotService:
                     f"[결과(JSON)]\n{payload}\n\n"
                     "한국어로 3문장 이내로 답변하세요."
                 )
-                summary = self._normalize_text(client.invoke(prompt, system_prompt))
+                summary = self._invoke_llm(
+                    purpose="general",
+                    user_id=user_id,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    stage="sql_summary",
+                )
                 if summary:
                     return f"{summary}\n\n[SQL]\n{sql}"
             except Exception as exc:
@@ -729,7 +831,6 @@ class ChatbotService:
         if not settings.AI_FEATURES_ENABLED:
             return self._truncate(plain, 280)
         try:
-            client = AIClient.get_client("general", user_id=user_id)
             system_prompt = (
                 "당신은 지식 문서 요약기입니다.\n"
                 "핵심만 2~3문장으로 요약하고 과장/추측을 금지하세요."
@@ -739,7 +840,13 @@ class ChatbotService:
                 "아래 내용을 한국어로 2~3문장 요약하세요.\n\n"
                 f"{self._truncate(plain, 4000)}"
             )
-            summarized = self._normalize_text(client.invoke(prompt, system_prompt))
+            summarized = self._invoke_llm(
+                purpose="general",
+                user_id=user_id,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                stage="rag_insert_summary",
+            )
             return summarized or self._truncate(plain, 280)
         except Exception:
             return self._truncate(plain, 280)
@@ -900,6 +1007,9 @@ class ChatbotService:
             num_result_doc=num_result_doc,
             permission_groups=self._permission_groups_for_user(current_user),
         )
+        if self._is_chat_debug_enabled():
+            # [chatbot] debug 모드에서는 원본 RAG 검색 결과를 터미널에 출력하기 위해 저장한다.
+            self._debug_rag_result = raw
         refs = self._extract_references(raw)
         context = "\n\n".join(
             [
@@ -916,7 +1026,6 @@ class ChatbotService:
             context = "검색 결과가 없습니다."
 
         if settings.AI_FEATURES_ENABLED:
-            client = AIClient.get_client("general", user_id=str(current_user.user_id))
             system_prompt = (
                 "당신은 사내 지식 기반 어시스턴트입니다.\n"
                 "주어진 검색 문맥을 우선 사용해 답변하고, 모르면 모른다고 말하세요."
@@ -927,7 +1036,13 @@ class ChatbotService:
                 "답변은 한국어로 작성하고, 필요하면 근거 문서 제목을 함께 언급하세요.\n"
                 "검색 문맥에 image_urls가 있으면 답변에서도 관련 이미지를 함께 안내하세요."
             )
-            answer = self._normalize_text(client.invoke(prompt, system_prompt))
+            answer = self._invoke_llm(
+                purpose="general",
+                user_id=str(current_user.user_id),
+                prompt=prompt,
+                system_prompt=system_prompt,
+                stage="rag_answer",
+            )
         else:
             answer = "AI 기능이 비활성화되어 있어 검색 문맥만 제공합니다."
         if not answer:
@@ -954,33 +1069,38 @@ class ChatbotService:
         question: str,
         num_result_doc: int = 5,
     ) -> dict[str, Any]:
+        self._debug_llm_history = []
+        self._debug_rag_result = None
         query = self._normalize_text(question)
         if not query:
             raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
-        # [chatbot] 관리자 질문은 LLM JSON 라우팅 결과에 따라 SQL/RAG 경로를 선택
-        if is_admin(current_user) and self._decide_route_with_llm(
-            question=query,
-            user_id=str(current_user.user_id),
-        ) == "sql":
-            sql_result = self._answer_with_sql(current_user=current_user, question=query)
-            if sql_result is not None:
-                return sql_result
-
-        # [chatbot] 비관리자이거나 SQL 경로 실패 시 RAG 경로 사용
         try:
-            return self._answer_with_rag(
-                current_user=current_user,
+            # [chatbot] 관리자 질문은 LLM JSON 라우팅 결과에 따라 SQL/RAG 경로를 선택
+            if is_admin(current_user) and self._decide_route_with_llm(
                 question=query,
-                num_result_doc=num_result_doc,
-            )
-        except Exception:
-            # [chatbot] 관리자 질문에서 RAG가 실패하면 SQL 경로를 재시도해 실패율을 낮춤
-            if is_admin(current_user):
+                user_id=str(current_user.user_id),
+            ) == "sql":
                 sql_result = self._answer_with_sql(current_user=current_user, question=query)
                 if sql_result is not None:
                     return sql_result
-            raise
+
+            # [chatbot] 비관리자이거나 SQL 경로 실패 시 RAG 경로 사용
+            try:
+                return self._answer_with_rag(
+                    current_user=current_user,
+                    question=query,
+                    num_result_doc=num_result_doc,
+                )
+            except Exception:
+                # [chatbot] 관리자 질문에서 RAG가 실패하면 SQL 경로를 재시도해 실패율을 낮춤
+                if is_admin(current_user):
+                    sql_result = self._answer_with_sql(current_user=current_user, question=query)
+                    if sql_result is not None:
+                        return sql_result
+                raise
+        finally:
+            self._log_chat_debug_snapshot(question=query, current_user=current_user)
 
     def safe_sync_board_post(
         self,

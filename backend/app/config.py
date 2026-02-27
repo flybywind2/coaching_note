@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # [chatbot] RAG/챗봇 설정
     CHATBOT_ENABLED: bool = False
+    CHAT_DEBUG_MODE: bool = False
     RAG_ENABLED: bool = False
     RAG_BASE_URL: str = "http://localhost:8000"
     RAG_INSERT_ENDPOINT: str = "/insert-doc"
