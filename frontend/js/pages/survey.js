@@ -43,6 +43,7 @@ Pages.survey = {
         return `/survey${q.toString() ? `?${q.toString()}` : ''}`;
       };
 
+      const showSurveyList = isAdmin;
       const emptyText = isAdmin ? '설문이 없습니다.' : '현재 진행중인 설문이 없습니다.';
       const stats = detail?.stats || null;
       el.innerHTML = `
@@ -57,17 +58,19 @@ Pages.survey = {
               ${isAdmin ? '<button id="survey-add-btn" class="btn btn-secondary">설문 추가</button>' : ''}
             </div>
           </div>
-          <div class="card survey-board">
-            <aside class="survey-list">
-              ${surveys.length
-                ? surveys.map((survey) => `
-                    <button class="survey-item-btn${selectedSurvey && survey.survey_id === selectedSurvey.survey_id ? ' active' : ''}" data-survey-id="${survey.survey_id}">
-                      <strong>${Fmt.escape(survey.title)}</strong>
-                      <span>${Fmt.date(survey.created_at)} ${survey.is_visible ? '· 공개' : '· 비공개'}</span>
-                    </button>
-                  `).join('')
-                : `<p class="empty-state">${emptyText}</p>`}
-            </aside>
+          <div class="card survey-board${showSurveyList ? '' : ' survey-board-respondent'}">
+            ${showSurveyList ? `
+              <aside class="survey-list">
+                ${surveys.length
+                  ? surveys.map((survey) => `
+                      <button class="survey-item-btn${selectedSurvey && survey.survey_id === selectedSurvey.survey_id ? ' active' : ''}" data-survey-id="${survey.survey_id}">
+                        <strong>${Fmt.escape(survey.title)}</strong>
+                        <span>${Fmt.date(survey.created_at)} ${survey.is_visible ? '· 공개' : '· 비공개'}</span>
+                      </button>
+                    `).join('')
+                  : `<p class="empty-state">${emptyText}</p>`}
+              </aside>
+            ` : ''}
             <section class="survey-detail">
               ${detail ? `
                 <div class="survey-detail-head">
@@ -95,21 +98,7 @@ Pages.survey = {
                     <thead>
                       <tr>
                         <th style="width:210px;">과제명</th>
-                        <th style="width:140px;">대표자</th>
-                        ${(detail.questions || []).map((q) => `
-                          <th>
-                            <div class="survey-q-head">
-                              <span>${Fmt.escape(q.question_text)}${q.is_required ? ' <em class="required-mark">*</em>' : ''}</span>
-                              <em>${this._questionTypeLabel(q)}</em>
-                            </div>
-                            ${isAdmin
-                              ? `<div class="inline-actions">
-                                  <button class="btn btn-xs btn-secondary survey-edit-question-btn" data-question-id="${q.question_id}">수정</button>
-                                  <button class="btn btn-xs btn-danger survey-del-question-btn" data-question-id="${q.question_id}">삭제</button>
-                                </div>`
-                              : ''}
-                          </th>
-                        `).join('')}
+                        <th>질문 / 답변</th>
                         ${detail.can_answer ? '<th style="width:140px;">제출</th>' : ''}
                       </tr>
                     </thead>
@@ -117,8 +106,7 @@ Pages.survey = {
                       ${(detail.rows || []).map((row) => `
                         <tr data-project-id="${row.project_id}" class="${row.is_my_project ? 'my-row' : ''}">
                           <td>${Fmt.escape(row.project_name)} ${row.is_my_project ? '<span class="tag">내 과제</span>' : ''}</td>
-                          <td>${Fmt.escape(row.representative || '-')}</td>
-                          ${(detail.questions || []).map((q) => this._renderAnswerCell(q, row)).join('')}
+                          <td class="survey-qa-col">${this._renderQuestionStack(detail.questions || [], row, { isAdmin })}</td>
                           ${detail.can_answer
                             ? `<td>
                                 ${row.can_edit ? '<button class="btn btn-xs btn-primary survey-save-row-btn">저장</button>' : ''}
@@ -250,7 +238,34 @@ Pages.survey = {
     return '항목형';
   },
 
-  _renderAnswerCell(question, row) {
+  _renderQuestionStack(questions, row, { isAdmin = false } = {}) {
+    if (!questions.length) return '<p class="empty-state compact">질문이 없습니다.</p>';
+    return `
+      <div class="survey-question-stack">
+        ${questions.map((question) => `
+          <div class="survey-question-item" data-question-id="${question.question_id}">
+            <div class="survey-question-head">
+              <div class="survey-q-head">
+                <span>${Fmt.escape(question.question_text)}${question.is_required ? ' <em class="required-mark">*</em>' : ''}</span>
+                <em>${this._questionTypeLabel(question)}</em>
+              </div>
+              ${isAdmin
+                ? `<div class="inline-actions survey-question-tools">
+                    <button class="btn btn-xs btn-secondary survey-edit-question-btn" data-question-id="${question.question_id}">수정</button>
+                    <button class="btn btn-xs btn-danger survey-del-question-btn" data-question-id="${question.question_id}">삭제</button>
+                  </div>`
+                : ''}
+            </div>
+            <div class="survey-question-answer">
+              ${this._renderAnswerField(question, row)}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  },
+
+  _renderAnswerField(question, row) {
     const qid = String(question.question_id);
     const editable = !!row.can_edit;
     const answerText = row.answers?.[qid] || '';
@@ -259,32 +274,28 @@ Pages.survey = {
       const viewText = question.is_multi_select
         ? (multiAnswers.length ? multiAnswers.join(', ') : '-')
         : (answerText || '-');
-      return `<td data-question-id="${qid}"><span>${Fmt.escape(viewText)}</span></td>`;
+      return `<span class="survey-answer-view">${Fmt.escape(viewText)}</span>`;
     }
     if (question.question_type === 'subjective') {
-      return `<td data-question-id="${qid}"><input class="survey-answer-input" data-question-id="${qid}" value="${Fmt.escape(answerText)}" placeholder="답변 입력" /></td>`;
+      return `<input class="survey-answer-input" data-question-id="${qid}" value="${Fmt.escape(answerText)}" placeholder="답변 입력" />`;
     }
     if (question.is_multi_select) {
       return `
-        <td data-question-id="${qid}">
-          <div class="survey-option-list">
-            ${(question.options || []).map((opt) => `
-              <label class="survey-option-item">
-                <input type="checkbox" data-question-id="${qid}" data-option="${Fmt.escape(opt)}" value="${Fmt.escape(opt)}"${multiAnswers.includes(opt) ? ' checked' : ''} />
-                <span>${Fmt.escape(opt)}</span>
-              </label>
-            `).join('')}
-          </div>
-        </td>
+        <div class="survey-option-list">
+          ${(question.options || []).map((opt) => `
+            <label class="survey-option-item">
+              <input type="checkbox" data-question-id="${qid}" data-option="${Fmt.escape(opt)}" value="${Fmt.escape(opt)}"${multiAnswers.includes(opt) ? ' checked' : ''} />
+              <span>${Fmt.escape(opt)}</span>
+            </label>
+          `).join('')}
+        </div>
       `;
     }
     return `
-      <td data-question-id="${qid}">
-        <select class="survey-answer-input" data-question-id="${qid}">
-          <option value="">선택</option>
-          ${(question.options || []).map((opt) => `<option value="${Fmt.escape(opt)}"${answerText === opt ? ' selected' : ''}>${Fmt.escape(opt)}</option>`).join('')}
-        </select>
-      </td>
+      <select class="survey-answer-input" data-question-id="${qid}">
+        <option value="">선택</option>
+        ${(question.options || []).map((opt) => `<option value="${Fmt.escape(opt)}"${answerText === opt ? ' selected' : ''}>${Fmt.escape(opt)}</option>`).join('')}
+      </select>
     `;
   },
 
@@ -293,23 +304,23 @@ Pages.survey = {
     const missingQuestionIds = [];
     questions.forEach((question) => {
       const qid = Number.parseInt(question.question_id, 10);
-      const td = tr.querySelector(`td[data-question-id="${qid}"]`);
-      if (!td) return;
+      const item = tr.querySelector(`.survey-question-item[data-question-id="${qid}"]`);
+      if (!item) return;
       const answer = { question_id: qid };
       let filled = false;
       if (question.question_type === 'subjective') {
-        const input = td.querySelector('.survey-answer-input');
+        const input = item.querySelector('.survey-answer-input');
         const value = String(input?.value || '').trim();
         answer.answer_text = value;
         filled = !!value;
       } else if (question.is_multi_select) {
-        const selectedOptions = Array.from(td.querySelectorAll('input[type="checkbox"]:checked'))
+        const selectedOptions = Array.from(item.querySelectorAll('input[type="checkbox"]:checked'))
           .map((input) => String(input.value || '').trim())
           .filter(Boolean);
         answer.selected_options = selectedOptions;
         filled = selectedOptions.length > 0;
       } else {
-        const select = td.querySelector('.survey-answer-input');
+        const select = item.querySelector('.survey-answer-input');
         const value = String(select?.value || '').trim();
         answer.answer_text = value;
         filled = !!value;
@@ -323,9 +334,9 @@ Pages.survey = {
   },
 
   _highlightMissingQuestions(tr, questionIds) {
-    tr.querySelectorAll('td[data-question-id]').forEach((cell) => cell.classList.remove('survey-required-missing'));
+    tr.querySelectorAll('.survey-question-item[data-question-id]').forEach((item) => item.classList.remove('survey-required-missing'));
     questionIds.forEach((qid) => {
-      tr.querySelector(`td[data-question-id="${qid}"]`)?.classList.add('survey-required-missing');
+      tr.querySelector(`.survey-question-item[data-question-id="${qid}"]`)?.classList.add('survey-required-missing');
     });
   },
 

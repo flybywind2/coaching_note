@@ -1167,9 +1167,13 @@ body::after {
 .survey-page { display: grid; gap: 14px; }
 .survey-board {
   display: grid;
+  /* [FEEDBACK7] 설문 목록/상세는 좌우 배치 유지 */
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 14px;
   min-height: 420px;
+}
+.survey-board.survey-board-respondent {
+  grid-template-columns: 1fr;
 }
 .survey-list {
   border: 1px solid rgba(255, 255, 255, 0.62);
@@ -1213,8 +1217,34 @@ body::after {
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 12px;
 }
-.survey-table { min-width: 760px; }
+.survey-table { min-width: 760px; table-layout: fixed; }
+.survey-table th,
+.survey-table td { vertical-align: top; }
 .survey-table tr.my-row td { background: rgba(222, 242, 255, 0.38); }
+.survey-qa-col { min-width: 420px; }
+.survey-question-stack {
+  display: grid;
+  gap: 8px;
+}
+.survey-question-item {
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.48);
+  padding: 8px;
+}
+.survey-question-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.survey-question-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.survey-question-answer {
+  margin-top: 6px;
+}
 .survey-q-head {
   display: grid;
   gap: 2px;
@@ -1222,6 +1252,10 @@ body::after {
 .survey-q-head em {
   font-size: 11px;
   color: var(--text-secondary);
+}
+.survey-answer-view {
+  display: inline-block;
+  min-height: 24px;
 }
 .required-mark {
   color: #b12030;

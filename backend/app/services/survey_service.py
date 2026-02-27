@@ -451,10 +451,11 @@ def get_detail(db: Session, *, survey_id: int, current_user: User) -> dict:
         and my_project_ids
     )
 
-    def _project_sort_key(project: Project):
-        return (0 if int(project.project_id) in my_project_ids else 1, int(project.project_id))
-
-    ordered_projects = sorted(projects, key=_project_sort_key) if is_participant(current_user) else projects
+    if is_participant(current_user):
+        # [FEEDBACK7] 참여자는 설문에서 본인 소속 과제만 노출
+        ordered_projects = [row for row in projects if int(row.project_id) in my_project_ids]
+    else:
+        ordered_projects = projects
     rows = []
     for project in ordered_projects:
         answers = {

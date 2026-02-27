@@ -50,6 +50,20 @@ def _seed_participant_project(db, batch_id: int, participant_user_id: int, name:
     return project
 
 
+def _seed_non_member_project(db, batch_id: int, name: str = "타인 과제"):
+    project = Project(
+        batch_id=batch_id,
+        project_name=name,
+        organization="개발팀",
+        representative="타인",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
 def test_survey_participant_scope_and_visibility(client, db, seed_users, seed_batch):
     admin_headers = auth_headers(client, "admin001")
     participant_headers = auth_headers(client, "user001")
@@ -177,6 +191,7 @@ def test_survey_required_submit_cancel_and_period(client, db, seed_users, seed_b
     participant_headers = auth_headers(client, "user001")
     _grant_participant_batch(db, seed_users["participant"].user_id, seed_batch.batch_id)
     my_project = _seed_participant_project(db, seed_batch.batch_id, seed_users["participant"].user_id)
+    other_project = _seed_non_member_project(db, seed_batch.batch_id)
 
     create_resp = client.post(
         "/api/surveys",
@@ -249,6 +264,8 @@ def test_survey_required_submit_cancel_and_period(client, db, seed_users, seed_b
     detail_resp = client.get(f"/api/surveys/{survey_id}/detail", headers=participant_headers)
     assert detail_resp.status_code == 200, detail_resp.text
     rows = detail_resp.json()["rows"]
+    assert rows and all(int(row["project_id"]) != int(other_project.project_id) for row in rows)
+    assert all(bool(row["is_my_project"]) for row in rows)
     my_row = next(row for row in rows if int(row["project_id"]) == int(my_project.project_id))
     assert my_row["answers"][str(q1_id)] == "주관식 답변"
     assert my_row["multi_answers"][str(q2_id)] == ["A", "B"]
