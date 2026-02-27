@@ -192,3 +192,63 @@
   - 참관자 `obs001`:
     - 헤더 메뉴에서 `설문` 미노출 확인
     - `#/survey` 직접 접근 시 `#/projects`로 리다이렉트 확인
+
+## Commit 5 - 수강신청 페이지 + 강의관리/캘린더 연동
+
+### 추가/수정 파일
+
+- `backend/app/models/lecture.py` (신규)
+- `backend/app/models/__init__.py`
+- `backend/app/schemas/lecture.py` (신규)
+- `backend/app/services/lecture_service.py` (신규)
+- `backend/app/services/__init__.py`
+- `backend/app/routers/lectures.py` (신규)
+- `backend/app/routers/calendar.py`
+- `backend/app/main.py`
+- `backend/tests/test_lecture_feedback7.py` (신규)
+- `backend/tests/test_calendar_lecture_feedback7.py` (신규)
+- `frontend/js/pages/courseRegistration.js` (신규)
+- `frontend/js/pages/admin.js`
+- `frontend/js/pages/calendar.js`
+- `frontend/js/api.js`
+- `frontend/js/app.js`
+- `frontend/js/components/header.js`
+- `frontend/index.html`
+- `frontend/css/style.css`
+- `tasks7.md`
+
+### 핵심 로직
+
+- `[FEEDBACK7]` 강의/신청 도메인 추가
+  - 강의(`Lecture`) + 수강신청(`LectureRegistration`) 테이블 구성
+  - 신청 인원 JSON 저장, 승인 상태(`pending/approved/rejected/cancelled`) 관리
+- `[FEEDBACK7]` 강의 API 구현
+  - 조회: 전 사용자/전 차수 열람
+  - 관리자: 강의 CRUD, 선택 강의 일괄수정, 신청 승인/반려
+  - 참여자: 본인 과제 기준 수강신청/취소(기간 내)
+  - 정책: 신청기간 검증, 팀별 정원/전체 정원 초과 방지
+- `[FEEDBACK7]` 수강신청 UI 구현
+  - 상단 커리큘럼 소개 + 하단 카드형 강의 목록/상세 레이아웃
+  - 태그: `신청 중`, `입과 승인`
+  - 참여자 신청 모달(과제/팀원 다중선택), 신청취소 처리
+- `[FEEDBACK7]` 관리자 UI 구현
+  - 관리자 페이지에 `강의 관리` 탭 추가
+  - 강의 추가/수정/삭제, 신청현황 조회, 승인/반려, 체크박스 기반 일괄수정
+- `[FEEDBACK7]` 캘린더 연동
+  - 캘린더 이벤트 타입에 `lecture`(강의일정) 추가
+  - 강의 관리에서 생성한 강의가 캘린더 날짜에 노출
+  - 캘린더 상세에서 `강의 소개 페이지 이동` 버튼 제공
+
+### 테스트
+
+- 백엔드 자동화
+  - `python -m pytest tests/test_lecture_feedback7.py tests/test_calendar_lecture_feedback7.py -q`
+  - `python -m pytest tests/test_about.py tests/test_about_news_feedback7.py tests/test_board_feedback5_p2.py tests/test_board_feedback6_p2.py tests/test_board_feedback7_batch_policy.py tests/test_project_research_feedback7.py tests/test_survey_feedback7.py tests/test_lecture_feedback7.py tests/test_calendar_lecture_feedback7.py -q`
+- Chrome DevTools 실동작
+  - 관리자 `admin001`:
+    - 관리자 > 강의 관리 탭 진입, 강의 생성, 수강신청 페이지 카드/상세 노출 확인
+    - 캘린더 `강의일정` 범례/이벤트 노출, 상세의 `강의 소개 페이지 이동` 동작 확인
+  - 참여자 `user001`:
+    - `수강신청` 메뉴 노출, 강의 상세 열람, 신청 불가 상태 안내문구 확인
+  - 참관자 `obs001`:
+    - `수강신청` 메뉴 노출 및 강의 목록 열람 확인

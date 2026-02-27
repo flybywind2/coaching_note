@@ -112,28 +112,28 @@
 
 ### Commit 5. 수강신청 페이지 + 강의관리/캘린더 연동
 
-- [ ] 강의/신청 도메인 모델 구현
+- [x] 강의/신청 도메인 모델 구현
   - 후보 파일: `backend/app/models/lecture.py`, `backend/app/schemas/lecture.py`
   - 엔티티: 강의, 신청기간, 정원/팀별정원, 신청자(팀원 다중선택), 승인상태
-- [ ] API 구현
+- [x] API 구현
   - 후보 파일: `backend/app/routers/lectures.py`, `backend/app/services/lecture_service.py`
   - 조회: 전 사용자, 전 차수 열람 가능
   - 신청: 해당 차수 참여자만, 기간 내만 가능, 팀별 정원 초과 방지
   - 관리자: 강의 CRUD/일괄수정/입과 승인
-- [ ] 수강신청 UI 구현
+- [x] 수강신청 UI 구현
   - 후보 파일: `frontend/js/pages/courseRegistration.js`(신규), `frontend/js/app.js`, `frontend/js/router.js`, `frontend/js/components/header.js`
   - 상단: 커리큘럼 소개
   - 하단: 카드형 강의 리스트 + 상세 페이지
   - 태그: `신청 중`, `입과 승인`
-- [ ] 관리자 UI 구현
+- [x] 관리자 UI 구현
   - 후보 파일: `frontend/js/pages/admin.js`
   - `강의 관리` 탭 추가 + 복수 선택 일괄수정
-- [ ] 캘린더 연동
+- [x] 캘린더 연동
   - 후보 파일: `backend/app/routers/calendar.py`, `backend/app/routers/schedules.py`, `frontend/js/pages/calendar.js`
   - 일정 구분에 `강의일정` 추가
   - 강의 관리에서 생성/수정한 강의를 캘린더 날짜에 노출
   - 캘린더 상세에서 강의 소개 페이지 이동 링크 제공
-- [ ] 테스트 추가
+- [x] 테스트 추가
   - 후보 파일: `backend/tests/test_lecture_feedback7.py`, `backend/tests/test_calendar_lecture_feedback7.py`
 
 ## 3. 권장 구현 순서(실행 계획)
@@ -149,7 +149,7 @@
 - [x] Commit 2: 게시판 차수 정책
 - [x] Commit 3: 과제 조사 페이지
 - [x] Commit 4: 설문 페이지
-- [ ] Commit 5: 수강신청/강의관리/캘린더 연동
+- [x] Commit 5: 수강신청/강의관리/캘린더 연동
 
 ### Phase C. 통합 검증 (1~2일)
 

@@ -10,6 +10,7 @@ from app.services import (
     notification_service,
     project_research_service,
     survey_service,
+    lecture_service,
     mention_service,
     version_service,
 )

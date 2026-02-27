@@ -8,6 +8,7 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
 from app.models.coaching_plan import CoachActualOverride, CoachDailyPlan
+from app.models.lecture import Lecture
 from app.models.schedule import ProgramSchedule
 from app.models.session import AttendanceLog, CoachingSession, SessionAttendee
 from app.models.project import Project
@@ -23,6 +24,7 @@ EVENT_COLORS = {
     "program": "#4CAF50",
     "coaching_schedule": "#00ACC1",
     "session": "#2196F3",
+    "lecture": "#8E24AA",
 }
 
 
@@ -224,6 +226,35 @@ def get_calendar(
             "coach_actuals": coach_actuals,
             "manage_type": "schedule",
             "scope": scope,
+        })
+
+    # 1.5. Lecture schedules
+    lecture_rows = (
+        db.query(Lecture)
+        .filter(
+            Lecture.batch_id == batch_id,
+            Lecture.start_datetime >= datetime.combine(start, datetime.min.time()),
+            Lecture.start_datetime <= datetime.combine(end, datetime.max.time()),
+        )
+        .order_by(Lecture.start_datetime.asc(), Lecture.lecture_id.asc())
+        .all()
+    )
+    for lecture in lecture_rows:
+        if not lecture.is_visible and current_user.role != "admin":
+            continue
+        events.append({
+            "event_type": "lecture",
+            "id": int(lecture.lecture_id),
+            "title": lecture.title,
+            "start": lecture.start_datetime.isoformat(),
+            "end": lecture.end_datetime.isoformat() if lecture.end_datetime else None,
+            "color": EVENT_COLORS["lecture"],
+            "location": lecture.location,
+            "description": lecture.summary or lecture.description,
+            "is_all_day": False,
+            "manage_type": "lecture",
+            "scope": "lecture",
+            "link_url": f"#/course-registration?batch_id={lecture.batch_id}&lecture_id={lecture.lecture_id}",
         })
 
     # 2. Coaching sessions

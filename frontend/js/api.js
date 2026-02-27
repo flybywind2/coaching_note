@@ -218,6 +218,22 @@ const API = {
     }
     return res.text();
   },
+  // [FEEDBACK7] Lectures / Course Registration
+  getLectures: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/lectures${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  getLectureDetail: (lectureId) => apiFetch(`/api/lectures/${lectureId}`),
+  createLecture: (data) => apiFetch('/api/lectures', { method: 'POST', body: JSON.stringify(data) }),
+  updateLecture: (lectureId, data) => apiFetch(`/api/lectures/${lectureId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLecture: (lectureId) => apiFetch(`/api/lectures/${lectureId}`, { method: 'DELETE' }),
+  bulkUpdateLectures: (data) => apiFetch('/api/lectures/bulk-update', { method: 'PUT', body: JSON.stringify(data) }),
+  listLectureRegistrations: (lectureId) => apiFetch(`/api/lectures/${lectureId}/registrations`),
+  registerLecture: (lectureId, data) => apiFetch(`/api/lectures/${lectureId}/register`, { method: 'POST', body: JSON.stringify(data) }),
+  cancelLectureRegistration: (lectureId, projectId) => apiFetch(`/api/lectures/${lectureId}/register?project_id=${encodeURIComponent(String(projectId))}`, { method: 'DELETE' }),
+  setLectureApproval: (registrationId, data) => apiFetch(`/api/lectures/registrations/${registrationId}/approval`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),
