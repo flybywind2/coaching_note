@@ -2,6 +2,7 @@
 
 from pydantic_settings import BaseSettings
 from typing import List
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -55,7 +56,8 @@ class Settings(BaseSettings):
     RAG_TIMEOUT_SECONDS: float = 10.0
 
     class Config:
-        env_file = ".env"
+        # [chatbot] 실행 cwd와 무관하게 backend/.env를 로드한다.
+        env_file = str(Path(__file__).resolve().parents[1] / ".env")
 
 
 settings = Settings()

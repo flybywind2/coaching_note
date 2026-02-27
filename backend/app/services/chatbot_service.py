@@ -88,6 +88,12 @@ class ChatbotService:
                 "response": self._clip_debug_text(response, 3000),
             }
         )
+        self._emit_chat_debug(
+            "[chatbot][debug][llm-live] stage=%s model=%s response=%s",
+            stage,
+            model,
+            self._clip_debug_text(response, 1000),
+        )
 
     def _invoke_llm(
         self,
@@ -549,6 +555,7 @@ class ChatbotService:
     def _decide_route_with_llm(self, *, question: str, user_id: str) -> str:
         # [chatbot] 관리자 질문은 LLM이 SQL/RAG 라우팅을 JSON으로 결정
         if not settings.AI_FEATURES_ENABLED:
+            self._emit_chat_debug("[chatbot][debug] route_decision skipped: AI_FEATURES_ENABLED=false")
             return "rag"
         try:
             system_prompt = (
@@ -573,6 +580,7 @@ class ChatbotService:
             return self._parse_route_decision(raw)
         except Exception as exc:
             logger.warning("[chatbot] route decision failed: %s", exc)
+            self._emit_chat_debug("[chatbot][debug] route_decision failed: %s", exc)
             return "rag"
 
     def _db_dialect(self) -> str:
@@ -711,6 +719,7 @@ class ChatbotService:
 
     def _generate_sql_with_llm(self, *, question: str, user_id: str) -> str | None:
         if not settings.AI_FEATURES_ENABLED:
+            self._emit_chat_debug("[chatbot][debug] sql_generation skipped: AI_FEATURES_ENABLED=false")
             return None
         try:
             dialect = self._db_dialect() or "sqlite"
@@ -741,6 +750,7 @@ class ChatbotService:
             return self._normalize_sql(sql) if sql else None
         except Exception as exc:
             logger.warning("[chatbot] sql generation failed: %s", exc)
+            self._emit_chat_debug("[chatbot][debug] sql_generation failed: %s", exc)
             return None
 
     def _generate_sql_with_fallback_rules(self, question: str) -> str | None:
@@ -804,6 +814,9 @@ class ChatbotService:
                     return f"{summary}\n\n[SQL]\n{sql}"
             except Exception as exc:
                 logger.warning("[chatbot] sql summary failed: %s", exc)
+                self._emit_chat_debug("[chatbot][debug] sql_summary failed: %s", exc)
+        else:
+            self._emit_chat_debug("[chatbot][debug] sql_summary skipped: AI_FEATURES_ENABLED=false")
         return f"DB 조회 결과입니다.\n{self._render_sql_rows(rows)}\n\n[SQL]\n{sql}"
 
     def _answer_with_sql(self, *, current_user: User, question: str) -> dict[str, Any] | None:
@@ -850,6 +863,7 @@ class ChatbotService:
         if not plain:
             return ""
         if not settings.AI_FEATURES_ENABLED:
+            self._emit_chat_debug("[chatbot][debug] rag_insert_summary skipped: AI_FEATURES_ENABLED=false")
             return self._truncate(plain, 280)
         try:
             system_prompt = (
@@ -942,14 +956,29 @@ class ChatbotService:
             "num_result_doc": max(1, min(int(num_result_doc), 20)),
             "fields_exclude": ["v_merge_title_content"],
         }
-        response = httpx.post(
+        self._emit_chat_debug(
+            "[chatbot][debug] rag_retrieve request endpoint=%s payload=%s",
             self._rag_url(settings.RAG_RETRIEVE_RRF_ENDPOINT),
-            headers=self._rag_headers(),
-            json=payload,
-            timeout=float(settings.RAG_TIMEOUT_SECONDS),
+            self._clip_debug_text(json.dumps(payload, ensure_ascii=False), 3000),
         )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = httpx.post(
+                self._rag_url(settings.RAG_RETRIEVE_RRF_ENDPOINT),
+                headers=self._rag_headers(),
+                json=payload,
+                timeout=float(settings.RAG_TIMEOUT_SECONDS),
+            )
+            response.raise_for_status()
+            data = response.json()
+            self._emit_chat_debug(
+                "[chatbot][debug] rag_retrieve response status=%s body=%s",
+                getattr(response, "status_code", "-"),
+                self._clip_debug_text(json.dumps(data, ensure_ascii=False, default=str), 6000),
+            )
+            return data
+        except Exception as exc:
+            self._emit_chat_debug("[chatbot][debug] rag_retrieve failed: %s", exc)
+            raise
 
     def _parse_additional_field(self, raw: Any) -> dict[str, Any]:
         if isinstance(raw, dict):
@@ -1065,6 +1094,7 @@ class ChatbotService:
                 stage="rag_answer",
             )
         else:
+            self._emit_chat_debug("[chatbot][debug] rag_answer skipped: AI_FEATURES_ENABLED=false")
             answer = "AI 기능이 비활성화되어 있어 검색 문맥만 제공합니다."
         if not answer:
             answer = "검색 결과를 바탕으로 답변을 생성하지 못했습니다."
@@ -1092,6 +1122,13 @@ class ChatbotService:
     ) -> dict[str, Any]:
         self._debug_llm_history = []
         self._debug_rag_result = None
+        self._emit_chat_debug(
+            "[chatbot][debug] mode_on=%s ai_enabled=%s rag_enabled=%s rag_input_enabled=%s",
+            self._is_chat_debug_enabled(),
+            bool(getattr(settings, "AI_FEATURES_ENABLED", False)),
+            bool(getattr(settings, "RAG_ENABLED", False)),
+            bool(getattr(settings, "RAG_INPUT_ENABLED", True)),
+        )
         query = self._normalize_text(question)
         if not query:
             raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
