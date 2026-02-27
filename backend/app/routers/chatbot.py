@@ -9,6 +9,7 @@ from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
 from app.schemas.chatbot import ChatbotAskRequest, ChatbotAskResponse, ChatbotConfigResponse
 from app.services.chatbot_service import ChatbotService
+from app.utils.permissions import is_admin
 
 router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 
@@ -25,8 +26,8 @@ def ask_chatbot(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # [chatbot] .env 토글이 false면 API 자체를 비활성화
-    if not settings.CHATBOT_ENABLED:
+    # [chatbot] 일반 사용자는 CHATBOT_ENABLED=false면 차단, admin은 예외 허용
+    if not settings.CHATBOT_ENABLED and not is_admin(current_user):
         raise HTTPException(status_code=503, detail="챗봇 기능이 비활성화되어 있습니다.")
     # [chatbot] rag_retrieve + llm 답변 API
     svc = ChatbotService(db)

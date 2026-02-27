@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import mimetypes
+import os
 import re
 from datetime import date, datetime, timezone
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -29,14 +33,23 @@ class ChatbotService:
     """[chatbot] RAG와 LLM을 묶어 챗봇 응답을 생성합니다."""
 
     _COACH_ROLES = {"coach", "internal_coach", "external_coach"}
+    _IMG_TAG_SRC_RE = re.compile(
+        r"""<img[^>]*\s+src=(['"])(?P<url>.+?)\1""",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    _DIRECT_IMAGE_URL_RE = re.compile(
+        r"""(?P<url>(?:https?://|/uploads/)[^\s"'<>]+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s"'<>]*)?)""",
+        flags=re.IGNORECASE,
+    )
 
     def __init__(self, db: Session):
         self.db = db
+        self._sql_schema_cache: str | None = None
 
     def _is_rag_enabled(self) -> bool:
+        # [chatbot] RAG 동기화/검색 가능 여부는 챗봇 UI 토글(CHATBOT_ENABLED)과 분리한다.
         return bool(
-            settings.CHATBOT_ENABLED
-            and settings.RAG_ENABLED
+            settings.RAG_ENABLED
             and str(settings.RAG_BASE_URL or "").strip()
             and str(settings.RAG_API_KEY or "").strip()
             and str(settings.AI_CREDENTIAL_KEY or "").strip()
@@ -67,6 +80,213 @@ class ChatbotService:
         raw = str(value or "")
         without_tag = re.sub(r"<[^>]+>", " ", raw)
         return self._normalize_text(without_tag)
+
+    def _normalize_image_url(self, raw_url: str | None) -> str:
+        value = str(raw_url or "").strip()
+        if not value:
+            return ""
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"}:
+            path = parsed.path or ""
+            query = f"?{parsed.query}" if parsed.query else ""
+            if path.startswith("/uploads/"):
+                return f"{path}{query}"
+            return value
+        if value.startswith("/uploads/"):
+            return value
+        if value.startswith("uploads/"):
+            return f"/{value}"
+        return ""
+
+    def _extract_image_urls_from_text(self, value: str | None) -> list[str]:
+        raw = str(value or "")
+        if not raw:
+            return []
+        urls: list[str] = []
+        for match in self._IMG_TAG_SRC_RE.finditer(raw):
+            normalized = self._normalize_image_url(match.group("url"))
+            if normalized:
+                urls.append(normalized)
+        for match in self._DIRECT_IMAGE_URL_RE.finditer(raw):
+            normalized = self._normalize_image_url(match.group("url"))
+            if normalized:
+                urls.append(normalized)
+        return list(dict.fromkeys(urls))
+
+    def _coerce_image_urls(self, raw: Any) -> list[str]:
+        values: list[str] = []
+        if isinstance(raw, list):
+            values = [self._normalize_image_url(str(item)) for item in raw]
+        elif isinstance(raw, str):
+            candidate = raw.strip()
+            if not candidate:
+                values = []
+            else:
+                try:
+                    loaded = json.loads(candidate)
+                    if isinstance(loaded, list):
+                        values = [self._normalize_image_url(str(item)) for item in loaded]
+                    else:
+                        values = [self._normalize_image_url(candidate)]
+                except json.JSONDecodeError:
+                    values = [self._normalize_image_url(chunk.strip()) for chunk in candidate.split(",")]
+        return [row for row in list(dict.fromkeys(values)) if row]
+
+    def _is_image_llm_ready(self) -> bool:
+        return bool(
+            settings.AI_FEATURES_ENABLED
+            and str(settings.AI_IMAGE_MODEL_BASE_URL or "").strip()
+            and str(settings.AI_IMAGE_MODEL_NAME or "").strip()
+            and str(settings.AI_CREDENTIAL_KEY or "").strip()
+            and str(settings.OPENAI_API_KEY or "").strip()
+        )
+
+    def _resolve_local_upload_file_path(self, image_url: str) -> str | None:
+        parsed = urlparse(str(image_url or "").strip())
+        path = parsed.path if parsed.scheme in {"http", "https"} else str(image_url or "").strip()
+        if not path.startswith("/uploads/"):
+            return None
+        rel_path = unquote(path.replace("/uploads/", "", 1)).replace("/", os.sep)
+        root = os.path.abspath(settings.UPLOAD_DIR)
+        candidate = os.path.abspath(os.path.join(root, rel_path))
+        try:
+            if os.path.commonpath([candidate, root]) != root:
+                return None
+        except ValueError:
+            return None
+        if not os.path.isfile(candidate):
+            return None
+        return candidate
+
+    def _image_url_to_model_input(self, image_url: str) -> str:
+        local_path = self._resolve_local_upload_file_path(image_url)
+        if not local_path:
+            return image_url
+        try:
+            with open(local_path, "rb") as reader:
+                base64_string = base64.b64encode(reader.read()).decode("utf-8")
+            mime_type, _ = mimetypes.guess_type(local_path)
+            mime = mime_type or "image/jpeg"
+            return f"data:{mime};base64,{base64_string}"
+        except Exception as exc:
+            logger.warning("[chatbot] failed to encode image for captioning: %s", exc)
+            return image_url
+
+    def _normalize_llm_message_text(self, message_content: Any) -> str:
+        if isinstance(message_content, str):
+            return self._normalize_text(message_content)
+        if isinstance(message_content, list):
+            chunks: list[str] = []
+            for part in message_content:
+                if isinstance(part, dict) and str(part.get("type")).strip() == "text":
+                    chunks.append(str(part.get("text") or ""))
+            return self._normalize_text(" ".join(chunks))
+        return self._normalize_text(str(message_content or ""))
+
+    def _describe_single_image_ko(self, image_url: str, *, user_id: str) -> str:
+        # [chatbot] 이미지 인식 LLM으로 이미지 설명(한국어)을 생성한다.
+        normalized_url = self._normalize_image_url(image_url)
+        if not normalized_url or not self._is_image_llm_ready():
+            return ""
+        model_input_url = self._image_url_to_model_input(normalized_url)
+        prompt_text = self._normalize_text(settings.AI_IMAGE_MODEL_PROMPT) or "이미지를 상세히 한글로 설명해주세요."
+
+        try:
+            from openai import OpenAI
+        except Exception:
+            return ""
+
+        try:
+            ai_client = AIClient(model_name=settings.AI_IMAGE_MODEL_NAME, user_id=user_id)
+            headers = ai_client._build_headers()
+            client = OpenAI(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=str(settings.AI_IMAGE_MODEL_BASE_URL).strip(),
+                default_headers=headers,
+            )
+
+            def _invoke(content: list[dict[str, Any]]) -> str:
+                response = client.chat.completions.create(
+                    model=str(settings.AI_IMAGE_MODEL_NAME).strip(),
+                    messages=[{"role": "user", "content": content}],
+                    temperature=0.1,
+                    max_tokens=500,
+                    extra_headers=headers,
+                )
+                if not response.choices:
+                    return ""
+                message = response.choices[0].message
+                return self._normalize_llm_message_text(getattr(message, "content", ""))
+
+            primary = [
+                {"type": "text", "text": prompt_text},
+                {"type": "image_url", "image_url": {"url": model_input_url}},
+            ]
+            caption = _invoke(primary)
+            if caption:
+                return caption
+            # [chatbot] 모델별 스키마 차이를 고려해 image 타입도 재시도
+            fallback = [
+                {"type": "text", "text": prompt_text},
+                {"type": "image", "image": {"url": model_input_url}},
+            ]
+            return _invoke(fallback)
+        except Exception as exc:
+            logger.warning("[chatbot] image caption generation failed for %s: %s", normalized_url, exc)
+            return ""
+
+    def _build_image_caption_entries(self, image_urls: list[str], *, user_id: str) -> list[dict[str, str]]:
+        # [chatbot] 이미지 URL 목록을 기반으로 RAG content/metadata에 넣을 설명 목록을 만든다.
+        if not image_urls:
+            return []
+        max_images = max(1, int(getattr(settings, "AI_IMAGE_MODEL_MAX_IMAGES", 3) or 3))
+        entries: list[dict[str, str]] = []
+        for raw_url in image_urls[:max_images]:
+            normalized_url = self._normalize_image_url(raw_url)
+            if not normalized_url:
+                continue
+            caption = self._describe_single_image_ko(normalized_url, user_id=user_id)
+            if not caption:
+                caption = "이미지가 포함된 문서입니다."
+            entries.append(
+                {
+                    "url": normalized_url,
+                    "caption": self._truncate(caption, 500),
+                }
+            )
+        return entries
+
+    def _append_image_caption_block(self, content: str, image_entries: list[dict[str, str]]) -> str:
+        if not image_entries:
+            return content
+        lines = [
+            f"{idx}. URL: {row.get('url') or '-'} / 설명: {row.get('caption') or '-'}"
+            for idx, row in enumerate(image_entries, start=1)
+        ]
+        return f"{content}\n\n이미지설명({len(image_entries)}):\n" + "\n".join(lines)
+
+    def _collect_board_image_urls(self, post: Any) -> list[str]:
+        comments = list(getattr(post, "comments", []) or [])
+        sources = [getattr(post, "content", None)] + [getattr(row, "content", None) for row in comments]
+        urls: list[str] = []
+        for text in sources:
+            urls.extend(self._extract_image_urls_from_text(text))
+        return list(dict.fromkeys(urls))
+
+    def _collect_coaching_note_image_urls(
+        self,
+        note: CoachingNote,
+        public_comments: list[CoachingComment],
+    ) -> list[str]:
+        sources = [
+            getattr(note, "current_status", None),
+            getattr(note, "main_issue", None),
+            getattr(note, "next_action", None),
+        ] + [getattr(row, "content", None) for row in public_comments]
+        urls: list[str] = []
+        for text in sources:
+            urls.extend(self._extract_image_urls_from_text(text))
+        return list(dict.fromkeys(urls))
 
     def _truncate(self, value: str | None, limit: int) -> str:
         plain = self._normalize_text(value)
@@ -233,6 +453,7 @@ class ChatbotService:
                 "분류 기준:\n"
                 "- SQL: 집계/순위/비교/개수/최저/최고/현황 등 DB 수치 조회가 필요한 질문\n"
                 "- RAG: 코칭노트/게시글/문서 요약, 근거 기반 설명, 내용 해석 질문\n\n"
+                f"{self._sql_schema_guide()}\n\n"
                 f"question: {self._normalize_text(question)}"
             )
             raw = client.invoke(prompt, system_prompt)
@@ -246,19 +467,73 @@ class ChatbotService:
         dialect = getattr(getattr(bind, "dialect", None), "name", None)
         return str(dialect or "").lower()
 
-    def _sql_schema_guide(self) -> str:
-        # [chatbot] SQL 생성 프롬프트용 주요 테이블/컬럼 가이드
+    def _fallback_sql_schema_guide(self) -> str:
         return (
             "tables:\n"
-            "1) projects(project_id, batch_id, project_name, organization, status, progress_rate, visibility, created_at, updated_at)\n"
-            "2) coaching_notes(note_id, project_id, author_id, coaching_date, week_number, current_status, progress_rate, main_issue, next_action, created_at, updated_at)\n"
-            "3) batch(batch_id, batch_name, start_date, end_date, status, coaching_start_date)\n"
-            "4) users(user_id, emp_id, name, role, department, is_active)\n"
+            "- users(user_id, emp_id, name, role, department, is_active)\n"
+            "- projects(project_id, batch_id, project_name, organization, progress_rate, status, visibility)\n"
+            "- project_member(member_id, project_id, user_id, role, is_representative)\n"
+            "- coaching_notes(note_id, project_id, author_id, coaching_date, week_number, progress_rate, current_status)\n"
+            "- batch(batch_id, batch_name, start_date, end_date, status)\n"
             "relations:\n"
-            "- coaching_notes.project_id = projects.project_id\n"
+            "- project_member.user_id = users.user_id\n"
+            "- project_member.project_id = projects.project_id\n"
             "- projects.batch_id = batch.batch_id\n"
+            "- coaching_notes.project_id = projects.project_id\n"
             "- coaching_notes.author_id = users.user_id\n"
         )
+
+    def _sql_schema_guide(self) -> str:
+        # [chatbot] SQL 생성용 메타데이터를 DB 스키마에서 동적으로 구성
+        if self._sql_schema_cache:
+            return self._sql_schema_cache
+        bind = getattr(self.db, "bind", None)
+        if bind is None:
+            self._sql_schema_cache = self._fallback_sql_schema_guide()
+            return self._sql_schema_cache
+        try:
+            inspector = inspect(bind)
+            table_names = sorted(inspector.get_table_names())
+            table_lines: list[str] = []
+            relation_lines: list[str] = []
+            for table_name in table_names:
+                columns = inspector.get_columns(table_name)
+                col_parts: list[str] = []
+                for col in columns:
+                    name = str(col.get("name"))
+                    col_type = str(col.get("type") or "")
+                    attrs: list[str] = []
+                    if bool(col.get("primary_key")):
+                        attrs.append("pk")
+                    if not bool(col.get("nullable", True)):
+                        attrs.append("notnull")
+                    attr_text = f"[{','.join(attrs)}]" if attrs else ""
+                    col_parts.append(f"{name}:{col_type}{attr_text}")
+                table_lines.append(f"- {table_name}({', '.join(col_parts)})")
+
+                for fk in inspector.get_foreign_keys(table_name):
+                    local_cols = ",".join([str(v) for v in (fk.get("constrained_columns") or [])]) or "?"
+                    ref_table = str(fk.get("referred_table") or "?")
+                    ref_cols = ",".join([str(v) for v in (fk.get("referred_columns") or [])]) or "?"
+                    relation_lines.append(f"- {table_name}.{local_cols} -> {ref_table}.{ref_cols}")
+
+            semantic_hints = (
+                "semantic_hints:\n"
+                "- 사용자의 과제 조회는 users -> project_member -> projects 조인을 우선 고려\n"
+                "- 사용자 식별은 users.name 또는 users.emp_id를 사용\n"
+                "- 코칭노트는 coaching_notes.project_id로 projects와 연결\n"
+            )
+            lines: list[str] = ["tables:"] + table_lines
+            if relation_lines:
+                lines.append("relations:")
+                lines.extend(relation_lines)
+            lines.append(semantic_hints)
+            self._sql_schema_cache = "\n".join(lines)
+            return self._sql_schema_cache
+        except Exception as exc:
+            logger.warning("[chatbot] failed to build dynamic sql schema metadata: %s", exc)
+            self._sql_schema_cache = self._fallback_sql_schema_guide()
+            return self._sql_schema_cache
 
     def _extract_sql_from_text(self, raw_text: str) -> str:
         candidate = str(raw_text or "").strip()
@@ -337,6 +612,7 @@ class ChatbotService:
                 f"DB dialect: {dialect}\n"
                 f"{self._sql_schema_guide()}\n"
                 "rules:\n"
+                "- 사람 이름/사번으로 과제를 찾는 질문은 users + project_member + projects 조인을 우선 사용하세요.\n"
                 "- 질문이 '이번주'를 포함하면 현재 주차 기준 조건을 사용하세요.\n"
                 "- 결과는 최대 50건 이내가 되도록 LIMIT을 사용하세요.\n"
                 "- 의미있는 컬럼명(project_name, progress_rate 등)을 반환하세요.\n\n"
@@ -348,6 +624,25 @@ class ChatbotService:
         except Exception as exc:
             logger.warning("[chatbot] sql generation failed: %s", exc)
             return None
+
+    def _generate_sql_with_fallback_rules(self, question: str) -> str | None:
+        # [chatbot] LLM SQL 생성 실패 시 핵심 조회 질의를 위한 최소 규칙 기반 SQL 폴백
+        query = self._normalize_text(question)
+        name_match = re.search(r"([0-9A-Za-z가-힣_]+)\s*과제", query)
+        if name_match:
+            raw_name = name_match.group(1)
+            safe_name = raw_name.replace("'", "''")
+            return (
+                "SELECT u.name AS user_name, u.emp_id, p.project_id, p.project_name, b.batch_name "
+                "FROM users u "
+                "JOIN project_member pm ON pm.user_id = u.user_id "
+                "JOIN projects p ON p.project_id = pm.project_id "
+                "LEFT JOIN batch b ON b.batch_id = p.batch_id "
+                f"WHERE u.name LIKE '%{safe_name}%' OR u.emp_id = '{safe_name}' "
+                "ORDER BY p.project_name ASC "
+                "LIMIT 20"
+            )
+        return None
 
     def _execute_sql_query(self, sql: str) -> list[dict[str, Any]]:
         limited_sql = self._apply_default_limit(sql)
@@ -394,6 +689,8 @@ class ChatbotService:
             question=question,
             user_id=str(current_user.user_id),
         )
+        if not generated_sql:
+            generated_sql = self._generate_sql_with_fallback_rules(question)
         if not generated_sql:
             return None
         sql = self._normalize_sql(generated_sql)
@@ -466,18 +763,27 @@ class ChatbotService:
             source_label=str(metadata.get("source_type") or "document"),
             user_id=user_id,
         )
-        additional_field = dict(metadata)
-        additional_field["ai_summary"] = summary
+        # [chatbot] 메타데이터를 additional_field가 아닌 data 최상위 레벨에 평탄화한다.
+        reserved_keys = {"doc_id", "title", "content", "permission_groups", "created_time", "ai_summary"}
+        flat_metadata: dict[str, Any] = {}
+        for key, value in dict(metadata or {}).items():
+            normalized_key = str(key or "").strip()
+            if not normalized_key or normalized_key in reserved_keys:
+                continue
+            flat_metadata[normalized_key] = value
+
+        data_payload: dict[str, Any] = {
+            "doc_id": doc_id,
+            "title": self._truncate(title, 200),
+            "content": self._truncate(self._strip_html(content), 12000),
+            "permission_groups": permission_groups or [settings.RAG_PERMISSION_GROUP],
+            "created_time": self._to_iso(created_time),
+            **flat_metadata,
+            "ai_summary": summary,
+        }
         payload = {
             "index_name": settings.RAG_INDEX_NAME,
-            "data": {
-                "doc_id": doc_id,
-                "title": self._truncate(title, 200),
-                "content": self._truncate(self._strip_html(content), 12000),
-                "permission_groups": permission_groups or [settings.RAG_PERMISSION_GROUP],
-                "created_time": self._to_iso(created_time),
-                "additional_field": json.dumps(additional_field, ensure_ascii=False),
-            },
+            "data": data_payload,
             "chunk_factor": {
                 "logic": "fixed_size",
                 "chunk_size": 1024,
@@ -529,17 +835,36 @@ class ChatbotService:
                 return {}
         return {}
 
+    def _extract_doc_metadata(self, source: dict[str, Any]) -> dict[str, Any]:
+        # [chatbot] 신규(top-level) + 레거시(additional_field) 메타데이터를 모두 수집
+        legacy_meta = self._parse_additional_field(source.get("additional_field"))
+        reserved = {"doc_id", "title", "content", "permission_groups", "created_time", "additional_field"}
+        top_level_meta = {
+            str(key): value
+            for key, value in source.items()
+            if str(key) not in reserved and not str(key).startswith("_")
+        }
+        # top-level이 존재하면 레거시 값을 덮어써 최신 스키마를 우선한다.
+        merged = dict(legacy_meta)
+        merged.update(top_level_meta)
+        return merged
+
     def _extract_references(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        hits = payload.get("hits", {}).get("hits", [])
-        if not isinstance(hits, list):
-            hits = payload.get("result_docs", [])
+        hits_wrapper = payload.get("hits", {})
+        hits = hits_wrapper.get("hits", []) if isinstance(hits_wrapper, dict) else []
+        if not isinstance(hits, list) or not hits:
+            fallback_hits = payload.get("result_docs", [])
+            hits = fallback_hits if isinstance(fallback_hits, list) else []
         refs: list[dict[str, Any]] = []
         for row in hits:
             if not isinstance(row, dict):
                 continue
             source = row.get("_source") if isinstance(row.get("_source"), dict) else row
-            additional = self._parse_additional_field(source.get("additional_field"))
-            raw_batch_id = additional.get("batch_id")
+            metadata = self._extract_doc_metadata(source)
+            raw_batch_id = metadata.get("batch_id")
+            image_urls = self._coerce_image_urls(metadata.get("image_urls"))
+            if not image_urls:
+                image_urls = self._coerce_image_urls(metadata.get("image_url"))
             batch_id: int | None = None
             try:
                 batch_id = int(raw_batch_id) if raw_batch_id is not None else None
@@ -551,8 +876,9 @@ class ChatbotService:
                     "title": str(source.get("title") or "제목 없음"),
                     "content": self._truncate(source.get("content"), 1200),
                     "score": row.get("_score") or row.get("score"),
-                    "source_type": additional.get("source_type"),
+                    "source_type": metadata.get("source_type"),
                     "batch_id": batch_id,
+                    "image_urls": image_urls,
                 }
             )
         return refs
@@ -580,7 +906,8 @@ class ChatbotService:
                 (
                     f"[{idx + 1}] 제목: {row['title']}\n"
                     f"내용: {row['content']}\n"
-                    f"source_type: {row.get('source_type') or '-'} / batch_id: {row.get('batch_id')}"
+                    f"source_type: {row.get('source_type') or '-'} / batch_id: {row.get('batch_id')}\n"
+                    f"image_urls: {', '.join(row.get('image_urls') or []) or '-'}"
                 )
                 for idx, row in enumerate(refs[: max(1, min(int(num_result_doc), 20))])
             ]
@@ -597,7 +924,8 @@ class ChatbotService:
             prompt = (
                 f"[질문]\n{query}\n\n"
                 f"[검색 문맥]\n{context}\n\n"
-                "답변은 한국어로 작성하고, 필요하면 근거 문서 제목을 함께 언급하세요."
+                "답변은 한국어로 작성하고, 필요하면 근거 문서 제목을 함께 언급하세요.\n"
+                "검색 문맥에 image_urls가 있으면 답변에서도 관련 이미지를 함께 안내하세요."
             )
             answer = self._normalize_text(client.invoke(prompt, system_prompt))
         else:
@@ -613,6 +941,7 @@ class ChatbotService:
                     "score": row.get("score"),
                     "source_type": row.get("source_type"),
                     "batch_id": row.get("batch_id"),
+                    "image_urls": row.get("image_urls") or [],
                 }
                 for row in refs[: max(1, min(int(num_result_doc), 20))]
             ],
@@ -639,11 +968,19 @@ class ChatbotService:
                 return sql_result
 
         # [chatbot] 비관리자이거나 SQL 경로 실패 시 RAG 경로 사용
-        return self._answer_with_rag(
-            current_user=current_user,
-            question=query,
-            num_result_doc=num_result_doc,
-        )
+        try:
+            return self._answer_with_rag(
+                current_user=current_user,
+                question=query,
+                num_result_doc=num_result_doc,
+            )
+        except Exception:
+            # [chatbot] 관리자 질문에서 RAG가 실패하면 SQL 경로를 재시도해 실패율을 낮춤
+            if is_admin(current_user):
+                sql_result = self._answer_with_sql(current_user=current_user, question=query)
+                if sql_result is not None:
+                    return sql_result
+            raise
 
     def safe_sync_board_post(
         self,
@@ -666,6 +1003,10 @@ class ChatbotService:
                 batch = self.db.query(Batch).filter(Batch.batch_id == int(post.batch_id)).first()
                 batch_name = batch.batch_name if batch else None
             comment_count = len(list(getattr(post, "comments", []) or []))
+            board_content = self._build_board_post_content(post)
+            board_image_urls = self._collect_board_image_urls(post)
+            board_image_entries = self._build_image_caption_entries(board_image_urls, user_id=str(user_id))
+            board_content = self._append_image_caption_block(board_content, board_image_entries)
             metadata = {
                 "source_type": "board_post",
                 "event_type": str(event_type),
@@ -680,11 +1021,13 @@ class ChatbotService:
                 "comment_count": int(comment_count),
                 "last_comment_at": self._latest_comment_iso(list(getattr(post, "comments", []) or [])),
                 "updated_at": self._to_iso(post.updated_at or post.created_at),
+                "image_urls": [row.get("url") for row in board_image_entries],
+                "image_descriptions": board_image_entries,
             }
             self.upsert_rag_document(
                 doc_id=f"board_post:{int(post.post_id)}",
                 title=post.title or "게시글",
-                content=self._build_board_post_content(post),
+                content=board_content,
                 metadata=metadata,
                 user_id=user_id,
                 permission_groups=self._permission_groups_for_batch(
@@ -727,10 +1070,15 @@ class ChatbotService:
                 "author_id": int(note.author_id),
             }
             content, public_comments, coach_only_count = self._build_coaching_note_content(note, project)
+            note_image_urls = self._collect_coaching_note_image_urls(note, public_comments)
+            note_image_entries = self._build_image_caption_entries(note_image_urls, user_id=str(user_id))
+            content = self._append_image_caption_block(content, note_image_entries)
             metadata["public_comment_count"] = int(len(public_comments))
             metadata["coach_only_comment_count"] = int(coach_only_count)
             metadata["last_public_comment_at"] = self._latest_comment_iso(public_comments)
             metadata["updated_at"] = self._to_iso(note.updated_at or note.created_at or note.coaching_date)
+            metadata["image_urls"] = [row.get("url") for row in note_image_entries]
+            metadata["image_descriptions"] = note_image_entries
             self.upsert_rag_document(
                 doc_id=f"coaching_note:{int(note.note_id)}",
                 title=f"{project.project_name} 코칭노트 {note.coaching_date}",

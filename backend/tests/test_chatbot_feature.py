@@ -1,6 +1,4 @@
 """[chatbot] 챗봇/RAG 연동 기능을 검증하는 테스트입니다."""
-
-import json
 from datetime import date
 
 from tests.conftest import auth_headers
@@ -67,8 +65,32 @@ def test_chatbot_ask_endpoint_disabled_when_feature_off(client, seed_users, monk
     assert "비활성화" in resp.json().get("detail", "")
 
 
+def test_chatbot_ask_endpoint_allows_admin_when_feature_off(client, seed_users, monkeypatch):
+    # [chatbot] CHATBOT_ENABLED=false여도 admin은 질문 API를 사용할 수 있어야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", False, raising=False)
+
+    def _fake_answer_with_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        assert int(current_user.user_id) == int(seed_users["admin"].user_id)
+        assert question == "관리자 질문"
+        return {"answer": "admin ok", "references": []}
+
+    monkeypatch.setattr(ChatbotService, "answer_with_rag", _fake_answer_with_rag)
+
+    headers = auth_headers(client, "admin001")
+    resp = client.post(
+        "/api/chatbot/ask",
+        json={"question": "관리자 질문", "num_result_doc": 5},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["answer"] == "admin ok"
+
+
 def test_chatbot_upsert_rag_document_includes_metadata_and_ai_summary(db, monkeypatch):
-    # [chatbot] RAG 입력 payload의 additional_field에는 메타데이터 + AI요약이 포함되어야 한다.
+    # [chatbot] RAG 입력 payload의 data 최상위 레벨에 메타데이터 + AI요약이 포함되어야 한다.
     from app.config import settings
     from app.services.chatbot_service import ChatbotService
 
@@ -115,10 +137,46 @@ def test_chatbot_upsert_rag_document_includes_metadata_and_ai_summary(db, monkey
     assert payload["index_name"] == "rp-ssp"
     assert payload["data"]["doc_id"] == "board_post:77"
     assert payload["data"]["permission_groups"] == ["rag-public", "batch-2"]
-    additional_field = json.loads(payload["data"]["additional_field"])
-    assert additional_field["source_type"] == "board_post"
-    assert additional_field["batch_id"] == 2
-    assert additional_field["ai_summary"] == "요약 텍스트"
+    assert payload["data"]["source_type"] == "board_post"
+    assert payload["data"]["batch_id"] == 2
+    assert payload["data"]["board_type"] == "tip"
+    assert payload["data"]["ai_summary"] == "요약 텍스트"
+
+
+def test_chatbot_upsert_rag_document_works_when_chatbot_disabled(db, monkeypatch):
+    # [chatbot] CHATBOT_ENABLED=false여도 RAG_ENABLED=true면 RAG insert 동기화는 동작해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_INSERT_ENDPOINT", "/insert-doc", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+    monkeypatch.setattr(settings, "RAG_INDEX_NAME", "rp-ssp", raising=False)
+
+    called = {"count": 0}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, headers=None, json=None, timeout=None):  # noqa: ANN001
+        called["count"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("httpx.post", _fake_post)
+
+    svc = ChatbotService(db)
+    svc.upsert_rag_document(
+        doc_id="board_post:88",
+        title="제목",
+        content="본문",
+        metadata={"source_type": "board_post"},
+        user_id="1",
+    )
+    assert called["count"] == 1
 
 
 def test_chatbot_board_create_triggers_rag_sync(client, seed_users, seed_boards, monkeypatch):
@@ -293,6 +351,47 @@ def test_chatbot_safe_sync_board_post_merges_comments_into_same_doc_id(db, seed_
     assert captured["metadata"]["comment_count"] == 1
 
 
+def test_chatbot_safe_sync_board_post_includes_image_metadata_and_caption(db, seed_users, seed_boards, monkeypatch):
+    # [chatbot] 게시글 이미지가 있으면 URL 메타 + 한국어 이미지 설명이 content에 포함되어야 한다.
+    from app.config import settings
+    from app.models.board import BoardPost
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    post = BoardPost(
+        board_id=seed_boards[1].board_id,
+        author_id=seed_users["coach"].user_id,
+        title="이미지 포함 글",
+        content='<p>본문</p><img src="/uploads/editor_images/boards/1/board_post/sample.png" alt="x" />',
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    captured = {}
+
+    def _fake_upsert(self, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+
+    def _fake_caption(self, image_urls, *, user_id):  # noqa: ANN001
+        return [{"url": image_urls[0], "caption": "샘플 화면이 담긴 이미지입니다."}]
+
+    monkeypatch.setattr(ChatbotService, "upsert_rag_document", _fake_upsert)
+    monkeypatch.setattr(ChatbotService, "_build_image_caption_entries", _fake_caption)
+
+    svc = ChatbotService(db)
+    svc.safe_sync_board_post(post_id=int(post.post_id), user_id=str(seed_users["coach"].user_id), event_type="update")
+
+    assert captured["doc_id"] == f"board_post:{post.post_id}"
+    assert "/uploads/editor_images/boards/1/board_post/sample.png" in captured["metadata"]["image_urls"]
+    assert "샘플 화면이 담긴 이미지입니다." in captured["content"]
+    assert "이미지설명(1)" in captured["content"]
+
+
 def test_chatbot_admin_route_sql_selected_by_llm_json(db, seed_users, monkeypatch):
     # [chatbot] 관리자 질문은 LLM JSON 라우팅(route=sql)에 따라 SQL 경로를 사용해야 한다.
     from app.config import settings
@@ -418,3 +517,150 @@ def test_chatbot_route_json_parser_handles_fenced_json(db):
     svc = ChatbotService(db)
     route = svc._parse_route_decision("""```json\n{"route":"sql","reason":"집계 질문"}\n```""")
     assert route == "sql"
+
+
+def test_chatbot_extract_references_reads_top_level_metadata(db):
+    # [chatbot] 검색 응답 메타데이터는 additional_field 없이 top-level에서도 읽혀야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    svc = ChatbotService(db)
+    raw = {
+        "hits": {
+            "hits": [
+                {
+                    "_score": 1.23,
+                    "_source": {
+                        "doc_id": "board_post:10",
+                        "title": "테스트",
+                        "content": "본문",
+                        "source_type": "board_post",
+                        "batch_id": 2,
+                        "image_urls": ["/uploads/editor_images/a.png"],
+                    },
+                }
+            ]
+        }
+    }
+    refs = svc._extract_references(raw)
+    assert len(refs) == 1
+    assert refs[0]["source_type"] == "board_post"
+    assert refs[0]["batch_id"] == 2
+    assert refs[0]["image_urls"] == ["/uploads/editor_images/a.png"]
+
+
+def test_chatbot_extract_references_keeps_additional_field_compat(db):
+    # [chatbot] 레거시 additional_field 구조도 계속 파싱되어야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    svc = ChatbotService(db)
+    raw = {
+        "result_docs": [
+            {
+                "doc_id": "coaching_note:1",
+                "title": "노트",
+                "content": "내용",
+                "additional_field": '{"source_type":"coaching_note","batch_id":1,"image_urls":["/uploads/editor_images/b.png"]}',
+            }
+        ]
+    }
+    refs = svc._extract_references(raw)
+    assert len(refs) == 1
+    assert refs[0]["source_type"] == "coaching_note"
+    assert refs[0]["batch_id"] == 1
+    assert refs[0]["image_urls"] == ["/uploads/editor_images/b.png"]
+
+
+def test_chatbot_sql_schema_metadata_includes_project_member(db):
+    # [chatbot] SQL 메타데이터에는 사용자-과제 매핑용 project_member 테이블이 포함되어야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    svc = ChatbotService(db)
+    schema = svc._sql_schema_guide()
+    assert "project_member(" in schema
+    assert "users(" in schema
+    assert "projects(" in schema
+
+
+def test_chatbot_admin_rag_failure_falls_back_to_sql(db, seed_users, monkeypatch):
+    # [chatbot] 관리자 질문에서 RAG 실패 시 SQL 경로 재시도로 답변해야 한다.
+    from fastapi import HTTPException
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "CHATBOT_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+
+    def _fake_route(self, *, question, user_id):  # noqa: ANN001
+        return "rag"
+
+    def _fake_rag(self, *, current_user, question, num_result_doc):  # noqa: ANN001
+        raise HTTPException(status_code=500, detail="rag failed")
+
+    def _fake_sql(self, *, current_user, question):  # noqa: ANN001
+        return {"answer": "SQL fallback", "references": [{"source_type": "sql", "title": "DB 조회"}]}
+
+    monkeypatch.setattr(ChatbotService, "_decide_route_with_llm", _fake_route, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_rag", _fake_rag, raising=False)
+    monkeypatch.setattr(ChatbotService, "_answer_with_sql", _fake_sql, raising=False)
+
+    svc = ChatbotService(db)
+    out = svc.answer_with_rag(
+        current_user=seed_users["admin"],
+        question="정수연 과제 뭐야?",
+        num_result_doc=5,
+    )
+    assert out["answer"] == "SQL fallback"
+    assert out["references"][0]["source_type"] == "sql"
+
+
+def test_chatbot_sql_fallback_rule_generates_user_project_query(db):
+    # [chatbot] 'OOO 과제' 질문은 users-project_member-projects 조인 SQL을 생성해야 한다.
+    from app.services.chatbot_service import ChatbotService
+
+    svc = ChatbotService(db)
+    sql = svc._generate_sql_with_fallback_rules("정수연 과제 뭐야?")
+    assert sql is not None
+    assert "FROM users u" in sql
+    assert "JOIN project_member pm" in sql
+    assert "JOIN projects p" in sql
+
+
+def test_chatbot_answer_with_sql_uses_fallback_rule_when_llm_sql_missing(db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] SQL 생성 LLM이 실패해도 fallback rule로 사용자-과제 조회 답변이 가능해야 한다.
+    from app.config import settings
+    from app.models.project import Project, ProjectMember
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "AI_FEATURES_ENABLED", False, raising=False)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="정수연 테스트 과제",
+        organization="테스트팀",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    db.add(
+        ProjectMember(
+            project_id=project.project_id,
+            user_id=seed_users["participant"].user_id,
+            role="member",
+            is_representative=True,
+        )
+    )
+    db.commit()
+
+    svc = ChatbotService(db)
+    out = svc._answer_with_sql(
+        current_user=seed_users["admin"],
+        question="Participant 과제 뭐야?",
+    )
+    assert out is not None
+    assert out["references"][0]["source_type"] == "sql"
+    assert "정수연 테스트 과제" in out["answer"]

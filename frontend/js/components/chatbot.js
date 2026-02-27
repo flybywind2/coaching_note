@@ -65,14 +65,16 @@ const ChatbotWidget = {
     const root = document.getElementById('chatbot-widget');
     if (!root) return;
     const { path } = Router.getCurrentParams();
-    // [chatbot] .env(CHATBOT_ENABLED)가 false면 UI 버튼 자체를 숨김
-    const visible = this._featureLoaded && this._featureEnabled && Auth.isLoggedIn() && path !== '/login';
+    // [chatbot] admin은 CHATBOT_ENABLED=false여도 UI를 노출한다.
+    const enabledForUser = this._featureEnabled || Auth.isAdmin();
+    const visible = this._featureLoaded && enabledForUser && Auth.isLoggedIn() && path !== '/login';
     root.style.display = visible ? '' : 'none';
     if (!visible) this.closeModal();
   },
 
   toggleModal() {
-    if (!this._featureEnabled) return;
+    // [chatbot] admin 예외 포함한 최종 사용 가능 여부 확인
+    if (!(this._featureEnabled || Auth.isAdmin())) return;
     const modal = document.getElementById('chatbot-modal');
     if (!modal) return;
     const opened = modal.style.display !== 'none';
@@ -96,14 +98,33 @@ const ChatbotWidget = {
     wrap.scrollTop = wrap.scrollHeight;
   },
 
+  _isSafeImageUrl(url) {
+    // [chatbot] 챗봇 참고 이미지 렌더링 허용 URL만 통과
+    const raw = String(url || '').trim().toLowerCase();
+    if (!raw) return false;
+    return raw.startsWith('/uploads/') || raw.startsWith('http://') || raw.startsWith('https://');
+  },
+
   _renderReferences(refs) {
     if (!Array.isArray(refs) || !refs.length) return '';
     const lines = refs
       .filter((row) => row && row.title)
       .map((row) => `• ${Fmt.escape(row.title)}`)
       .join('<br/>');
-    if (!lines) return '';
-    return `<div class="chatbot-refs"><strong>참고 문서</strong><br/>${lines}</div>`;
+    const imageUrls = [...new Set(refs.flatMap((row) => (Array.isArray(row?.image_urls) ? row.image_urls : [])))];
+    // [chatbot] references.image_urls를 썸네일로 렌더링
+    const imageItems = imageUrls
+      .filter((url) => this._isSafeImageUrl(url))
+      .slice(0, 6)
+      .map((url) => (
+        `<a class="chatbot-ref-image-link" href="${Fmt.escape(url)}" target="_blank" rel="noopener noreferrer">`
+        + `<img class="chatbot-ref-image" src="${Fmt.escape(url)}" alt="참고 이미지" />`
+        + '</a>'
+      ))
+      .join('');
+    if (!lines && !imageItems) return '';
+    const imageBlock = imageItems ? `<div class="chatbot-ref-images">${imageItems}</div>` : '';
+    return `<div class="chatbot-refs"><strong>참고 문서</strong><br/>${lines}${imageBlock}</div>`;
   },
 
   async _onSubmit(e) {

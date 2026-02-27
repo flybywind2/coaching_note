@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     AI_SUMMARY_MODEL: str = "gpt-oss"
     AI_QA_MODEL: str = "qwen3"
     AI_CODE_MODEL: str = "deepseek-r1"
+    # [chatbot] 이미지 인식 LLM 설정 (RAG 입력 시 이미지 설명 생성)
+    AI_IMAGE_MODEL_BASE_URL: str = ""
+    AI_IMAGE_MODEL_NAME: str = ""
+    AI_IMAGE_MODEL_PROMPT: str = "이미지를 상세히 한글로 설명해주세요."
+    AI_IMAGE_MODEL_MAX_IMAGES: int = 3
     AI_FEATURES_ENABLED: bool = True
 
     # [chatbot] RAG/챗봇 설정

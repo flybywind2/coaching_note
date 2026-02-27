@@ -18,7 +18,10 @@
 - 게시글: `create`, `update`, `restore`, `comment_create`, `comment_update`, `comment_delete`
 - 코칭노트: `create`, `update`, `restore`, `comment_create`, `comment_delete`
 
-## additional_field 메타데이터
+## RAG data 메타데이터(Top-level)
+
+- insert 시 메타데이터는 `data.additional_field`에 넣지 않고, `data.doc_id`, `data.content`와 동일 레벨에 넣습니다.
+- `ai_summary`도 동일하게 `data.ai_summary`에 저장합니다.
 
 ### 1) board_post.v2
 공통 필드:
@@ -32,8 +35,10 @@
 - `last_comment_at`: 마지막 댓글 시각(ISO)
 - `updated_at`: 게시글 최신 시각(ISO)
 - `ai_summary`: content 기반 AI 요약
+- `image_urls`: 문서에서 추출한 이미지 URL 목록
+- `image_descriptions`: 이미지 URL + 한국어 설명 목록
 
-예시:
+예시(`data` 하위):
 ```json
 {
   "source_type": "board_post",
@@ -49,6 +54,13 @@
   "comment_count": 3,
   "last_comment_at": "2026-02-27T15:10:00+00:00",
   "updated_at": "2026-02-27T15:12:00+00:00",
+  "image_urls": ["/uploads/editor_images/boards/3/board_post/sample.png"],
+  "image_descriptions": [
+    {
+      "url": "/uploads/editor_images/boards/3/board_post/sample.png",
+      "caption": "대시보드 화면에서 진행률이 표시된 이미지입니다."
+    }
+  ],
   "ai_summary": "..."
 }
 ```
@@ -67,8 +79,10 @@
 - `last_public_comment_at`: 마지막 공개 댓글 시각(ISO)
 - `updated_at`: 코칭노트 최신 시각(ISO)
 - `ai_summary`: content 기반 AI 요약
+- `image_urls`: 문서에서 추출한 이미지 URL 목록
+- `image_descriptions`: 이미지 URL + 한국어 설명 목록
 
-예시:
+예시(`data` 하위):
 ```json
 {
   "source_type": "coaching_note",
@@ -86,11 +100,44 @@
   "coach_only_comment_count": 1,
   "last_public_comment_at": "2026-02-27T10:20:00+00:00",
   "updated_at": "2026-02-27T10:21:00+00:00",
+  "image_urls": ["/uploads/editor_images/projects/5/note/sample.jpg"],
+  "image_descriptions": [
+    {
+      "url": "/uploads/editor_images/projects/5/note/sample.jpg",
+      "caption": "프로세스 다이어그램이 포함된 코칭노트 이미지입니다."
+    }
+  ],
   "ai_summary": "..."
 }
 ```
+
+# image인식 llm
+```python
+def get_image_base64(file_path):
+  with open(file_path, "rb") as reader:
+    image_bytes = reader.read()
+    base64_bytes = base64.b64encode(image_bytes)
+    base64_string = base64_bytes.decode("utf-8")
+    return base64_string
+
+image_base64 = get_image_base64("./data/sample.jpg") #이미지파일 경로 기입
+
+human_message = HumanMessage(
+    content=[
+      {"type" : "text", "text" : "이미지를 상세히 한글로 설명해주세요."},
+      {"type" : "image", "image" : {"url" : f"data:image/jpeg;base64,{image_base64}"}}
+    ]
+)
+```
+
+## 이미지 인식 LLM 환경변수
+- `AI_IMAGE_MODEL_BASE_URL`: 이미지 인식 모델 전용 Base URL
+- `AI_IMAGE_MODEL_NAME`: 이미지 인식 모델명
+- `AI_IMAGE_MODEL_PROMPT`: 이미지 설명 프롬프트(기본: `이미지를 상세히 한글로 설명해주세요.`)
+- `AI_IMAGE_MODEL_MAX_IMAGES`: 문서당 이미지 설명 생성 최대 개수
 
 ## content 구성 원칙
 - 게시글: `제목 + 본문 + 댓글 목록`을 하나의 텍스트로 구성
 - 코칭노트: `핵심 필드 + 공개댓글 목록`을 하나의 텍스트로 구성
 - 코칭노트의 `is_coach_only=true` 댓글은 content에 넣지 않습니다.
+- 이미지가 있으면 `이미지설명(n)` 블록을 content에 추가해 RAG 문맥에 함께 저장합니다.

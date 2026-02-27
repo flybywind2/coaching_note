@@ -16,6 +16,7 @@ class ChatbotReferenceOut(BaseModel):
     score: Optional[float] = None
     source_type: Optional[str] = None
     batch_id: Optional[int] = None
+    image_urls: List[str] = Field(default_factory=list)
 
 
 class ChatbotAskResponse(BaseModel):
