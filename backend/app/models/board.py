@@ -23,10 +23,12 @@ class BoardPost(Base):
 
     post_id = Column(Integer, primary_key=True, autoincrement=True)
     board_id = Column(Integer, ForeignKey("board.board_id"), nullable=False)
+    batch_id = Column(Integer, ForeignKey("batch.batch_id"), nullable=True)  # [FEEDBACK7] 차수 분리 운영
     author_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)
     is_notice = Column(Boolean, default=False)
+    is_batch_private = Column(Boolean, default=False)  # [FEEDBACK7] 해당 차수에게만 공개
     attachments = Column(Text)  # JSON
     view_count = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())

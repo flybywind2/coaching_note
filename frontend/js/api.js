@@ -146,13 +146,15 @@ const API = {
 
   // Boards
   getBoards: () => apiFetch('/api/boards'),
-  getPosts: (boardId, skip = 0, limit = 20) => apiFetch(`/api/boards/${boardId}/posts?skip=${skip}&limit=${limit}`),
+  getPosts: (boardId, skip = 0, limit = 20, batchId = null) =>
+    apiFetch(`/api/boards/${boardId}/posts?skip=${skip}&limit=${limit}${batchId != null ? `&batch_id=${encodeURIComponent(String(batchId))}` : ''}`),
   getAllPosts: (params = {}) => {
     const q = new URLSearchParams();
     if (params.skip != null) q.set('skip', String(params.skip));
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.category) q.set('category', String(params.category));
     if (params.q) q.set('q', String(params.q));
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id)); // [FEEDBACK7] 게시판 차수 분리
     return apiFetch(`/api/boards/posts${q.toString() ? `?${q.toString()}` : ''}`);
   },
   getPost: (boardId, postId) => apiFetch(`/api/boards/posts/${postId}`),

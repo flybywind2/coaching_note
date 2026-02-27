@@ -5,12 +5,15 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.models.board import Board, BoardPost, PostComment, BoardPostView
+from app.models.batch import Batch
+from app.models.project import Project, ProjectMember
+from app.models.access_scope import UserBatchAccess
 from app.models.user import User
 from app.schemas.board import BoardPostCreate, BoardPostUpdate, PostCommentCreate, PostCommentUpdate
 from app.services import mention_service, version_service
 from app.services import notification_service
 from typing import List
-from app.utils.permissions import is_admin_or_coach
+from app.utils.permissions import is_admin_or_coach, is_participant
 
 STANDARD_BOARDS = (
     {"board_type": "notice", "board_name": "공지사항", "description": "프로그램 공지사항"},
@@ -42,6 +45,67 @@ def _ensure_not_observer(current_user: User):
 def _ensure_notice_board_admin(board: Board, current_user: User):
     if board.board_type == "notice" and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="공지사항 게시판 작성은 관리자만 가능합니다.")
+
+
+def _resolve_batch_id_or_none(db: Session, requested_batch_id: int | None) -> int | None:
+    # [FEEDBACK7] 기존 데이터(차수 미지정)와 호환하기 위해 배치가 없으면 None 허용
+    if requested_batch_id is not None:
+        batch = db.query(Batch.batch_id).filter(Batch.batch_id == int(requested_batch_id)).first()
+        if not batch:
+            raise HTTPException(status_code=400, detail="존재하지 않는 차수입니다.")
+        return int(requested_batch_id)
+    first_batch = db.query(Batch.batch_id).order_by(Batch.batch_id.asc()).first()
+    return int(first_batch[0]) if first_batch else None
+
+
+def _participant_batch_ids(db: Session, current_user: User) -> set[int]:
+    direct_scope = {
+        int(row[0])
+        for row in db.query(UserBatchAccess.batch_id)
+        .filter(UserBatchAccess.user_id == current_user.user_id)
+        .all()
+    }
+    if direct_scope:
+        return direct_scope
+    # [FEEDBACK7] 권한 데이터가 없는 기존 계정은 소속 과제의 batch로 추론
+    membership_scope = {
+        int(row[0])
+        for row in db.query(Project.batch_id)
+        .join(ProjectMember, ProjectMember.project_id == Project.project_id)
+        .filter(ProjectMember.user_id == current_user.user_id)
+        .all()
+    }
+    return membership_scope
+
+
+def _ensure_can_write_batch(db: Session, current_user: User, batch_id: int | None):
+    if batch_id is None:
+        return
+    if is_admin_or_coach(current_user):
+        return
+    if not is_participant(current_user):
+        raise HTTPException(status_code=403, detail="해당 차수에 작성 권한이 없습니다.")
+    if batch_id not in _participant_batch_ids(db, current_user):
+        raise HTTPException(status_code=403, detail="참여자는 본인 차수에만 작성할 수 있습니다.")
+
+
+def _can_view_post(db: Session, post: BoardPost, current_user: User, participant_batches: set[int] | None = None) -> bool:
+    if not bool(post.is_batch_private):
+        return True
+    if is_admin_or_coach(current_user):
+        return True
+    if current_user.role == "observer":
+        return False
+    if not is_participant(current_user):
+        return False
+    if participant_batches is None:
+        participant_batches = _participant_batch_ids(db, current_user)
+    return post.batch_id is not None and int(post.batch_id) in participant_batches
+
+
+def _ensure_can_view_post(db: Session, post: BoardPost, current_user: User, participant_batches: set[int] | None = None):
+    if not _can_view_post(db, post, current_user, participant_batches=participant_batches):
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
 
 
 def _canonical_board_type(board_type: str | None, board_name: str | None = None) -> str:
@@ -176,28 +240,41 @@ def _posts_query(db: Session):
     )
 
 
-def get_posts(db: Session, board_id: int, skip: int = 0, limit: int = 20) -> List[BoardPost]:
+def get_posts(
+    db: Session,
+    board_id: int,
+    current_user: User,
+    skip: int = 0,
+    limit: int = 20,
+    batch_id: int | None = None,
+) -> List[BoardPost]:
     _sync_standard_boards(db)
-    rows = (
-        _posts_query(db)
-        .filter(BoardPost.board_id == board_id)
-        .order_by(BoardPost.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return [_serialize_post(post, board_name, board_type, author_name, comment_count) for post, board_name, board_type, author_name, comment_count in rows]
+    query = _posts_query(db).filter(BoardPost.board_id == board_id)
+    if batch_id is not None:
+        query = query.filter(BoardPost.batch_id == int(batch_id))
+    rows = query.order_by(BoardPost.created_at.desc()).offset(skip).limit(limit).all()
+    participant_batches = _participant_batch_ids(db, current_user) if is_participant(current_user) else None
+    result = []
+    for post, board_name, board_type, author_name, comment_count in rows:
+        if not _can_view_post(db, post, current_user, participant_batches=participant_batches):
+            continue
+        result.append(_serialize_post(post, board_name, board_type, author_name, comment_count))
+    return result
 
 
 def get_all_posts(
     db: Session,
+    current_user: User,
     skip: int = 0,
     limit: int = 20,
     category: str | None = None,
     search_q: str | None = None,
+    batch_id: int | None = None,
 ) -> List[BoardPost]:
     _sync_standard_boards(db)
     query = _posts_query(db)
+    if batch_id is not None:
+        query = query.filter(BoardPost.batch_id == int(batch_id))
     if category:
         normalized_category = _canonical_board_type(category, category)
         if normalized_category in BOARD_PRIORITY:
@@ -220,7 +297,13 @@ def get_all_posts(
         .limit(limit)
         .all()
     )
-    return [_serialize_post(post, board_name, board_type, author_name, comment_count) for post, board_name, board_type, author_name, comment_count in rows]
+    participant_batches = _participant_batch_ids(db, current_user) if is_participant(current_user) else None
+    result = []
+    for post, board_name, board_type, author_name, comment_count in rows:
+        if not _can_view_post(db, post, current_user, participant_batches=participant_batches):
+            continue
+        result.append(_serialize_post(post, board_name, board_type, author_name, comment_count))
+    return result
 
 
 def get_post(db: Session, post_id: int) -> BoardPost:
@@ -230,7 +313,7 @@ def get_post(db: Session, post_id: int) -> BoardPost:
     return post
 
 
-def get_post_with_meta(db: Session, post_id: int) -> BoardPost:
+def get_post_with_meta(db: Session, post_id: int, current_user: User | None = None) -> BoardPost:
     row = (
         _posts_query(db)
         .filter(BoardPost.post_id == post_id)
@@ -239,6 +322,9 @@ def get_post_with_meta(db: Session, post_id: int) -> BoardPost:
     if not row:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     post, board_name, board_type, author_name, comment_count = row
+    if current_user is not None:
+        participant_batches = _participant_batch_ids(db, current_user) if is_participant(current_user) else None
+        _ensure_can_view_post(db, post, current_user, participant_batches=participant_batches)
     return _serialize_post(post, board_name, board_type, author_name, comment_count)
 
 
@@ -247,6 +333,8 @@ def _post_snapshot(post: BoardPost) -> dict:
         "title": post.title,
         "content": post.content,
         "is_notice": bool(post.is_notice),
+        "batch_id": int(post.batch_id) if post.batch_id is not None else None,  # [FEEDBACK7]
+        "is_batch_private": bool(post.is_batch_private),  # [FEEDBACK7]
     }
 
 
@@ -255,7 +343,12 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
     board = get_board(db, board_id)
     _ensure_notice_board_admin(board, current_user)
     payload = data.model_dump()
+    requested_batch_id = payload.pop("batch_id", None)
+    resolved_batch_id = _resolve_batch_id_or_none(db, requested_batch_id)
+    _ensure_can_write_batch(db, current_user, resolved_batch_id)
     payload["is_notice"] = board.board_type == "notice"
+    payload["batch_id"] = resolved_batch_id
+    payload["is_batch_private"] = bool(payload.get("is_batch_private", False))
     post = BoardPost(board_id=board_id, author_id=current_user.user_id, **payload)
     db.add(post)
     db.commit()
@@ -277,7 +370,7 @@ def create_post(db: Session, board_id: int, data: BoardPostCreate, current_user:
     )
     if post.is_notice:
         _notify_notice_post(db, post, current_user)
-    return get_post_with_meta(db, post.post_id)
+    return get_post_with_meta(db, post.post_id, current_user=current_user)
 
 
 def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: User) -> BoardPost:
@@ -286,8 +379,10 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     before_texts = [post.title, post.content]
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 수정 가능합니다.")
+    _ensure_can_write_batch(db, current_user, post.batch_id)
     payload = data.model_dump(exclude_none=True)
     next_board_id = payload.pop("board_id", None)
+    next_batch_id = payload.pop("batch_id", None)
     payload.pop("is_notice", None)
     if next_board_id is not None and int(next_board_id) != int(post.board_id):
         next_board = get_board(db, int(next_board_id))
@@ -297,6 +392,10 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
             raise HTTPException(status_code=400, detail="수정 화면에서 공지사항으로 분류를 변경할 수 없습니다.")
         _ensure_notice_board_admin(next_board, current_user)
         post.board_id = next_board.board_id
+    if next_batch_id is not None:
+        resolved_batch_id = _resolve_batch_id_or_none(db, int(next_batch_id))
+        _ensure_can_write_batch(db, current_user, resolved_batch_id)
+        post.batch_id = resolved_batch_id
     for k, v in payload.items():
         setattr(post, k, v)
     post.is_notice = post.board.board_type == "notice"
@@ -320,13 +419,14 @@ def update_post(db: Session, post_id: int, data: BoardPostUpdate, current_user: 
     )
     if post.is_notice:
         _notify_notice_post(db, post, current_user)
-    return get_post_with_meta(db, post.post_id)
+    return get_post_with_meta(db, post.post_id, current_user=current_user)
 
 
 def delete_post(db: Session, post_id: int, current_user: User):
     post = get_post(db, post_id)
     if post.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 게시글 또는 관리자만 삭제 가능합니다.")
+    _ensure_can_write_batch(db, current_user, post.batch_id)
     db.delete(post)
     db.commit()
 
@@ -356,7 +456,10 @@ def increment_view(db: Session, post_id: int, user_id: int):
     db.commit()
 
 
-def get_comments(db: Session, post_id: int) -> List[PostComment]:
+def get_comments(db: Session, post_id: int, current_user: User) -> List[PostComment]:
+    post = get_post(db, post_id)
+    participant_batches = _participant_batch_ids(db, current_user) if is_participant(current_user) else None
+    _ensure_can_view_post(db, post, current_user, participant_batches=participant_batches)
     rows = (
         db.query(PostComment, User.name.label("author_name"))
         .join(User, User.user_id == PostComment.author_id)
@@ -369,6 +472,10 @@ def get_comments(db: Session, post_id: int) -> List[PostComment]:
 
 def create_comment(db: Session, post_id: int, data: PostCommentCreate, current_user: User) -> PostComment:
     _ensure_not_observer(current_user)
+    post = get_post(db, post_id)
+    participant_batches = _participant_batch_ids(db, current_user) if is_participant(current_user) else None
+    _ensure_can_view_post(db, post, current_user, participant_batches=participant_batches)
+    _ensure_can_write_batch(db, current_user, post.batch_id)
     comment = PostComment(post_id=post_id, author_id=current_user.user_id, **data.model_dump())
     db.add(comment)
     db.commit()
@@ -390,6 +497,7 @@ def update_comment(db: Session, comment_id: int, data: PostCommentUpdate, curren
         raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
     if comment.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 수정 가능합니다.")
+    _ensure_can_write_batch(db, current_user, comment.post.batch_id)
     previous = comment.content
     comment.content = data.content
     db.commit()
@@ -411,6 +519,7 @@ def delete_comment(db: Session, comment_id: int, current_user: User):
         raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
     if comment.author_id != current_user.user_id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="본인 댓글 또는 관리자만 삭제 가능합니다.")
+    _ensure_can_write_batch(db, current_user, comment.post.batch_id)
     db.delete(comment)
     db.commit()
 
@@ -448,7 +557,7 @@ def restore_post_version(db: Session, post_id: int, version_id: int, current_use
         change_type="restore",
         snapshot=_post_snapshot(post),
     )
-    return get_post_with_meta(db, post.post_id)
+    return get_post_with_meta(db, post.post_id, current_user=current_user)
 
 
 def list_mention_candidates(db: Session, q: str | None, limit: int = 8) -> list[dict]:

@@ -110,6 +110,13 @@ def ensure_schema():
         ai_content_columns = {str(row[1]) for row in ai_content_rows}
         if "week_number" not in ai_content_columns:
             conn.execute(text("ALTER TABLE ai_generated_content ADD COLUMN week_number INTEGER"))
+        board_post_rows = conn.execute(text("PRAGMA table_info(board_post)")).fetchall()
+        board_post_columns = {str(row[1]) for row in board_post_rows}
+        if "batch_id" not in board_post_columns:
+            conn.execute(text("ALTER TABLE board_post ADD COLUMN batch_id INTEGER"))
+        if "is_batch_private" not in board_post_columns:
+            conn.execute(text("ALTER TABLE board_post ADD COLUMN is_batch_private BOOLEAN"))
+            conn.execute(text("UPDATE board_post SET is_batch_private = 0 WHERE is_batch_private IS NULL"))
 
 
 @app.get("/api/health")

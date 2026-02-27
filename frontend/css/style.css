@@ -258,6 +258,7 @@ body::after {
 .tag-planned { background: rgba(245, 158, 11, 0.16); color: #975a06; border-color: rgba(245, 158, 11, 0.3); }
 .tag-cancelled { background: rgba(239, 68, 68, 0.14); color: #b12030; border-color: rgba(239, 68, 68, 0.3); }
 .tag-notice { background: rgba(168, 85, 247, 0.16); color: #6d30c5; border-color: rgba(168, 85, 247, 0.3); }
+.tag-batch-private { background: rgba(14, 165, 233, 0.15); color: #03678d; border-color: rgba(14, 165, 233, 0.3); margin-left: 8px; } /* [FEEDBACK7] 차수 비공개 표시 */
 .tag-done { background: rgba(47, 182, 125, 0.14); color: #0f7f52; border-color: rgba(47, 182, 125, 0.3); }
 .badge {
   background: var(--danger);

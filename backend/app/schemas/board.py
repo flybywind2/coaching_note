@@ -19,6 +19,8 @@ class BoardPostBase(BaseModel):
     title: str
     content: str
     is_notice: bool = False
+    batch_id: Optional[int] = None  # [FEEDBACK7] 차수 분리 운영
+    is_batch_private: bool = False  # [FEEDBACK7] 해당 차수에게만 공개
 
 
 class BoardPostCreate(BoardPostBase):
@@ -30,6 +32,8 @@ class BoardPostUpdate(BaseModel):
     content: Optional[str] = None
     is_notice: Optional[bool] = None
     board_id: Optional[int] = None
+    batch_id: Optional[int] = None
+    is_batch_private: Optional[bool] = None
 
 
 class BoardPostOut(BoardPostBase):

@@ -51,19 +51,19 @@
 
 ### Commit 2. 게시판 차수 분리 + 차수 공개 옵션
 
-- [ ] 게시글 스키마 확장
+- [x] 게시글 스키마 확장
   - 후보 파일: `backend/app/models/board.py`, `backend/app/schemas/board.py`
   - 필드: `batch_id`, `is_batch_private`(해당 차수 공개 여부), `author_batch_id`
-- [ ] 권한 규칙 반영
+- [x] 권한 규칙 반영
   - 후보 파일: `backend/app/services/board_service.py`, `backend/app/utils/permissions.py`
   - 관리자/코치: 전 차수 작성 가능
   - 참여자: 본인 차수만 작성 가능
   - 조회는 전체 가능, 단 `is_batch_private=true`는 대상 차수 외 비공개 처리
-- [ ] UI 반영
+- [x] UI 반영
   - 후보 파일: `frontend/js/pages/board.js`, `frontend/js/api.js`
   - 글 작성/수정에 `해당 차수에게만 공개` 체크박스
   - 비공개 글 식별 말머리/배지 표시
-- [ ] 테스트 추가
+- [x] 테스트 추가
   - 후보 파일: `backend/tests/test_board_feedback7_batch_policy.py`
   - 역할별 작성 권한, 비공개 노출 제한, 댓글 작성 제한 검증
 
@@ -150,7 +150,7 @@
 ### Phase B. 기능 커밋 진행 (기능당 1 commit)
 
 - [x] Commit 1: 소식 메뉴
-- [ ] Commit 2: 게시판 차수 정책
+- [x] Commit 2: 게시판 차수 정책
 - [ ] Commit 3: 과제 조사 페이지
 - [ ] Commit 4: 설문 페이지
 - [ ] Commit 5: 수강신청/강의관리/캘린더 연동
