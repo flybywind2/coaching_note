@@ -9,6 +9,7 @@ from app.services import (
     board_service,
     notification_service,
     project_research_service,
+    survey_service,
     mention_service,
     version_service,
 )

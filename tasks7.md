@@ -88,26 +88,26 @@
 
 ### Commit 4. 설문 페이지 추가
 
-- [ ] 설문 모델 구현
+- [x] 설문 모델 구현
   - 후보 파일: `backend/app/models/survey.py`, `backend/app/schemas/survey.py`
   - 엔티티: 설문, 질문, 선택지, 응답, 응답 상세
   - 제약: 동시에 공개 가능한 설문은 1개
-- [ ] API 구현
+- [x] API 구현
   - 후보 파일: `backend/app/routers/surveys.py`, `backend/app/services/survey_service.py`
   - 관리자: 생성/수정/삭제/공개/결과조회/CSV 추출
   - 참여자: 대상 차수 + 기간 내 제출/제출취소(재수정)
   - 공개 시 대상 차수 알림
-- [ ] 질문 유형/검증 구현
+- [x] 질문 유형/검증 구현
   - 주관식, 객관식(항목형/점수형), 필수 여부, 항목형 다중선택
   - 필수 미응답 시 제출 불가/하이라이트
-- [ ] 통계 구현
+- [x] 통계 구현
   - 과제별 응답률
   - 점수형 평균(전체/과제별)
-- [ ] 프론트 화면 구현
+- [x] 프론트 화면 구현
   - 후보 파일: `frontend/js/pages/survey.js`(신규), `frontend/js/api.js`, `frontend/js/components/header.js`
   - 메뉴 노출: 관리자/참여자만
   - 비대상 참여자 문구: `현재 진행중인 설문이 없습니다.`
-- [ ] 테스트 추가
+- [x] 테스트 추가
   - 후보 파일: `backend/tests/test_survey_feedback7.py`
 
 ### Commit 5. 수강신청 페이지 + 강의관리/캘린더 연동
@@ -148,7 +148,7 @@
 - [x] Commit 1: 소식 메뉴
 - [x] Commit 2: 게시판 차수 정책
 - [x] Commit 3: 과제 조사 페이지
-- [ ] Commit 4: 설문 페이지
+- [x] Commit 4: 설문 페이지
 - [ ] Commit 5: 수강신청/강의관리/캘린더 연동
 
 ### Phase C. 통합 검증 (1~2일)

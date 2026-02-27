@@ -135,3 +135,60 @@
     - 본인 차수 조사 목록만 조회, 본인 과제 행 답변 저장 성공 확인
   - 참관자 `obs001`:
     - 메뉴 미노출, `#/project-research` 직접 접근 시 차단/리다이렉트 확인
+
+## Commit 4 - 설문 페이지 추가
+
+### 추가/수정 파일
+
+- `backend/app/models/survey.py` (신규)
+- `backend/app/models/__init__.py`
+- `backend/app/schemas/survey.py` (신규)
+- `backend/app/services/survey_service.py` (신규)
+- `backend/app/services/__init__.py`
+- `backend/app/routers/surveys.py` (신규)
+- `backend/app/main.py`
+- `backend/tests/test_survey_feedback7.py` (신규)
+- `frontend/js/pages/survey.js` (신규)
+- `frontend/js/api.js`
+- `frontend/js/app.js`
+- `frontend/js/router.js`
+- `frontend/js/components/header.js`
+- `frontend/index.html`
+- `frontend/css/style.css`
+- `tasks7.md`
+
+### 핵심 로직
+
+- `[FEEDBACK7]` 설문 도메인 모델 추가
+  - 설문(`Survey`), 질문(`SurveyQuestion`), 과제별 응답(`SurveyResponse`) 구성
+  - 질문 유형: `subjective`, `objective_choice`, `objective_score`
+  - 동시 공개 제약: `is_visible=true` 설문은 시스템 전체에서 1개만 허용
+- `[FEEDBACK7]` 설문 API/서비스 구현
+  - 관리자: 설문/질문 CRUD, 공개 전환, 결과 통계 조회, CSV 내보내기
+  - 참여자: 대상 차수 + 기간 내 본인 과제 응답 제출/제출취소(재수정)
+  - 공개 전환 시 대상 차수 참여자 알림(`noti_type=\"survey\"`) 발송
+  - 필수 문항 누락 시 제출 차단(백엔드 검증)
+- `[FEEDBACK7]` 통계 구현
+  - 과제별 필수 문항 응답률
+  - 점수형 문항 평균(전체/과제별)
+- `[FEEDBACK7]` 프론트 설문 페이지 추가
+  - 관리자/참여자 전용 `설문` 메뉴 및 `#/survey` 라우트
+  - 좌측 설문 리스트 + 우측 설문 상세/질문 테이블
+  - 필수 미응답 시 셀 하이라이트 + 제출 차단
+  - 참여자 대상 설문이 없으면 `현재 진행중인 설문이 없습니다.` 문구 노출
+
+### 테스트
+
+- 백엔드 자동화
+  - `python -m pytest tests/test_survey_feedback7.py -q`
+  - `python -m pytest tests/test_about.py tests/test_about_news_feedback7.py tests/test_board_feedback5_p2.py tests/test_board_feedback6_p2.py tests/test_board_feedback7_batch_policy.py tests/test_project_research_feedback7.py tests/test_survey_feedback7.py -q`
+- Chrome DevTools 실동작
+  - 관리자 `admin001`:
+    - `설문` 메뉴 진입, 설문 생성/질문 추가(주관식/점수형) 확인
+    - 동시 공개 제약(`동시에 공개 가능한 설문은 1개입니다.`) 확인
+  - 참여자 `user001`:
+    - `설문` 메뉴 노출 확인
+    - 설문 미대상 상태에서 `현재 진행중인 설문이 없습니다.` 문구 확인
+  - 참관자 `obs001`:
+    - 헤더 메뉴에서 `설문` 미노출 확인
+    - `#/survey` 직접 접근 시 `#/projects`로 리다이렉트 확인

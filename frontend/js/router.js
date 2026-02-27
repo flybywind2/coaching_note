@@ -9,6 +9,7 @@ const Router = {
     '/calendar': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'participant' || user.role === 'observer')),
     '/coaching-plan': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
     '/project-research': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'external_coach' || user.role === 'participant')),
+    '/survey': (user) => !!(user && (user.role === 'admin' || user.role === 'participant')),
     '/dashboard': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
   },
 

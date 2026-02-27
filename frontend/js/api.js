@@ -184,6 +184,40 @@ const API = {
   updateProjectResearchQuestion: (questionId, data) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteProjectResearchQuestion: (questionId) => apiFetch(`/api/project-research/questions/${questionId}`, { method: 'DELETE' }),
   upsertProjectResearchResponses: (itemId, data) => apiFetch(`/api/project-research/items/${itemId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
+  // [FEEDBACK7] Survey
+  getSurveyBatches: () => apiFetch('/api/surveys/batches'),
+  getSurveys: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.batch_id != null) q.set('batch_id', String(params.batch_id));
+    if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
+    return apiFetch(`/api/surveys${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  createSurvey: (data) => apiFetch('/api/surveys', { method: 'POST', body: JSON.stringify(data) }),
+  updateSurvey: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSurvey: (surveyId) => apiFetch(`/api/surveys/${surveyId}`, { method: 'DELETE' }),
+  getSurveyDetail: (surveyId) => apiFetch(`/api/surveys/${surveyId}/detail`),
+  createSurveyQuestion: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/questions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateSurveyQuestion: (questionId, data) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSurveyQuestion: (questionId) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'DELETE' }),
+  upsertSurveyResponses: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
+  cancelSurveyResponses: (surveyId, projectId) => apiFetch(`/api/surveys/${surveyId}/responses?project_id=${encodeURIComponent(String(projectId))}`, { method: 'DELETE' }),
+  getSurveyStats: (surveyId) => apiFetch(`/api/surveys/${surveyId}/stats`),
+  downloadSurveyCsv: async (surveyId) => {
+    const token = Auth.getToken();
+    const res = await fetch(`/api/surveys/${surveyId}/export.csv`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 401) {
+      Auth.clear();
+      Router.go('/login');
+      throw new Error('Unauthorized');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'CSV 다운로드 실패');
+    }
+    return res.text();
+  },
 
   // Notifications
   getNotifications: (unreadOnly = false) => apiFetch(`/api/notifications${unreadOnly ? '?unread_only=true' : ''}`),

@@ -11,7 +11,7 @@ import app.models  # noqa: F401 - 모델 import로 metadata 등록
 from app.routers import (
     auth, batches, projects, coaching_notes, documents,
     sessions, schedules, boards, notifications, calendar, dashboard, ai, tasks,
-    admin_ip, users, uploads, workspace, about, coaching_plan, attendance, project_research,
+    admin_ip, users, uploads, workspace, about, coaching_plan, attendance, project_research, surveys,
 )
 
 app = FastAPI(
@@ -52,6 +52,7 @@ app.include_router(about.router)
 app.include_router(coaching_plan.router)
 app.include_router(attendance.router)
 app.include_router(project_research.router)
+app.include_router(surveys.router)
 
 
 @app.on_event("startup")
