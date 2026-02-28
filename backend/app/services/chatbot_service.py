@@ -47,6 +47,7 @@ class ChatbotService:
         self._sql_schema_cache: str | None = None
         self._debug_llm_history: list[dict[str, Any]] = []
         self._debug_rag_result: dict[str, Any] | None = None
+        self._debug_llm_live_emitted: bool = False
 
     def _is_chat_debug_enabled(self) -> bool:
         return bool(getattr(settings, "CHAT_DEBUG_MODE", False))
@@ -88,6 +89,7 @@ class ChatbotService:
                 "response": self._clip_debug_text(response, 3000),
             }
         )
+        self._debug_llm_live_emitted = True
         self._emit_chat_debug(
             "[chatbot][debug][llm-live] stage=%s model=%s response=%s",
             stage,
@@ -132,6 +134,12 @@ class ChatbotService:
             self._emit_chat_debug("[chatbot][debug] rag_result=<none>")
         if not self._debug_llm_history:
             self._emit_chat_debug("[chatbot][debug] llm_history=<none>")
+            return
+        if self._debug_llm_live_emitted:
+            self._emit_chat_debug(
+                "[chatbot][debug] llm_history_count=%d (llm-live 로그로 이미 출력됨)",
+                len(self._debug_llm_history),
+            )
             return
         for idx, item in enumerate(self._debug_llm_history, start=1):
             self._emit_chat_debug(
@@ -566,7 +574,15 @@ class ChatbotService:
             prompt = (
                 "분류 기준:\n"
                 "- SQL: 집계/순위/비교/개수/최저/최고/현황 등 DB 수치 조회가 필요한 질문\n"
-                "- RAG: 코칭노트/게시글/문서 요약, 근거 기반 설명, 내용 해석 질문\n\n"
+                "- SQL: 특정 사용자(이름/사번)의 과제/진행률/현황을 DB 조인으로 찾는 질문\n"
+                "- RAG: 코칭노트/게시글/문서 요약, 근거 기반 설명, 내용 해석 질문\n"
+                "- RAG: 기술/키워드/주제(예: N2SQL) 기반으로 \"관련 과제/관련 내용\"을 찾는 질문\n"
+                "- RAG: \"A과제 이번주 코칭 노트 요약\"처럼 문서 요약 성격이 강한 질문\n\n"
+                "예시:\n"
+                "- 질문: 이번주 진행률이 가장 낮은 과제가 뭐야? -> {\"route\":\"sql\",\"reason\":\"집계/순위\"}\n"
+                "- 질문: 정수연 과제 뭐야? -> {\"route\":\"sql\",\"reason\":\"사용자-과제 매핑\"}\n"
+                "- 질문: N2SQL 관련 과제 알려줘 -> {\"route\":\"rag\",\"reason\":\"키워드/주제 기반 검색\"}\n"
+                "- 질문: A과제 이번주 코칭 노트 요약해줘 -> {\"route\":\"rag\",\"reason\":\"코칭노트 요약\"}\n\n"
                 f"{self._sql_schema_guide()}\n\n"
                 f"question: {self._normalize_text(question)}"
             )
@@ -736,8 +752,9 @@ class ChatbotService:
                 "- 사람 이름/사번으로 과제를 찾는 질문은 users + project_member + projects 조인을 우선 사용하세요.\n"
                 "- 질문이 '이번주'를 포함하면 현재 주차 기준 조건을 사용하세요.\n"
                 "- 결과는 최대 50건 이내가 되도록 LIMIT을 사용하세요.\n"
-                "- 의미있는 컬럼명(project_name, progress_rate 등)을 반환하세요.\n\n"
-                f"question: {question}"
+                "- 의미있는 컬럼명(project_name, progress_rate 등)을 반환하세요.\n"
+                "- 기술/키워드/주제(예: N2SQL) 기반 '관련 과제/관련 내용' 질문이면 SQL을 만들지 말고 {\"sql\":\"\"} 를 반환하세요.\n\n"
+                f"question: {self._normalize_text(question)}"
             )
             raw = self._invoke_llm(
                 purpose="general",
@@ -752,25 +769,6 @@ class ChatbotService:
             logger.warning("[chatbot] sql generation failed: %s", exc)
             self._emit_chat_debug("[chatbot][debug] sql_generation failed: %s", exc)
             return None
-
-    def _generate_sql_with_fallback_rules(self, question: str) -> str | None:
-        # [chatbot] LLM SQL 생성 실패 시 핵심 조회 질의를 위한 최소 규칙 기반 SQL 폴백
-        query = self._normalize_text(question)
-        name_match = re.search(r"([0-9A-Za-z가-힣_]+)\s*과제", query)
-        if name_match:
-            raw_name = name_match.group(1)
-            safe_name = raw_name.replace("'", "''")
-            return (
-                "SELECT u.name AS user_name, u.emp_id, p.project_id, p.project_name, b.batch_name "
-                "FROM users u "
-                "JOIN project_member pm ON pm.user_id = u.user_id "
-                "JOIN projects p ON p.project_id = pm.project_id "
-                "LEFT JOIN batch b ON b.batch_id = p.batch_id "
-                f"WHERE u.name LIKE '%{safe_name}%' OR u.emp_id = '{safe_name}' "
-                "ORDER BY p.project_name ASC "
-                "LIMIT 20"
-            )
-        return None
 
     def _execute_sql_query(self, sql: str) -> list[dict[str, Any]]:
         limited_sql = self._apply_default_limit(sql)
@@ -825,8 +823,6 @@ class ChatbotService:
             question=question,
             user_id=str(current_user.user_id),
         )
-        if not generated_sql:
-            generated_sql = self._generate_sql_with_fallback_rules(question)
         if not generated_sql:
             return None
         sql = self._normalize_sql(generated_sql)
@@ -1006,16 +1002,44 @@ class ChatbotService:
         merged.update(top_level_meta)
         return merged
 
-    def _extract_references(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_rag_hits(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        # [chatbot] rag 응답에서 hit 목록을 원본 형태로 추출한다.
         hits_wrapper = payload.get("hits", {})
         hits = hits_wrapper.get("hits", []) if isinstance(hits_wrapper, dict) else []
         if not isinstance(hits, list) or not hits:
             fallback_hits = payload.get("result_docs", [])
             hits = fallback_hits if isinstance(fallback_hits, list) else []
+        return [row for row in hits if isinstance(row, dict)]
+
+    def _serialize_rag_hit_for_llm(self, row: dict[str, Any]) -> str:
+        # [chatbot] LLM 문맥에는 content 일부가 아니라 hit 전체(JSON)를 전달한다.
+        source = row.get("_source") if isinstance(row.get("_source"), dict) else None
+        if source is None:
+            payload = row
+        else:
+            payload = dict(row)
+            payload["_source"] = source
+        try:
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception:
+            return str(payload)
+
+    def _build_llm_context_from_rag_payload(self, payload: dict[str, Any], *, num_result_doc: int) -> str:
+        # [chatbot] LLM 프롬프트용 검색 문맥을 hit 원본 전체 정보 기반으로 구성한다.
+        hits = self._extract_rag_hits(payload)
+        limit = max(1, min(int(num_result_doc), 20))
+        selected = hits[:limit]
+        if not selected:
+            return "검색 결과가 없습니다."
+        blocks: list[str] = []
+        for idx, row in enumerate(selected, start=1):
+            blocks.append(f"[{idx}] raw_hit_json:\n{self._serialize_rag_hit_for_llm(row)}")
+        return "\n\n".join(blocks)
+
+    def _extract_references(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        hits = self._extract_rag_hits(payload)
         refs: list[dict[str, Any]] = []
         for row in hits:
-            if not isinstance(row, dict):
-                continue
             source = row.get("_source") if isinstance(row.get("_source"), dict) else row
             metadata = self._extract_doc_metadata(source)
             raw_batch_id = metadata.get("batch_id")
@@ -1061,19 +1085,7 @@ class ChatbotService:
             # [chatbot] debug 모드에서는 원본 RAG 검색 결과를 터미널에 출력하기 위해 저장한다.
             self._debug_rag_result = raw
         refs = self._extract_references(raw)
-        context = "\n\n".join(
-            [
-                (
-                    f"[{idx + 1}] 제목: {row['title']}\n"
-                    f"내용: {row['content']}\n"
-                    f"source_type: {row.get('source_type') or '-'} / batch_id: {row.get('batch_id')}\n"
-                    f"image_urls: {', '.join(row.get('image_urls') or []) or '-'}"
-                )
-                for idx, row in enumerate(refs[: max(1, min(int(num_result_doc), 20))])
-            ]
-        )
-        if not context:
-            context = "검색 결과가 없습니다."
+        context = self._build_llm_context_from_rag_payload(raw, num_result_doc=num_result_doc)
 
         if settings.AI_FEATURES_ENABLED:
             system_prompt = (
@@ -1122,6 +1134,7 @@ class ChatbotService:
     ) -> dict[str, Any]:
         self._debug_llm_history = []
         self._debug_rag_result = None
+        self._debug_llm_live_emitted = False
         self._emit_chat_debug(
             "[chatbot][debug] mode_on=%s ai_enabled=%s rag_enabled=%s rag_input_enabled=%s",
             self._is_chat_debug_enabled(),

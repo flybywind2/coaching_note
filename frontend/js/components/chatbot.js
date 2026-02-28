@@ -6,6 +6,7 @@ const ChatbotWidget = {
   _initialized: false,
   _featureEnabled: false,
   _featureLoaded: false,
+  _isSubmitting: false,
   _welcomeMessage: '무엇이 궁금한가요? RAG 기반으로 답변해드릴게요.',
 
   init() {
@@ -103,12 +104,13 @@ const ChatbotWidget = {
 
   _appendMessage(role, html) {
     const wrap = document.getElementById('chatbot-messages');
-    if (!wrap) return;
+    if (!wrap) return null;
     const article = document.createElement('article');
     article.className = `chatbot-msg ${role === 'user' ? 'chatbot-msg-user' : 'chatbot-msg-assistant'}`;
     article.innerHTML = html;
     wrap.appendChild(article);
     wrap.scrollTop = wrap.scrollHeight;
+    return article;
   },
 
   _isSafeImageUrl(url) {
@@ -145,26 +147,35 @@ const ChatbotWidget = {
     const input = document.getElementById('chatbot-input');
     const sendBtn = document.getElementById('chatbot-send');
     if (!input || !sendBtn) return;
+    if (this._isSubmitting) return;
     const question = String(input.value || '').trim();
     if (!question) return;
 
+    this._isSubmitting = true;
     this._appendMessage('user', Fmt.escape(question));
     input.value = '';
     sendBtn.disabled = true;
-    this._appendMessage('assistant', '답변 생성 중...');
+    input.disabled = true;
+    const loadingEl = this._appendMessage('assistant', '답변 생성 중...');
+
+    const removeLoading = () => {
+      if (loadingEl && loadingEl.parentNode) {
+        loadingEl.parentNode.removeChild(loadingEl);
+      }
+    };
 
     try {
       const result = await API.askChatbot(question, 5);
-      const messages = document.getElementById('chatbot-messages');
-      if (messages?.lastElementChild) messages.lastElementChild.remove();
+      removeLoading();
       const body = `${Fmt.escape(result?.answer || '답변을 생성하지 못했습니다.')}${this._renderReferences(result?.references)}`;
       this._appendMessage('assistant', body);
     } catch (err) {
-      const messages = document.getElementById('chatbot-messages');
-      if (messages?.lastElementChild) messages.lastElementChild.remove();
+      removeLoading();
       this._appendMessage('assistant', `오류: ${Fmt.escape(err.message || '챗봇 호출 실패')}`);
     } finally {
+      this._isSubmitting = false;
       sendBtn.disabled = false;
+      input.disabled = false;
       input.focus();
     }
   },

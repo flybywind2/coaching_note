@@ -599,6 +599,57 @@ def test_chatbot_extract_references_keeps_additional_field_compat(db):
     assert refs[0]["image_urls"] == ["/uploads/editor_images/b.png"]
 
 
+def test_chatbot_answer_with_rag_passes_full_hit_json_context_to_llm(db, seed_users, monkeypatch):
+    # [chatbot] RAG 답변 문맥은 content 일부가 아닌 hit 원본 전체(JSON)를 LLM에 전달해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "AI_FEATURES_ENABLED", True, raising=False)
+
+    long_content = ("가" * 1300) + "TAIL_END"
+    captured = {"prompt": ""}
+
+    def _fake_retrieve(self, *, query_text, num_result_doc, permission_groups):  # noqa: ANN001
+        return {
+            "hits": {
+                "hits": [
+                    {
+                        "_index": "rp-ssp",
+                        "_id": "board_post:55",
+                        "_score": 7.7,
+                        "_source": {
+                            "doc_id": "board_post:55",
+                            "title": "전체 전달 테스트",
+                            "content": long_content,
+                            "source_type": "board_post",
+                            "batch_id": 3,
+                            "custom_meta": "keep-me",
+                        },
+                    }
+                ]
+            }
+        }
+
+    def _fake_invoke(self, *, purpose, user_id, prompt, system_prompt=None, stage="general"):  # noqa: ANN001
+        captured["prompt"] = prompt
+        return "LLM 응답"
+
+    monkeypatch.setattr(ChatbotService, "_retrieve_rag_documents", _fake_retrieve, raising=False)
+    monkeypatch.setattr(ChatbotService, "_invoke_llm", _fake_invoke, raising=False)
+
+    svc = ChatbotService(db)
+    out = svc._answer_with_rag(
+        current_user=seed_users["participant"],
+        question="전체 정보 전달 확인",
+        num_result_doc=5,
+    )
+
+    assert out["answer"] == "LLM 응답"
+    assert '"_score": 7.7' in captured["prompt"]
+    assert '"custom_meta": "keep-me"' in captured["prompt"]
+    assert "TAIL_END" in captured["prompt"]
+
+
 def test_chatbot_sql_schema_metadata_includes_project_member(db):
     # [chatbot] SQL 메타데이터에는 사용자-과제 매핑용 project_member 테이블이 포함되어야 한다.
     from app.services.chatbot_service import ChatbotService
@@ -645,20 +696,28 @@ def test_chatbot_admin_rag_failure_falls_back_to_sql(db, seed_users, monkeypatch
     assert out["references"][0]["source_type"] == "sql"
 
 
-def test_chatbot_sql_fallback_rule_generates_user_project_query(db):
-    # [chatbot] 'OOO 과제' 질문은 users-project_member-projects 조인 SQL을 생성해야 한다.
+def test_chatbot_answer_with_sql_returns_none_for_topic_related_project_query(db, seed_users, monkeypatch):
+    # [chatbot] 키워드 기반 질문에서 SQL 생성 LLM이 빈 SQL을 주면 SQL 경로는 None이어야 한다.
+    from app.config import settings
     from app.services.chatbot_service import ChatbotService
 
+    monkeypatch.setattr(settings, "AI_FEATURES_ENABLED", True, raising=False)
+
+    def _fake_sql_generation(self, *, question, user_id):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr(ChatbotService, "_generate_sql_with_llm", _fake_sql_generation, raising=False)
+
     svc = ChatbotService(db)
-    sql = svc._generate_sql_with_fallback_rules("정수연 과제 뭐야?")
-    assert sql is not None
-    assert "FROM users u" in sql
-    assert "JOIN project_member pm" in sql
-    assert "JOIN projects p" in sql
+    out = svc._answer_with_sql(
+        current_user=seed_users["admin"],
+        question="N2SQL 관련 과제 알려줘",
+    )
+    assert out is None
 
 
-def test_chatbot_answer_with_sql_uses_fallback_rule_when_llm_sql_missing(db, seed_users, seed_batch, monkeypatch):
-    # [chatbot] SQL 생성 LLM이 실패해도 fallback rule로 사용자-과제 조회 답변이 가능해야 한다.
+def test_chatbot_answer_with_sql_uses_llm_generated_query(db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] SQL 경로는 규칙 기반이 아니라 LLM 생성 SQL만으로 답변해야 한다.
     from app.config import settings
     from app.models.project import Project, ProjectMember
     from app.services.chatbot_service import ChatbotService
@@ -684,6 +743,19 @@ def test_chatbot_answer_with_sql_uses_fallback_rule_when_llm_sql_missing(db, see
         )
     )
     db.commit()
+
+    def _fake_sql_generation(self, *, question, user_id):  # noqa: ANN001
+        return (
+            "SELECT u.name AS user_name, u.emp_id, p.project_id, p.project_name, b.batch_name "
+            "FROM users u "
+            "JOIN project_member pm ON pm.user_id = u.user_id "
+            "JOIN projects p ON p.project_id = pm.project_id "
+            "LEFT JOIN batch b ON b.batch_id = p.batch_id "
+            "WHERE u.name LIKE '%Participant%' OR u.emp_id = 'Participant' "
+            "ORDER BY p.project_name ASC LIMIT 20"
+        )
+
+    monkeypatch.setattr(ChatbotService, "_generate_sql_with_llm", _fake_sql_generation, raising=False)
 
     svc = ChatbotService(db)
     out = svc._answer_with_sql(
@@ -752,4 +824,5 @@ def test_chatbot_debug_mode_logs_rag_result_and_llm_history(db, seed_users, monk
     assert out["answer"] == "테스트 LLM 답변"
     assert any("[chatbot][debug] rag_result=" in row for row in logs)
     assert any("board_post:1" in row for row in logs)
-    assert any("[chatbot][debug][llm 1]" in row for row in logs)
+    assert any("[chatbot][debug][llm-live] stage=rag_answer" in row for row in logs)
+    assert any("llm_history_count=1" in row for row in logs)
