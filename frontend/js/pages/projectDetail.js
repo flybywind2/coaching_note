@@ -532,6 +532,7 @@ Pages.projectDetail = {
           <div class="record-actions">
             ${current ? `<button class="btn btn-sm view-doc-btn" data-doc-id="${current.doc_id}" data-label="${Fmt.escape(currentLabel)}">보기</button>` : ''}
             ${canWrite ? `<button class="btn btn-sm btn-secondary edit-doc-btn" data-doc-id="${current?.doc_id || ''}" data-type="${selectedType}" data-label="${Fmt.escape(currentLabel)}">${current ? '편집' : '작성'}</button>` : ''}
+            ${(canWrite && current) ? `<button class="btn btn-sm btn-secondary sync-doc-rag-btn" data-doc-id="${current.doc_id}">RAG 동기화</button>` : ''}
             ${(canWrite && current) ? `<button class="btn btn-sm btn-danger delete-doc-btn" data-doc-id="${current.doc_id}" data-label="${Fmt.escape(currentLabel)}">삭제</button>` : ''}
           </div>
           ${preview ? `<div class="doc-content-preview"><div class="preview-title">${currentLabel} 미리보기</div><div class="preview-text">${Fmt.escape(preview)}</div></div>` : '<p class="empty-state">저장된 내용이 없습니다.</p>'}
@@ -559,6 +560,23 @@ Pages.projectDetail = {
           current: doc,
           onSaved: async () => this._renderDocs(el, projectId, canWrite),
         });
+      }));
+
+      // [chatbot] 과제기록 수동 RAG 동기화 버튼
+      el.querySelectorAll('.sync-doc-rag-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        const docId = +btn.dataset.docId;
+        const beforeText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '동기화 중...';
+        try {
+          await API.syncDocumentRag(docId);
+          alert('RAG 동기화를 완료했습니다.');
+        } catch (err) {
+          alert(err.message || 'RAG 동기화 실패');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = beforeText;
+        }
       }));
 
       el.querySelectorAll('.delete-doc-btn').forEach((btn) => btn.addEventListener('click', async () => {
@@ -607,6 +625,7 @@ Pages.projectDetail = {
           <p id="doc-editor-draft-status" class="draft-status"></p>
         </div>
         <button type="submit" class="btn btn-primary">저장</button>
+        <p class="form-hint" id="doc-editor-saving" style="display:none;">저장 중입니다. RAG 동기화로 수 초 걸릴 수 있습니다.</p>
         <p class="form-error" id="doc-editor-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
@@ -618,6 +637,9 @@ Pages.projectDetail = {
     });
     const formEl = document.getElementById('doc-editor-form');
     const titleEl = formEl.querySelector('input[name="title"]');
+    const submitBtn = formEl.querySelector('button[type="submit"]');
+    const savingEl = document.getElementById('doc-editor-saving');
+    const errEl = document.getElementById('doc-editor-err');
     const draftBinding = DraftStore.bindForm({
       form: formEl,
       key: draftKey,
@@ -634,8 +656,31 @@ Pages.projectDetail = {
       restoreMessage: '이전에 임시저장된 문서 편집 내용이 있습니다. 복원하시겠습니까?',
     });
 
+    const setDocSaving = (isSaving) => {
+      if (submitBtn) {
+        submitBtn.disabled = !!isSaving;
+        submitBtn.textContent = isSaving ? '저장 중...' : '저장';
+      }
+      if (savingEl) {
+        savingEl.style.display = isSaving ? 'block' : 'none';
+      }
+    };
+
+    const setDocError = (msg) => {
+      if (!errEl) return;
+      if (!msg) {
+        errEl.textContent = '';
+        errEl.style.display = 'none';
+        return;
+      }
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    };
+
     formEl.addEventListener('submit', async (e) => {
       e.preventDefault();
+      setDocError('');
+      setDocSaving(true);
       const fd = new FormData(e.target);
       const html = editor.getSanitizedHTML();
       try {
@@ -653,9 +698,11 @@ Pages.projectDetail = {
         Modal.close();
         if (onSaved) onSaved();
       } catch (err) {
-        const errEl = document.getElementById('doc-editor-err');
-        errEl.textContent = err.message || '문서 저장 실패';
-        errEl.style.display = 'block';
+        setDocError(err.message || '문서 저장 실패');
+      } finally {
+        if (document.body.contains(formEl)) {
+          setDocSaving(false);
+        }
       }
     });
   },

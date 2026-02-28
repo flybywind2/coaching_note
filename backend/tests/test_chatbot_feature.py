@@ -179,6 +179,66 @@ def test_chatbot_upsert_rag_document_works_when_chatbot_disabled(db, monkeypatch
     assert called["count"] == 1
 
 
+def test_chatbot_upsert_rag_document_includes_graph_entities_metadata(db, monkeypatch):
+    # [chatbot] RAG 입력 시 요약과 함께 엔티티/관계 메타데이터를 저장해 graph-rag 형태로 활용 가능해야 한다.
+    from app.config import settings
+    from app.services.chatbot_service import ChatbotService
+
+    monkeypatch.setattr(settings, "RAG_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "RAG_BASE_URL", "http://rag.local", raising=False)
+    monkeypatch.setattr(settings, "RAG_INSERT_ENDPOINT", "/insert-doc", raising=False)
+    monkeypatch.setattr(settings, "RAG_API_KEY", "rag-api-key", raising=False)
+    monkeypatch.setattr(settings, "AI_CREDENTIAL_KEY", "credential-key", raising=False)
+    monkeypatch.setattr(settings, "RAG_INDEX_NAME", "rp-ssp", raising=False)
+
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, headers=None, json=None, timeout=None):  # noqa: ANN001
+        captured["json"] = json
+        return _FakeResponse()
+
+    def _fake_summary_and_entities(self, *, content, source_label, user_id):  # noqa: ANN001
+        return (
+            "요약입니다.",
+            [
+                {"name": "N2SQL", "type": "technology", "description": "텍스트-투-SQL"},
+                {"name": "A과제", "type": "project", "description": "실증 과제"},
+            ],
+            [
+                {"source": "A과제", "relation": "uses", "target": "N2SQL"},
+            ],
+        )
+
+    monkeypatch.setattr("httpx.post", _fake_post)
+    monkeypatch.setattr(
+        ChatbotService,
+        "generate_ai_summary_and_entities",
+        _fake_summary_and_entities,
+        raising=False,
+    )
+
+    svc = ChatbotService(db)
+    svc.upsert_rag_document(
+        doc_id="project_document:10",
+        title="문서",
+        content="A과제가 N2SQL을 사용합니다.",
+        metadata={"source_type": "project_document"},
+        user_id="1",
+    )
+
+    payload = captured["json"]["data"]
+    assert payload["ai_summary"] == "요약입니다."
+    assert payload["entity_nodes"][0]["name"] == "N2SQL"
+    assert payload["entity_relations"][0]["relation"] == "uses"
+    assert payload["entity_names"] == ["N2SQL", "A과제"]
+    assert payload["entity_count"] == 2
+    assert payload["relation_count"] == 1
+
+
 def test_chatbot_upsert_rag_document_blocked_when_rag_input_disabled(db, monkeypatch):
     # [chatbot] RAG_INPUT_ENABLED=false면 RAG 입력(upsert)은 비활성화되어야 한다.
     from fastapi import HTTPException
@@ -331,6 +391,78 @@ def test_chatbot_note_comment_create_triggers_rag_sync(client, db, seed_users, s
     )
     assert comment_resp.status_code == 200, comment_resp.text
     assert any(row["event_type"] == "comment_create" and int(row["note_id"]) == note_id for row in calls)
+
+
+def test_chatbot_document_create_triggers_rag_sync(client, db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] 과제기록 생성 시 safe_sync_project_document가 호출되어야 한다.
+    from app.models.project import Project
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, doc_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"doc_id": doc_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_project_document", _fake_sync)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="챗봇 문서 훅 테스트 과제",
+        organization="테스트팀",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    headers = auth_headers(client, "coach001")
+    resp = client.post(
+        f"/api/projects/{project.project_id}/documents",
+        data={"doc_type": "application", "title": "RAG 문서", "content": "<p>본문</p>"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert calls and calls[0]["event_type"] == "create"
+
+
+def test_chatbot_document_manual_sync_endpoint_triggers_rag_sync(client, db, seed_users, seed_batch, monkeypatch):
+    # [chatbot] 과제기록 수동 동기화 API 호출 시 safe_sync_project_document가 실행되어야 한다.
+    from app.models.document import ProjectDocument
+    from app.models.project import Project
+    from app.services.chatbot_service import ChatbotService
+
+    calls = []
+
+    def _fake_sync(self, *, doc_id, user_id, event_type):  # noqa: ANN001
+        calls.append({"doc_id": doc_id, "user_id": user_id, "event_type": event_type})
+
+    monkeypatch.setattr(ChatbotService, "safe_sync_project_document", _fake_sync)
+
+    project = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="수동 동기화 테스트 과제",
+        organization="테스트팀",
+        visibility="public",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    doc = ProjectDocument(
+        project_id=project.project_id,
+        doc_type="final_presentation",
+        title="최종 발표",
+        content="<p>내용</p>",
+        created_by=seed_users["coach"].user_id,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    headers = auth_headers(client, "coach001")
+    resp = client.post(f"/api/documents/{doc.doc_id}/rag-sync", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert any(row["event_type"] == "manual_sync" and int(row["doc_id"]) == int(doc.doc_id) for row in calls)
 
 
 def test_chatbot_safe_sync_board_post_merges_comments_into_same_doc_id(db, seed_users, seed_boards, monkeypatch):

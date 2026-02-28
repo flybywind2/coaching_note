@@ -88,6 +88,8 @@ const API = {
   deleteDocument: (id) => apiFetch(`/api/documents/${id}`, { method: 'DELETE' }),
   getDocumentVersions: (id) => apiFetch(`/api/documents/${id}/versions`),
   restoreDocumentVersion: (id, versionId) => apiFetch(`/api/documents/${id}/restore/${versionId}`, { method: 'POST' }),
+  // [chatbot] 과제기록 수동 RAG 동기화
+  syncDocumentRag: (id) => apiFetch(`/api/documents/${id}/rag-sync`, { method: 'POST' }),
   createDocument: (projectId, formData) => apiFetch(`/api/projects/${projectId}/documents`, { method: 'POST', body: formData }),
   uploadDocument: (projectId, formData) => {
     const token = Auth.getToken();

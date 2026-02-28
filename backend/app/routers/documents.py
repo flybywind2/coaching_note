@@ -11,6 +11,7 @@ from app.models.document import ProjectDocument
 from app.middleware.auth_middleware import get_current_user
 from app.models.user import User
 from app.services import version_service
+from app.services.chatbot_service import ChatbotService
 from app.utils.helpers import save_upload
 from fastapi import HTTPException
 
@@ -73,6 +74,12 @@ async def create_document(
         change_type="create",
         snapshot=_doc_snapshot(doc),
     )
+    # [chatbot] 과제기록 생성 시 RAG 입력 동기화
+    ChatbotService(db).safe_sync_project_document(
+        doc_id=int(doc.doc_id),
+        user_id=str(current_user.user_id),
+        event_type="create",
+    )
     return doc
 
 
@@ -105,6 +112,12 @@ def update_document(
         changed_by=current_user.user_id,
         change_type="update",
         snapshot=_doc_snapshot(doc),
+    )
+    # [chatbot] 과제기록 수정 시 RAG 입력 갱신
+    ChatbotService(db).safe_sync_project_document(
+        doc_id=int(doc.doc_id),
+        user_id=str(current_user.user_id),
+        event_type="update",
     )
     return doc
 
@@ -167,6 +180,30 @@ def restore_document_version(
         change_type="restore",
         snapshot=_doc_snapshot(doc),
     )
+    # [chatbot] 과제기록 복원 시 RAG 입력 갱신
+    ChatbotService(db).safe_sync_project_document(
+        doc_id=int(doc.doc_id),
+        user_id=str(current_user.user_id),
+        event_type="restore",
+    )
     return doc
+
+
+@router.post("/api/documents/{doc_id}/rag-sync")
+def sync_document_rag(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # [chatbot] 과제기록 수동 RAG 동기화 API
+    doc = db.query(ProjectDocument).filter(ProjectDocument.doc_id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    ChatbotService(db).safe_sync_project_document(
+        doc_id=int(doc.doc_id),
+        user_id=str(current_user.user_id),
+        event_type="manual_sync",
+    )
+    return {"message": "RAG 동기화를 완료했습니다.", "doc_id": int(doc.doc_id)}
 
 

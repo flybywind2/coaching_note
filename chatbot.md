@@ -3,6 +3,7 @@
 ## 1. 개요
 - 챗봇은 `RAG 경로`와 `SQL 경로`를 함께 사용합니다.
 - `RAG 경로`: 게시글/코칭노트 등 문서 기반 질의 응답
+- `RAG 입력`: 저장 시 문서 요약 + 엔티티/관계 추출 후 메타데이터 저장(graph-rag 확장)
 - `SQL 경로`: 관리자 질문 중 DB 집계/조회가 필요한 질의 응답
 - 관리자 질문은 LLM이 JSON 라우팅(`sql|rag`)으로 경로를 선택합니다.
 
@@ -87,6 +88,11 @@ AI_SUMMARY_MODEL=model2
 }
 ```
 
+### 4.3 과제기록 수동 RAG 동기화
+- `POST /api/documents/{doc_id}/rag-sync`
+- 저장 시점 외에도 과제기록을 수동으로 RAG에 재입력할 수 있습니다.
+- 프론트 과제기록 탭의 `RAG 동기화` 버튼이 이 API를 호출합니다.
+
 ## 5. 라우팅 규칙
 - 관리자 질문: LLM이 JSON 한 줄(`{"route":"sql|rag","reason":"..."}`)로 경로를 선택
 - 관리자 질문 `route=sql`: SQL 경로 우선
@@ -109,13 +115,17 @@ AI_SUMMARY_MODEL=model2
 - 답변 생성 후 references 반환
 - 메타 파싱 호환: 신규 top-level 메타데이터 우선 사용
 - 메타 파싱 호환: 구형 `additional_field` fallback 파싱 지원
+- graph 메타(`entity_nodes`, `entity_relations`, `entity_names`)는 현재 답변 생성 보강 메타로 함께 전달/보관됩니다.
 
 ## 8. RAG 입력 자동 동기화
-- 트리거: 게시글/코칭노트 create/update/restore/comment 변경 시 동기화
+- 트리거: 게시글/코칭노트/과제기록 저장 이벤트 시 동기화
 - 문서 ID: 게시글 `board_post:{post_id}`
 - 문서 ID: 코칭노트 `coaching_note:{note_id}`
+- 문서 ID: 과제기록 `project_document:{doc_id}`
 - 동일 `doc_id`는 upsert(덮어쓰기)
 - 메타데이터 저장 위치: `data` top-level (`doc_id`, `content`와 동일 레벨)
+- 요약/엔티티 추출: LLM이 문서 요약과 엔티티/관계를 JSON으로 추출
+- graph-rag 메타: `entity_nodes`, `entity_relations`, `entity_names`, `entity_count`, `relation_count`
 - 이미지 처리: 문서 HTML/본문/댓글에서 이미지 URL 추출
 - 이미지 처리: 추출 URL을 `image_urls` 메타데이터에 저장
 - 이미지 처리: 이미지 인식 LLM 설정이 있으면 한글 설명을 생성해 `image_descriptions`에 저장

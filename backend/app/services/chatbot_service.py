@@ -21,6 +21,7 @@ from app.config import settings
 from app.models.access_scope import UserBatchAccess
 from app.models.batch import Batch
 from app.models.coaching_note import CoachingComment, CoachingNote
+from app.models.document import ProjectDocument
 from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.services.ai_client import AIClient
@@ -41,6 +42,18 @@ class ChatbotService:
         r"""(?P<url>(?:https?://|/uploads/)[^\s"'<>]+?\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s"'<>]*)?)""",
         flags=re.IGNORECASE,
     )
+    _IMAGE_FILE_URL_RE = re.compile(
+        r"""\.(?:png|jpe?g|gif|webp|bmp|svg)(?:\?[^\s"'<>]*)?$""",
+        flags=re.IGNORECASE,
+    )
+    _DOCUMENT_TYPE_LABELS = {
+        "application": "지원서",
+        "basic_consulting": "기초컨설팅 산출물",
+        "workshop_result": "공동워크샵 산출물",
+        "mid_presentation": "중간 발표 자료",
+        "final_presentation": "최종 발표 자료",
+        "other_material": "기타 자료",
+    }
 
     def __init__(self, db: Session):
         self.db = db
@@ -409,6 +422,68 @@ class ChatbotService:
         for text in sources:
             urls.extend(self._extract_image_urls_from_text(text))
         return list(dict.fromkeys(urls))
+
+    def _document_type_label(self, doc_type: str | None) -> str:
+        return self._DOCUMENT_TYPE_LABELS.get(str(doc_type or "").strip(), str(doc_type or "기타 자료"))
+
+    def _parse_document_attachments(self, raw: Any) -> list[dict[str, Any]]:
+        if not raw:
+            return []
+        loaded = raw
+        if isinstance(raw, str):
+            try:
+                loaded = json.loads(raw)
+            except json.JSONDecodeError:
+                return []
+        if not isinstance(loaded, list):
+            return []
+        rows: list[dict[str, Any]] = []
+        for item in loaded:
+            if isinstance(item, dict):
+                rows.append(item)
+        return rows
+
+    def _collect_project_document_image_urls(
+        self,
+        doc: ProjectDocument,
+        attachments: list[dict[str, Any]],
+    ) -> list[str]:
+        urls: list[str] = []
+        urls.extend(self._extract_image_urls_from_text(getattr(doc, "title", None)))
+        urls.extend(self._extract_image_urls_from_text(getattr(doc, "content", None)))
+        for row in attachments:
+            raw_url = self._normalize_text(str(row.get("url") or ""))
+            normalized = self._normalize_image_url(raw_url) or raw_url
+            if normalized and self._IMAGE_FILE_URL_RE.search(normalized):
+                urls.append(normalized)
+        return list(dict.fromkeys(urls))
+
+    def _build_project_document_content(
+        self,
+        doc: ProjectDocument,
+        project: Project,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        # [chatbot] 과제기록 본문 + 첨부 요약을 하나의 문서(content)로 구성한다.
+        attachments = self._parse_document_attachments(getattr(doc, "attachments", None))
+        attachment_lines: list[str] = []
+        for idx, row in enumerate(attachments, start=1):
+            filename = self._normalize_text(str(row.get("filename") or f"첨부파일{idx}"))
+            raw_url = self._normalize_text(str(row.get("url") or ""))
+            normalized_url = self._normalize_image_url(raw_url) or raw_url or "-"
+            size = row.get("size")
+            size_text = ""
+            if size not in (None, ""):
+                size_text = f", size={size}"
+            attachment_lines.append(f"{idx}. {filename} ({normalized_url}{size_text})")
+        attachments_block = "\n".join(attachment_lines) if attachment_lines else "-"
+        body = (
+            f"과제명: {project.project_name}\n"
+            f"문서유형: {self._document_type_label(doc.doc_type)} ({doc.doc_type or '-'})\n"
+            f"문서제목: {doc.title or '-'}\n"
+            f"본문:\n{self._strip_html(doc.content) or '-'}\n\n"
+            f"첨부({len(attachments)}):\n{attachments_block}"
+        )
+        return body, attachments
 
     def _truncate(self, value: str | None, limit: int) -> str:
         plain = self._normalize_text(value)
@@ -853,34 +928,128 @@ class ChatbotService:
             ],
         }
 
-    def generate_ai_summary(self, *, content: str, source_label: str, user_id: str) -> str:
-        # [chatbot] RAG 추가 메타에 들어갈 AI 요약 생성
+    def _parse_summary_entity_json(self, raw_text: str) -> dict[str, Any]:
+        candidate = str(raw_text or "").strip()
+        if not candidate:
+            return {}
+        fenced_match = re.search(r"```(?:json)?\s*(.*?)```", candidate, flags=re.DOTALL | re.IGNORECASE)
+        if fenced_match:
+            candidate = fenced_match.group(1).strip()
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            block_match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+            if not block_match:
+                return {}
+            try:
+                parsed = json.loads(block_match.group(0))
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                return {}
+
+    def _normalize_entity_nodes(self, raw: Any) -> list[dict[str, str]]:
+        rows = raw if isinstance(raw, list) else []
+        results: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for row in rows[:50]:
+            if not isinstance(row, dict):
+                continue
+            name = self._truncate(self._normalize_text(str(row.get("name") or "")), 80)
+            entity_type = self._truncate(self._normalize_text(str(row.get("type") or "unknown")), 40) or "unknown"
+            description = self._truncate(self._normalize_text(str(row.get("description") or "")), 240)
+            if not name:
+                continue
+            key = (name.lower(), entity_type.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(
+                {
+                    "name": name,
+                    "type": entity_type,
+                    "description": description,
+                }
+            )
+        return results
+
+    def _normalize_entity_relations(self, raw: Any) -> list[dict[str, str]]:
+        rows = raw if isinstance(raw, list) else []
+        results: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in rows[:80]:
+            if not isinstance(row, dict):
+                continue
+            source = self._truncate(self._normalize_text(str(row.get("source") or "")), 80)
+            relation = self._truncate(self._normalize_text(str(row.get("relation") or "")), 80)
+            target = self._truncate(self._normalize_text(str(row.get("target") or "")), 80)
+            if not source or not relation or not target:
+                continue
+            key = (source.lower(), relation.lower(), target.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(
+                {
+                    "source": source,
+                    "relation": relation,
+                    "target": target,
+                }
+            )
+        return results
+
+    def generate_ai_summary_and_entities(
+        self,
+        *,
+        content: str,
+        source_label: str,
+        user_id: str,
+    ) -> tuple[str, list[dict[str, str]], list[dict[str, str]]]:
+        # [chatbot] RAG 입력용 요약과 엔티티/관계를 한 번에 추출한다.
         plain = self._strip_html(content)
         if not plain:
-            return ""
+            return "", [], []
         if not settings.AI_FEATURES_ENABLED:
             self._emit_chat_debug("[chatbot][debug] rag_insert_summary skipped: AI_FEATURES_ENABLED=false")
-            return self._truncate(plain, 280)
+            return self._truncate(plain, 280), [], []
         try:
             system_prompt = (
-                "당신은 지식 문서 요약기입니다.\n"
-                "핵심만 2~3문장으로 요약하고 과장/추측을 금지하세요."
+                "당신은 문서 요약 + 엔티티 추출기입니다.\n"
+                "반드시 JSON 한 줄로만 응답하세요.\n"
+                "{\"summary\":\"...\",\"entities\":[{\"name\":\"...\",\"type\":\"...\",\"description\":\"...\"}],"
+                "\"relations\":[{\"source\":\"...\",\"relation\":\"...\",\"target\":\"...\"}]}\n"
+                "요약은 2~3문장, 엔티티는 중복 없이 핵심만 추출, 추측 금지."
             )
             prompt = (
                 f"문서유형: {source_label}\n"
-                "아래 내용을 한국어로 2~3문장 요약하세요.\n\n"
-                f"{self._truncate(plain, 4000)}"
+                "아래 문서에서 핵심 요약과 엔티티/관계를 추출하세요.\n"
+                "- entities.type 예시: person, organization, project, technology, metric, date, location\n"
+                "- relations는 \"주어-관계-목적어\" 의미가 명확한 것만 포함\n\n"
+                f"{self._truncate(plain, 5000)}"
             )
-            summarized = self._invoke_llm(
+            raw = self._invoke_llm(
                 purpose="general",
                 user_id=user_id,
                 prompt=prompt,
                 system_prompt=system_prompt,
-                stage="rag_insert_summary",
+                stage="rag_insert_summary_entity",
             )
-            return summarized or self._truncate(plain, 280)
+            parsed = self._parse_summary_entity_json(raw)
+            summarized = self._normalize_text(str(parsed.get("summary") or ""))
+            entities = self._normalize_entity_nodes(parsed.get("entities"))
+            relations = self._normalize_entity_relations(parsed.get("relations"))
+            return summarized or self._truncate(plain, 280), entities, relations
         except Exception:
-            return self._truncate(plain, 280)
+            return self._truncate(plain, 280), [], []
+
+    def generate_ai_summary(self, *, content: str, source_label: str, user_id: str) -> str:
+        # [chatbot] 레거시 호환: 요약 문자열만 필요한 호출을 유지한다.
+        summary, _, _ = self.generate_ai_summary_and_entities(
+            content=content,
+            source_label=source_label,
+            user_id=user_id,
+        )
+        return summary
 
     def upsert_rag_document(
         self,
@@ -896,19 +1065,36 @@ class ChatbotService:
     ) -> None:
         # [chatbot] RAG insert-doc payload 전송
         self._ensure_rag_input_ready()
-        summary = self._normalize_text(ai_summary) or self.generate_ai_summary(
-            content=content,
-            source_label=str(metadata.get("source_type") or "document"),
-            user_id=user_id,
-        )
+        summary = self._normalize_text(ai_summary)
+        entity_nodes: list[dict[str, str]] = []
+        entity_relations: list[dict[str, str]] = []
+        if not summary:
+            summary, entity_nodes, entity_relations = self.generate_ai_summary_and_entities(
+                content=content,
+                source_label=str(metadata.get("source_type") or "document"),
+                user_id=user_id,
+            )
         # [chatbot] 메타데이터를 additional_field가 아닌 data 최상위 레벨에 평탄화한다.
-        reserved_keys = {"doc_id", "title", "content", "permission_groups", "created_time", "ai_summary"}
+        reserved_keys = {
+            "doc_id",
+            "title",
+            "content",
+            "permission_groups",
+            "created_time",
+            "ai_summary",
+            "entity_nodes",
+            "entity_relations",
+            "entity_names",
+            "entity_count",
+            "relation_count",
+        }
         flat_metadata: dict[str, Any] = {}
         for key, value in dict(metadata or {}).items():
             normalized_key = str(key or "").strip()
             if not normalized_key or normalized_key in reserved_keys:
                 continue
             flat_metadata[normalized_key] = value
+        entity_names = [row.get("name") for row in entity_nodes if self._normalize_text(row.get("name"))]
 
         data_payload: dict[str, Any] = {
             "doc_id": doc_id,
@@ -917,6 +1103,11 @@ class ChatbotService:
             "permission_groups": permission_groups or [settings.RAG_PERMISSION_GROUP],
             "created_time": self._to_iso(created_time),
             **flat_metadata,
+            "entity_nodes": entity_nodes,
+            "entity_relations": entity_relations,
+            "entity_names": entity_names,
+            "entity_count": int(len(entity_nodes)),
+            "relation_count": int(len(entity_relations)),
             "ai_summary": summary,
         }
         payload = {
@@ -1281,3 +1472,59 @@ class ChatbotService:
             )
         except Exception as exc:
             logger.warning("[chatbot] coaching note RAG sync skipped: %s", exc)
+
+    def safe_sync_project_document(
+        self,
+        *,
+        doc_id: int,
+        user_id: str,
+        event_type: str,
+    ) -> None:
+        # [chatbot] 과제기록 등록/수정/복원/수동동기화 시 RAG 자동 동기화
+        if not self._is_rag_input_enabled():
+            return
+        try:
+            doc = self.db.query(ProjectDocument).filter(ProjectDocument.doc_id == int(doc_id)).first()
+            if not doc:
+                return
+            project = self.db.query(Project).filter(Project.project_id == int(doc.project_id)).first()
+            if not project:
+                return
+            batch = self.db.query(Batch).filter(Batch.batch_id == int(project.batch_id)).first()
+            content, attachments = self._build_project_document_content(doc, project)
+            image_urls = self._collect_project_document_image_urls(doc, attachments)
+            image_entries = self._build_image_caption_entries(image_urls, user_id=str(user_id))
+            content = self._append_image_caption_block(content, image_entries)
+            metadata = {
+                "source_type": "project_document",
+                "event_type": str(event_type),
+                "doc_schema": "project_document.v1",
+                "document_id": int(doc.doc_id),
+                "doc_type": doc.doc_type,
+                "doc_type_label": self._document_type_label(doc.doc_type),
+                "project_id": int(project.project_id),
+                "project_name": project.project_name,
+                "batch_id": int(project.batch_id),
+                "batch_name": batch.batch_name if batch else None,
+                "author_id": int(doc.created_by),
+                "attachment_count": int(len(attachments)),
+                "updated_at": self._to_iso(doc.updated_at or doc.created_at),
+                "image_urls": [row.get("url") for row in image_entries],
+                "image_descriptions": image_entries,
+            }
+            self.upsert_rag_document(
+                doc_id=f"project_document:{int(doc.doc_id)}",
+                title=doc.title or self._document_type_label(doc.doc_type),
+                content=content,
+                metadata=metadata,
+                user_id=user_id,
+                permission_groups=self._permission_groups_for_batch(int(project.batch_id)),
+                created_time=doc.updated_at or doc.created_at,
+            )
+            self._emit_chat_debug(
+                "[chatbot][debug] project_document synced document_id=%s event_type=%s",
+                int(doc.doc_id),
+                str(event_type),
+            )
+        except Exception as exc:
+            logger.warning("[chatbot] project document RAG sync skipped: %s", exc)

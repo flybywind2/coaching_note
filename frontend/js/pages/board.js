@@ -204,6 +204,7 @@ Pages.board = {
         </div>
         <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
+        <p class="form-hint" id="board-post-saving" style="display:none;">저장 중입니다. RAG 동기화로 수 초 걸릴 수 있습니다.</p>
         <p class="form-error" id="board-post-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
@@ -218,9 +219,35 @@ Pages.board = {
       listId: 'board-mention-list',
       pickedId: 'board-mention-picked',
     });
+    const postForm = document.getElementById('board-post-form');
+    const postErrEl = document.getElementById('board-post-err');
+    const postSavingEl = document.getElementById('board-post-saving');
+    const postSubmitBtn = postForm?.querySelector('button[type="submit"]');
+
+    const setPostSaving = (isSaving) => {
+      if (postSubmitBtn) {
+        postSubmitBtn.disabled = !!isSaving;
+        postSubmitBtn.textContent = isSaving ? '저장 중...' : (isEdit ? '저장' : '등록');
+      }
+      if (postSavingEl) {
+        postSavingEl.style.display = isSaving ? 'block' : 'none';
+      }
+    };
+
+    const setPostError = (msg) => {
+      if (!postErrEl) return;
+      if (!msg) {
+        postErrEl.style.display = 'none';
+        postErrEl.textContent = '';
+        return;
+      }
+      postErrEl.textContent = msg;
+      postErrEl.style.display = 'block';
+    };
 
     document.getElementById('board-post-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      setPostError('');
       const fd = new FormData(e.target);
       const title = (fd.get('title') || '').toString().trim();
       const boardId = Number.parseInt((fd.get('board_id') || '').toString(), 10);
@@ -228,11 +255,10 @@ Pages.board = {
       const isBatchPrivate = fd.get('is_batch_private') === 'on';
       if (!title || Number.isNaN(boardId) || Number.isNaN(batchId)) return;
       if (postEditor.isEmpty()) {
-        const errEl = document.getElementById('board-post-err');
-        errEl.textContent = '내용을 입력하세요.';
-        errEl.style.display = 'block';
+        setPostError('내용을 입력하세요.');
         return;
       }
+      setPostSaving(true);
       try {
         const content = this._mergeMentionsIntoContent(postEditor.getSanitizedHTML(), mentionState?.picked || []);
         if (isEdit) {
@@ -254,9 +280,11 @@ Pages.board = {
         Modal.close();
         if (onSaved) onSaved();
       } catch (err) {
-        const errEl = document.getElementById('board-post-err');
-        errEl.textContent = err.message || `게시글 ${isEdit ? '수정' : '등록'} 실패`;
-        errEl.style.display = 'block';
+        setPostError(err.message || `게시글 ${isEdit ? '수정' : '등록'} 실패`);
+      } finally {
+        if (document.body.contains(postForm)) {
+          setPostSaving(false);
+        }
       }
     });
   },
@@ -274,6 +302,7 @@ Pages.board = {
         </div>
         <p class="form-hint">멘션은 @사번 또는 @이름(예: @coach001, @이영희) 형태로 작성하세요. 저장 시 멘션 대상에게 알림이 발송됩니다.</p>
         <button type="submit" class="btn btn-primary">${isEdit ? '저장' : '등록'}</button>
+        <p class="form-hint" id="board-comment-saving" style="display:none;">저장 중입니다. RAG 동기화로 수 초 걸릴 수 있습니다.</p>
         <p class="form-error" id="board-comment-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
@@ -289,15 +318,40 @@ Pages.board = {
       listId: 'board-comment-mention-list',
       pickedId: 'board-comment-mention-picked',
     });
+    const commentForm = document.getElementById('board-comment-form');
+    const commentErrEl = document.getElementById('board-comment-err');
+    const commentSavingEl = document.getElementById('board-comment-saving');
+    const commentSubmitBtn = commentForm?.querySelector('button[type="submit"]');
+
+    const setCommentSaving = (isSaving) => {
+      if (commentSubmitBtn) {
+        commentSubmitBtn.disabled = !!isSaving;
+        commentSubmitBtn.textContent = isSaving ? '저장 중...' : (isEdit ? '저장' : '등록');
+      }
+      if (commentSavingEl) {
+        commentSavingEl.style.display = isSaving ? 'block' : 'none';
+      }
+    };
+
+    const setCommentError = (msg) => {
+      if (!commentErrEl) return;
+      if (!msg) {
+        commentErrEl.style.display = 'none';
+        commentErrEl.textContent = '';
+        return;
+      }
+      commentErrEl.textContent = msg;
+      commentErrEl.style.display = 'block';
+    };
 
     document.getElementById('board-comment-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      setCommentError('');
       if (commentEditor.isEmpty()) {
-        const errEl = document.getElementById('board-comment-err');
-        errEl.textContent = '댓글 내용을 입력하세요.';
-        errEl.style.display = 'block';
+        setCommentError('댓글 내용을 입력하세요.');
         return;
       }
+      setCommentSaving(true);
       try {
         const content = this._mergeMentionsIntoContent(commentEditor.getSanitizedHTML(), mentionState?.picked || []);
         if (isEdit) {
@@ -308,9 +362,11 @@ Pages.board = {
         Modal.close();
         if (onSaved) onSaved();
       } catch (err) {
-        const errEl = document.getElementById('board-comment-err');
-        errEl.textContent = err.message || `댓글 ${isEdit ? '수정' : '등록'} 실패`;
-        errEl.style.display = 'block';
+        setCommentError(err.message || `댓글 ${isEdit ? '수정' : '등록'} 실패`);
+      } finally {
+        if (document.body.contains(commentForm)) {
+          setCommentSaving(false);
+        }
       }
     });
   },
