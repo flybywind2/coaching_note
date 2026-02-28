@@ -1,6 +1,10 @@
 """소개 페이지 API 동작 검증 테스트입니다."""
 
-from app.models.project import Project, ProjectMember
+from datetime import date
+
+from app.models.access_scope import UserBatchAccess
+from app.models.batch import Batch
+from app.models.user import Coach
 from app.models.user import User
 from tests.conftest import auth_headers
 
@@ -47,23 +51,11 @@ def test_list_coaches_fallback_from_users(client, seed_users):
     assert any(row["name"] == "Coach" for row in rows)
 
 
-def test_list_coaches_includes_project_assigned_coach(client, db, seed_users, seed_batch):
-    project = Project(
-        batch_id=seed_batch.batch_id,
-        project_name="코치 소개 노출 테스트 과제",
-        organization="DX",
-        visibility="public",
-    )
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-
+def test_list_coaches_includes_scoped_coach_from_user_batch_access(client, db, seed_users, seed_batch):
     db.add(
-        ProjectMember(
-            project_id=project.project_id,
+        UserBatchAccess(
             user_id=seed_users["coach"].user_id,
-            role="member",
-            is_representative=False,
+            batch_id=seed_batch.batch_id,
         )
     )
     db.commit()
@@ -75,7 +67,7 @@ def test_list_coaches_includes_project_assigned_coach(client, db, seed_users, se
     assert any(row["user_id"] == seed_users["coach"].user_id for row in rows)
 
 
-def test_list_coaches_includes_internal_coach_without_scope_link(client, db, seed_users, seed_batch):
+def test_list_coaches_excludes_internal_coach_without_scope_link(client, db, seed_users, seed_batch):
     _ = seed_users
     db.add(
         User(
@@ -93,7 +85,7 @@ def test_list_coaches_includes_internal_coach_without_scope_link(client, db, see
     resp = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=headers)
     assert resp.status_code == 200, resp.text
     rows = resp.json()
-    assert any(row["name"] == "New Internal Coach" for row in rows)
+    assert all(row["name"] != "New Internal Coach" for row in rows)
 
 
 def test_list_coaches_excludes_profile_when_user_role_changes_from_coach(client, db, seed_users, seed_batch):
@@ -285,3 +277,44 @@ def test_reorder_coaches_supports_column_layout_payload(client, seed_users, seed
     assert rows[2]["coach_id"] == second_id
     assert rows[2]["layout_column"] == "right"
     assert rows[2]["display_order"] == 1
+
+
+def test_list_coaches_ignores_coach_batch_id_and_uses_user_batch_access(client, db, seed_users, seed_batch):
+    admin_headers = auth_headers(client, "admin001")
+
+    b2 = Batch(batch_name="2026년 2차", start_date=date(2026, 7, 1), end_date=date(2026, 12, 31), status="planned")
+    db.add(b2)
+    db.commit()
+    db.refresh(b2)
+
+    coach_user = seed_users["coach"]
+    db.add(UserBatchAccess(user_id=coach_user.user_id, batch_id=seed_batch.batch_id))
+    db.add(
+        Coach(
+            user_id=coach_user.user_id,
+            batch_id=b2.batch_id,
+            name=coach_user.name,
+            coach_type="internal",
+            is_visible=True,
+            is_active=True,
+            display_order=1,
+            layout_column="left",
+        )
+    )
+    db.commit()
+
+    first_list = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=admin_headers)
+    assert first_list.status_code == 200, first_list.text
+    assert any(row.get("user_id") == coach_user.user_id for row in first_list.json())
+
+    db.query(UserBatchAccess).filter(UserBatchAccess.user_id == coach_user.user_id).delete()
+    db.add(UserBatchAccess(user_id=coach_user.user_id, batch_id=b2.batch_id))
+    db.commit()
+
+    list_old_batch = client.get(f"/api/about/coaches?batch_id={seed_batch.batch_id}", headers=admin_headers)
+    assert list_old_batch.status_code == 200, list_old_batch.text
+    assert all(row.get("user_id") != coach_user.user_id for row in list_old_batch.json())
+
+    list_new_batch = client.get(f"/api/about/coaches?batch_id={b2.batch_id}", headers=admin_headers)
+    assert list_new_batch.status_code == 200, list_new_batch.text
+    assert any(row.get("user_id") == coach_user.user_id for row in list_new_batch.json())

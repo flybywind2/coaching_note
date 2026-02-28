@@ -9,7 +9,6 @@ from app.database import get_db
 from app.middleware.auth_middleware import get_current_user, require_roles
 from app.models.access_scope import UserBatchAccess
 from app.models.batch import Batch
-from app.models.project import Project, ProjectMember
 from app.models.site_content import SiteContent
 # [FEEDBACK7] 소식(news) 탭 백엔드 리소스
 from app.models.about_news import AboutNews
@@ -63,11 +62,11 @@ def _validate_batch(db: Session, batch_id: int) -> Batch:
     return row
 
 
-def _coach_to_out(coach: Coach) -> CoachProfileOut:
+def _coach_to_out(coach: Coach, batch_id: int | None = None) -> CoachProfileOut:
     return CoachProfileOut(
         coach_id=coach.coach_id,
         user_id=coach.user_id,
-        batch_id=coach.batch_id,
+        batch_id=batch_id,
         name=coach.name,
         coach_type=coach.coach_type,
         department=coach.department,
@@ -105,6 +104,12 @@ def _is_coach_role(user: User) -> bool:
     return user.role in COACH_USER_ROLES
 
 
+def _coach_type_from_user(user: User | None) -> str:
+    if user and user.role == EXTERNAL_COACH:
+        return "external"
+    return "internal"
+
+
 def _get_or_default_content(db: Session, key: str) -> SiteContentOut:
     row = db.query(SiteContent).filter(SiteContent.content_key == key).first()
     if row:
@@ -124,59 +129,51 @@ def _get_or_default_content(db: Session, key: str) -> SiteContentOut:
     )
 
 
-def _next_display_order(db: Session, batch_id: int | None) -> int:
+def _next_display_order(db: Session) -> int:
     max_order = (
         db.query(func.max(Coach.display_order))
-        .filter(Coach.is_active == True, Coach.batch_id == batch_id)  # noqa: E712
+        .filter(Coach.is_active == True)  # noqa: E712
         .scalar()
     )
     return int(max_order or 0) + 1
 
 
 def _get_coach_users_for_batch(db: Session, batch_id: int) -> list[User]:
-    internal_users = (
-        db.query(User)
-        .filter(
-            User.is_active == True,  # noqa: E712
-            User.role.in_([LEGACY_COACH, INTERNAL_COACH]),
-        )
-        .all()
-    )
-    external_users_from_access = (
+    return (
         db.query(User)
         .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
         .filter(
-            UserBatchAccess.batch_id == batch_id,
-            User.is_active == True,  # noqa: E712
-            User.role == EXTERNAL_COACH,
-        )
-        .all()
-    )
-    users_from_access = (
-        db.query(User)
-        .join(UserBatchAccess, UserBatchAccess.user_id == User.user_id)
-        .filter(
-            UserBatchAccess.batch_id == batch_id,
+            UserBatchAccess.batch_id == int(batch_id),
             User.is_active == True,  # noqa: E712
             User.role.in_(COACH_USER_ROLES),
         )
+        .order_by(User.name.asc())
         .all()
     )
-    users_from_project_member = (
-        db.query(User)
-        .join(ProjectMember, ProjectMember.user_id == User.user_id)
-        .join(Project, Project.project_id == ProjectMember.project_id)
+
+
+def _query_active_coach_profiles(db: Session, batch_id: int | None) -> list[Coach]:
+    query = (
+        db.query(Coach)
+        .outerjoin(User, Coach.user_id == User.user_id)
         .filter(
-            Project.batch_id == batch_id,
-            User.is_active == True,  # noqa: E712
-            User.role.in_(COACH_USER_ROLES),
+            Coach.is_active == True,  # noqa: E712
+            or_(
+                Coach.user_id.is_(None),
+                and_(
+                    User.is_active == True,  # noqa: E712
+                    User.role.in_(COACH_USER_ROLES),
+                ),
+            ),
         )
-        .all()
     )
-    merged_by_user_id: dict[int, User] = {}
-    for user in internal_users + external_users_from_access + users_from_access + users_from_project_member:
-        merged_by_user_id[user.user_id] = user
-    return sorted(merged_by_user_id.values(), key=lambda row: (row.name or "").lower())
+    if batch_id is not None:
+        scoped_user_ids = {int(row.user_id) for row in _get_coach_users_for_batch(db, batch_id)}
+        if scoped_user_ids:
+            query = query.filter(or_(Coach.user_id.is_(None), Coach.user_id.in_(scoped_user_ids)))
+        else:
+            query = query.filter(Coach.user_id.is_(None))
+    return query.order_by(Coach.display_order.asc(), Coach.name.asc()).all()
 
 
 @router.get("/content", response_model=SiteContentOut)
@@ -301,27 +298,11 @@ def list_coaches(
     if batch_id is not None:
         _validate_batch(db, batch_id)
 
-    all_rows_q = (
-        db.query(Coach)
-        .outerjoin(User, Coach.user_id == User.user_id)
-        .filter(
-            Coach.is_active == True,  # noqa: E712
-            or_(
-                Coach.user_id.is_(None),
-                and_(
-                    User.is_active == True,  # noqa: E712
-                    User.role.in_(COACH_USER_ROLES),
-                ),
-            ),
-        )
-    )
-    if batch_id is not None:
-        all_rows_q = all_rows_q.filter(Coach.batch_id == batch_id)
-    all_rows = all_rows_q.order_by(Coach.display_order.asc(), Coach.name.asc()).all()
+    all_rows = _query_active_coach_profiles(db, batch_id)
 
     existing_by_user = {row.user_id: row for row in all_rows if row.user_id}
     rows = all_rows if include_hidden else [row for row in all_rows if row.is_visible]
-    merged: list[CoachProfileOut] = [_coach_to_out(row) for row in rows]
+    merged: list[CoachProfileOut] = [_coach_to_out(row, batch_id=batch_id) for row in rows]
 
     if batch_id is None:
         coach_users = (
@@ -346,7 +327,7 @@ def list_coaches(
                 user_id=user.user_id,
                 batch_id=batch_id,
                 name=user.name,
-                coach_type="external" if user.role == EXTERNAL_COACH else "internal",
+                coach_type=_coach_type_from_user(user),
                 department=user.department,
                 affiliation=user.department,
                 specialty=None,
@@ -371,9 +352,8 @@ def create_coach(
     if not is_admin and not _is_coach_role(current_user):
         raise HTTPException(status_code=403, detail="코치 프로필 등록 권한이 없습니다.")
 
-    if data.batch_id is None:
-        raise HTTPException(status_code=400, detail="차수를 선택하세요.")
-    _validate_batch(db, data.batch_id)
+    if data.batch_id is not None:
+        _validate_batch(db, data.batch_id)
 
     target_user_id = data.user_id
     if not is_admin:
@@ -388,13 +368,12 @@ def create_coach(
             db.query(Coach)
             .filter(
                 Coach.user_id == target_user_id,
-                Coach.batch_id == data.batch_id,
                 Coach.is_active == True,  # noqa: E712
             )
             .first()
         )
         if exists:
-            raise HTTPException(status_code=409, detail="이미 해당 차수에 코치 프로필이 연결된 사용자입니다.")
+            raise HTTPException(status_code=409, detail="이미 코치 프로필이 연결된 사용자입니다.")
 
     coach_name = (data.name or "").strip()
     if not coach_name and linked_user:
@@ -404,9 +383,9 @@ def create_coach(
 
     row = Coach(
         user_id=target_user_id,
-        batch_id=data.batch_id,
+        batch_id=None,
         name=coach_name,
-        coach_type=("external" if linked_user and linked_user.role == EXTERNAL_COACH else (data.coach_type or "internal")),
+        coach_type=_coach_type_from_user(linked_user) if linked_user else (data.coach_type or "internal"),
         department=(data.department or (linked_user.department if linked_user else None)),
         affiliation=data.affiliation,
         specialty=data.specialty,
@@ -416,7 +395,7 @@ def create_coach(
         display_order=(
             data.display_order
             if is_admin and data.display_order is not None
-            else _next_display_order(db, data.batch_id)
+            else _next_display_order(db)
         ),
         layout_column=_normalize_layout_column(data.layout_column),
         is_active=True,
@@ -424,7 +403,7 @@ def create_coach(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _coach_to_out(row)
+    return _coach_to_out(row, batch_id=data.batch_id)
 
 
 @router.put("/coaches/{coach_id:int}", response_model=CoachProfileOut)
@@ -447,9 +426,8 @@ def update_coach(
     if not is_admin and not can_edit_own_profile:
         raise HTTPException(status_code=403, detail="코치 프로필 수정 권한이 없습니다.")
 
-    next_batch_id = data.batch_id if data.batch_id is not None else row.batch_id
-    if is_admin and next_batch_id is not None:
-        _validate_batch(db, next_batch_id)
+    if data.batch_id is not None:
+        _validate_batch(db, data.batch_id)
 
     if is_admin and data.user_id is not None:
         _validate_coach_user(db, data.user_id)
@@ -458,18 +436,17 @@ def update_coach(
             .filter(
                 Coach.coach_id != coach_id,
                 Coach.user_id == data.user_id,
-                Coach.batch_id == next_batch_id,
                 Coach.is_active == True,  # noqa: E712
             )
             .first()
         )
         if duplicate:
-            raise HTTPException(status_code=409, detail="이미 해당 차수의 다른 코치 프로필에 연결된 사용자입니다.")
+            raise HTTPException(status_code=409, detail="이미 다른 코치 프로필에 연결된 사용자입니다.")
         row.user_id = data.user_id
 
-    payload = data.model_dump(exclude_none=True, exclude={"user_id"})
+    payload = data.model_dump(exclude_none=True, exclude={"user_id", "batch_id"})
     if not is_admin:
-        for field in ("batch_id", "coach_type", "is_visible", "display_order"):
+        for field in ("coach_type", "is_visible", "display_order"):
             payload.pop(field, None)
     for key, value in payload.items():
         if key == "layout_column":
@@ -477,14 +454,14 @@ def update_coach(
         setattr(row, key, value)
 
     if row.display_order is None:
-        row.display_order = _next_display_order(db, row.batch_id)
+        row.display_order = _next_display_order(db)
 
     if not (row.name or "").strip():
         raise HTTPException(status_code=400, detail="코치 이름을 입력하세요.")
 
     db.commit()
     db.refresh(row)
-    return _coach_to_out(row)
+    return _coach_to_out(row, batch_id=data.batch_id)
 
 
 @router.put("/coaches/reorder", response_model=List[CoachProfileOut])
@@ -494,11 +471,7 @@ def reorder_coaches(
     current_user: User = Depends(require_roles("admin")),
 ):
     _validate_batch(db, data.batch_id)
-    rows = (
-        db.query(Coach)
-        .filter(Coach.batch_id == data.batch_id, Coach.is_active == True)  # noqa: E712
-        .all()
-    )
+    rows = _query_active_coach_profiles(db, data.batch_id)
     id_map = {row.coach_id: row for row in rows}
 
     has_column_payload = bool(data.left_coach_ids or data.right_coach_ids)
