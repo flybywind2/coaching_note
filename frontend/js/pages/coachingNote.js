@@ -192,7 +192,11 @@ Pages.coachingNote = {
         </div>
         <div class="form-group" id="create-main-issue-wrap" style="display:none;"><label>주요 문제</label><div id="note-issue-editor"></div></div>
         <div class="form-group"><label>다음 작업</label><div id="note-action-editor"></div></div>
-        <button type="submit" class="btn btn-primary">저장</button>
+        <div class="page-actions">
+          <button type="submit" class="btn btn-primary">저장</button>
+        </div>
+        <p class="form-hint" id="create-note-saving" style="display:none;">저장 중입니다. RAG 동기화로 수 초 걸릴 수 있습니다.</p>
+        <p class="form-error" id="create-note-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
     const currentEditor = RichEditor.create(document.getElementById('note-current-editor'), {
@@ -221,9 +225,35 @@ Pages.coachingNote = {
     };
     useMainIssueInput?.addEventListener('change', syncMainIssueVisibility);
     syncMainIssueVisibility();
+    const createSubmitBtn = createForm.querySelector('button[type="submit"]');
+    const createErrEl = document.getElementById('create-note-err');
+    const createSavingEl = document.getElementById('create-note-saving');
+
+    const setCreateError = (message) => {
+      if (!createErrEl) return;
+      if (!message) {
+        createErrEl.style.display = 'none';
+        createErrEl.textContent = '';
+        return;
+      }
+      createErrEl.style.display = 'block';
+      createErrEl.textContent = message;
+    };
+
+    const setCreateSaving = (isSaving) => {
+      if (createSubmitBtn) {
+        createSubmitBtn.disabled = !!isSaving;
+        createSubmitBtn.textContent = isSaving ? '저장 중...' : '저장';
+      }
+      if (createSavingEl) {
+        createSavingEl.style.display = isSaving ? 'block' : 'none';
+      }
+    };
 
     createForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+      setCreateError('');
+      setCreateSaving(true);
       const fd = new FormData(e.target);
       const data = {
         coaching_date: autoDate,
@@ -233,9 +263,17 @@ Pages.coachingNote = {
         main_issue: fd.has('use_main_issue') ? (issueEditor.getSanitizedHTML() || null) : null,
         next_action: actionEditor.getSanitizedHTML() || null,
       };
-      await API.createNote(projectId, data);
-      Modal.close();
-      if (onDone) onDone();
+      try {
+        await API.createNote(projectId, data);
+        Modal.close();
+        if (onDone) onDone();
+      } catch (err) {
+        setCreateError(err.message || '코칭노트 저장 실패');
+      } finally {
+        if (document.body.contains(createForm)) {
+          setCreateSaving(false);
+        }
+      }
     });
   },
 
@@ -272,6 +310,7 @@ Pages.coachingNote = {
           <button type="button" id="enhance-note-ai-btn" class="btn btn-secondary">AI 보완</button>
           <button type="submit" class="btn btn-primary">저장</button>
         </div>
+        <p class="form-hint" id="edit-note-saving" style="display:none;">저장 중입니다. RAG 동기화로 수 초 걸릴 수 있습니다.</p>
         <p class="form-error" id="edit-note-err" style="display:none;"></p>
       </form>`, null, { className: 'modal-box-xl' });
 
@@ -306,6 +345,8 @@ Pages.coachingNote = {
     syncMainIssueVisibility();
     const aiBtn = document.getElementById('enhance-note-ai-btn');
     const errEl = document.getElementById('edit-note-err');
+    const editSavingEl = document.getElementById('edit-note-saving');
+    const editSubmitBtn = editForm.querySelector('button[type="submit"]');
 
     const setFormError = (msg) => {
       if (!errEl) return;
@@ -316,6 +357,16 @@ Pages.coachingNote = {
       }
       errEl.textContent = msg;
       errEl.style.display = 'block';
+    };
+
+    const setEditSaving = (isSaving) => {
+      if (editSubmitBtn) {
+        editSubmitBtn.disabled = !!isSaving;
+        editSubmitBtn.textContent = isSaving ? '저장 중...' : '저장';
+      }
+      if (editSavingEl) {
+        editSavingEl.style.display = isSaving ? 'block' : 'none';
+      }
     };
 
     const runAiEnhance = async () => {
@@ -353,6 +404,7 @@ Pages.coachingNote = {
     editForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       setFormError('');
+      setEditSaving(true);
       const fd = new FormData(e.target);
       const data = {
         coaching_date: fixedDate,
@@ -368,6 +420,10 @@ Pages.coachingNote = {
         if (onDone) onDone();
       } catch (err) {
         setFormError(err.message || '코칭노트 저장 실패');
+      } finally {
+        if (document.body.contains(editForm)) {
+          setEditSaving(false);
+        }
       }
     });
   },
