@@ -97,6 +97,7 @@ Pages.projectDetail = {
     } = options;
     const repos = Array.isArray(p.github_repos) ? p.github_repos : [];
     const progressValue = Math.max(0, Math.min(100, Number(p.progress_rate) || 0));
+    const projectStatus = (p.status || 'preparing').toString().trim().toLowerCase() || 'preparing';
     const noteLink = `#/project/${projectId}?tab=notes`;
     const resolveCommentType = (comment) => {
       if (comment.comment_type) return comment.comment_type;
@@ -142,6 +143,11 @@ Pages.projectDetail = {
         <div class="project-top-meta-strip">
           ${renderMetaChip({ label: '부서명', field: 'organization', value: `<span>${Fmt.escape(p.organization)}</span>` })}
           ${renderMetaChip({ label: '과제 대표자', value: `<span>${Fmt.escape(p.representative || '-')}</span>` })}
+          ${renderMetaChip({
+            label: '상태',
+            field: 'status',
+            value: `<span class="tag tag-${Fmt.escape(projectStatus)}">${Fmt.status(projectStatus)}</span>`,
+          })}
           ${renderMetaChip({
             label: '과제 진행률',
             field: canEditProgress ? 'progress_rate' : null,
@@ -310,12 +316,26 @@ Pages.projectDetail = {
         });
         return;
       }
+      if (field === 'status') {
+        openSimpleEditor({
+          title: '상태 편집',
+          inputHtml: `<div class="form-group"><label>상태</label><select name="value">
+            <option value="preparing"${projectStatus === 'preparing' ? ' selected' : ''}>${Fmt.status('preparing')}</option>
+            <option value="in_progress"${projectStatus === 'in_progress' ? ' selected' : ''}>${Fmt.status('in_progress')}</option>
+            <option value="completed"${projectStatus === 'completed' ? ' selected' : ''}>${Fmt.status('completed')}</option>
+            <option value="drop"${projectStatus === 'drop' ? ' selected' : ''}>${Fmt.status('drop')}</option>
+          </select></div>`,
+          parsePayload: (fd) => ({ status: (fd.get('value') || 'preparing').toString() }),
+        });
+        return;
+      }
       const defaultValues = {
         project_name: p.project_name || '',
         organization: p.organization || '',
         representative: p.representative || '',
         ai_tech_category: p.ai_tech_category || p.category || '',
         ai_tech_used: p.ai_tech_used || '',
+        status: projectStatus,
         progress_rate: String(progressValue),
       };
       const labels = {
@@ -324,6 +344,7 @@ Pages.projectDetail = {
         representative: '과제 대표자',
         ai_tech_category: 'AI기술 분류',
         ai_tech_used: '사용된 AI기술',
+        status: '상태',
         progress_rate: '전체 진행률 (%)',
       };
       const isNumber = field === 'progress_rate';

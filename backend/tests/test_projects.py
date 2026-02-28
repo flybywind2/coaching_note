@@ -47,6 +47,54 @@ def test_list_projects(client, seed_users, seed_batch, db):
     assert len(resp.json()) == 2
 
 
+def test_list_projects_excludes_drop_status(client, seed_users, seed_batch, db):
+    active = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Visible",
+        organization="Org",
+        status="in_progress",
+    )
+    dropped = Project(
+        batch_id=seed_batch.batch_id,
+        project_name="Dropped",
+        organization="Org",
+        status="DROP",
+    )
+    db.add_all([active, dropped])
+    db.commit()
+
+    headers = auth_headers(client, "admin001")
+    resp = client.get(f"/api/batches/{seed_batch.batch_id}/projects", headers=headers)
+    assert resp.status_code == 200
+    ids = {row["project_id"] for row in resp.json()}
+    assert active.project_id in ids
+    assert dropped.project_id not in ids
+
+
+def test_update_project_status_drop_hides_from_list(client, seed_users, seed_batch):
+    headers = auth_headers(client, "admin001")
+    create_resp = client.post(
+        f"/api/batches/{seed_batch.batch_id}/projects",
+        json={"project_name": "Will Drop", "organization": "Org"},
+        headers=headers,
+    )
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["project_id"]
+
+    update_resp = client.put(
+        f"/api/projects/{project_id}",
+        json={"status": "DROP"},
+        headers=headers,
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["status"] == "drop"
+
+    list_resp = client.get(f"/api/batches/{seed_batch.batch_id}/projects", headers=headers)
+    assert list_resp.status_code == 200
+    listed_ids = {row["project_id"] for row in list_resp.json()}
+    assert project_id not in listed_ids
+
+
 def test_progress_rate_auto_calc(client, seed_users, seed_batch, db):
     headers = auth_headers(client, "admin001")
     # Create project

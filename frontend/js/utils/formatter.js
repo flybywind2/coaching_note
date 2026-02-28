@@ -48,7 +48,7 @@ const Fmt = {
   },
   status(s) {
     const map = { preparing: '준비중', in_progress: '진행중', completed: '완료', planned: '예정',
-                  ongoing: '진행중', todo: '할일', cancelled: '취소' };
+                  ongoing: '진행중', todo: '할일', cancelled: '취소', drop: 'Drop' };
     return map[s] || s;
   },
   escape(str) {

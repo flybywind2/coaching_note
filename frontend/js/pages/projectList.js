@@ -227,6 +227,14 @@ Pages.projectList = {
         <div class="form-group"><label>공개여부</label>
           <select name="visibility"><option value="public">공개</option><option value="restricted">비공개</option></select>
         </div>
+        <div class="form-group"><label>상태</label>
+          <select name="status">
+            <option value="preparing">준비중</option>
+            <option value="in_progress">진행중</option>
+            <option value="completed">완료</option>
+            <option value="drop">Drop</option>
+          </select>
+        </div>
         <button type="submit" class="btn btn-primary">생성</button>
         <p class="form-error" id="modal-err" style="display:none;"></p>
       </form>`, onDone);

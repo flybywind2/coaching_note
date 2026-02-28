@@ -17,6 +17,7 @@ from typing import List, Optional
 
 
 ALLOWED_PROJECT_TYPES = {"primary", "associate"}
+ALLOWED_PROJECT_STATUSES = {"preparing", "in_progress", "completed", "drop"}
 MEMBER_ROLE = "member"
 LEADER_ROLE = "leader"
 
@@ -28,6 +29,16 @@ def _normalize_project_type(value: str | None) -> str:
     return text
 
 
+def _normalize_project_status(value: str | None, fallback: str = "preparing") -> str:
+    normalized_fallback = (fallback or "preparing").strip().lower() or "preparing"
+    if normalized_fallback not in ALLOWED_PROJECT_STATUSES:
+        normalized_fallback = "preparing"
+    text = (value or normalized_fallback).strip().lower()
+    if text not in ALLOWED_PROJECT_STATUSES:
+        return normalized_fallback
+    return text
+
+
 def _normalize_member_role(value: str | None) -> str:
     return LEADER_ROLE if str(value or "").strip().lower() == LEADER_ROLE else MEMBER_ROLE
 
@@ -36,7 +47,12 @@ def get_projects(db: Session, batch_id: int, current_user: User) -> List[Project
     if not can_view_batch(db, batch_id, current_user):
         return []
     projects = db.query(Project).filter(Project.batch_id == batch_id).all()
-    visible = [p for p in projects if can_view_project(db, p, current_user)]
+    visible = [
+        p
+        for p in projects
+        if _normalize_project_status(getattr(p, "status", None)) != "drop"
+        and can_view_project(db, p, current_user)
+    ]
     member_project_ids = {
         row[0]
         for row in db.query(ProjectMember.project_id)
@@ -66,6 +82,7 @@ def get_project(db: Session, project_id: int, current_user: User) -> Project:
 def create_project(db: Session, batch_id: int, data: ProjectCreate) -> Project:
     payload = data.model_dump()
     payload["project_type"] = _normalize_project_type(payload.get("project_type"))
+    payload["status"] = _normalize_project_status(payload.get("status"))
     project = Project(batch_id=batch_id, **payload)
     db.add(project)
     db.commit()
@@ -88,6 +105,11 @@ def update_project(db: Session, project_id: int, data: ProjectUpdate, current_us
     payload = data.model_dump(exclude_none=True)
     if "project_type" in payload:
         payload["project_type"] = _normalize_project_type(payload.get("project_type"))
+    if "status" in payload:
+        payload["status"] = _normalize_project_status(
+            payload.get("status"),
+            fallback=_normalize_project_status(getattr(project, "status", None)),
+        )
     profile_keys = {"ai_tech_category", "ai_tech_used", "project_summary", "github_repos"}
     profile_payload = {k: payload.pop(k) for k in list(payload.keys()) if k in profile_keys}
 
