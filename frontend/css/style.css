@@ -2837,6 +2837,8 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   right: 0;
   bottom: 70px;
   width: min(90vw, 380px);
+  min-width: 320px;
+  max-width: calc(100vw - 24px);
   height: 500px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.8);
@@ -2847,6 +2849,7 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
+  resize: horizontal;
 }
 .chatbot-modal-head {
   display: flex;
@@ -2864,17 +2867,21 @@ body.rte-resizing-row * { cursor: row-resize !important; }
 }
 .chatbot-messages {
   padding: 10px 12px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   align-content: start;
   gap: 8px;
 }
 .chatbot-msg {
-  max-width: 92%;
+  max-width: 100%;
   border-radius: 10px;
   padding: 8px 10px;
   font-size: 13px;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .chatbot-msg-user {
   margin-left: auto;
@@ -2893,6 +2900,9 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   border-top: 1px dashed rgba(86, 107, 163, 0.36);
   font-size: 12px;
   color: #3b5182;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .chatbot-ref-images {
   margin-top: 8px;
@@ -3092,7 +3102,13 @@ body.rte-resizing-row * { cursor: row-resize !important; }
   .modal-box-xxl { max-width: 100%; }
   .notif-panel { width: min(92vw, 330px); right: 8px; }
   .chatbot-widget { right: 10px; bottom: 10px; }
-  .chatbot-modal { width: min(94vw, 360px); height: min(72vh, 520px); }
+  .chatbot-modal {
+    width: min(94vw, 360px);
+    min-width: 0;
+    max-width: 94vw;
+    height: min(72vh, 520px);
+    resize: none;
+  }
 }
 
 
