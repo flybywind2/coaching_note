@@ -24,6 +24,27 @@ AI_IMAGE_MODEL_BASE_URL=
 AI_IMAGE_MODEL_NAME=
 AI_IMAGE_MODEL_PROMPT=이미지를 상세히 한글로 설명해주세요.
 AI_IMAGE_MODEL_MAX_IMAGES=3
+
+AI_MODEL1_BASE_URL=https://model1.openai.com/v1
+AI_MODEL2_BASE_URL=https://model2.openai.com/v1
+AI_MODEL3_BASE_URL=https://model3.openai.com/v1
+AI_MODEL4_BASE_URL=https://model4.openai.com/v1
+AI_MODEL1=model1
+AI_MODEL2=model2
+AI_MODEL3=model3
+AI_MODEL4=model4
+AI_DEFAULT_MODEL=model1   # 기본/일반 질의
+AI_SUMMARY_MODEL=model1   # 요약 생성
+AI_QA_MODEL=model1        # Q&A 생성
+AI_CODE_MODEL=model1      # 코드/SQL 생성 보조
+```
+- 기본 설정에서는 모든 용도가 `model1` 슬롯을 사용합니다.
+- 따라서 `qwen3`로 변경하려면 `AI_MODEL1_BASE_URL`, `AI_MODEL1` 두 값만 수정하면 됩니다.
+- 요약 모델만 GPT-OSS로 분리하려면 아래 3개를 설정하면 됩니다.
+```env
+AI_MODEL2_BASE_URL=https://.../v1
+AI_MODEL2=openai/gpt-oss-120b
+AI_SUMMARY_MODEL=model2
 ```
 
 ## 3. 토글/권한 동작
@@ -79,8 +100,8 @@ AI_IMAGE_MODEL_MAX_IMAGES=3
 - SQL 생성 힌트: `users -> project_member -> projects` 조인 힌트 포함
 - 안전성 검사: `SELECT`/`WITH`만 허용, DML/DDL/다중문/주석 차단
 - 결과 제한: 기본 LIMIT 보정(최대 50)
-- SQL 폴백: LLM SQL 미생성 시 규칙 기반 SQL 폴백 사용
-- SQL 폴백 예시: `OOO 과제 뭐야?` 유형은 사용자-과제 조인 조회로 처리
+- SQL은 규칙 기반 폴백 없이 LLM 생성 결과만 사용
+- LLM이 SQL을 생성하지 못하면 SQL 경로는 `None`을 반환하고 RAG 경로로 이어짐
 
 ## 7. RAG 경로 상세
 - `retrieve-rrf`로 문서 검색
