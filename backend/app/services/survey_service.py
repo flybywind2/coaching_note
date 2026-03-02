@@ -22,11 +22,11 @@ from app.schemas.survey import (
     SurveyUpdate,
 )
 from app.services import notification_service
-from app.utils.permissions import is_admin, is_participant
+from app.utils.permissions import is_admin, is_coach, is_external_coach, is_participant
 
 
 def _ensure_allowed_role(current_user: User):
-    if current_user.role not in {"admin", "participant"}:
+    if current_user.role not in {"admin", "coach", "internal_coach", "external_coach", "participant"}:
         raise HTTPException(status_code=403, detail="설문 페이지에 접근할 수 없습니다.")
 
 
@@ -96,6 +96,18 @@ def _participant_batch_ids(db: Session, current_user: User) -> set[int]:
 def _accessible_batch_ids(db: Session, current_user: User) -> list[int]:
     _ensure_allowed_role(current_user)
     if is_admin(current_user):
+        return [int(row[0]) for row in db.query(Batch.batch_id).order_by(Batch.created_at.desc()).all()]
+    if is_coach(current_user):
+        if is_external_coach(current_user):
+            return sorted(
+                {
+                    int(row[0])
+                    for row in db.query(UserBatchAccess.batch_id)
+                    .filter(UserBatchAccess.user_id == current_user.user_id)
+                    .all()
+                },
+                reverse=True,
+            )
         return [int(row[0]) for row in db.query(Batch.batch_id).order_by(Batch.created_at.desc()).all()]
     return sorted(_participant_batch_ids(db, current_user), reverse=True)
 
@@ -307,6 +319,43 @@ def delete_question(db: Session, *, question_id: int, current_user: User):
     db.commit()
 
 
+def list_question_bank(
+    db: Session,
+    *,
+    batch_id: int,
+    current_user: User,
+) -> list[dict]:
+    # [feedback8] 기존 질문 재활용을 위한 질문 뱅크 조회
+    if not is_admin(current_user):
+        raise HTTPException(status_code=403, detail="질문 뱅크 조회는 관리자만 가능합니다.")
+    _ensure_batch_access(db, batch_id, current_user)
+    rows = (
+        db.query(SurveyQuestion, Survey)
+        .join(Survey, Survey.survey_id == SurveyQuestion.survey_id)
+        .filter(Survey.batch_id == int(batch_id))
+        .order_by(
+            Survey.created_at.desc(),
+            Survey.survey_id.desc(),
+            SurveyQuestion.display_order.asc(),
+            SurveyQuestion.question_id.asc(),
+        )
+        .all()
+    )
+    return [
+        {
+            "question_id": int(question.question_id),
+            "survey_id": int(survey.survey_id),
+            "survey_title": survey.title,
+            "question_text": question.question_text,
+            "question_type": question.question_type,
+            "is_required": bool(question.is_required),
+            "is_multi_select": bool(question.is_multi_select),
+            "options": _parse_options(question),
+        }
+        for question, survey in rows
+    ]
+
+
 def _ensure_survey_viewable(db: Session, survey: Survey, current_user: User):
     _ensure_batch_access(db, survey.batch_id, current_user)
     if not survey.is_visible and not is_admin(current_user):
@@ -428,15 +477,27 @@ def get_detail(db: Session, *, survey_id: int, current_user: User) -> dict:
         .order_by(Project.created_at.asc(), Project.project_id.asc())
         .all()
     )
-    responses = db.query(SurveyResponse).filter(SurveyResponse.survey_id == survey.survey_id).all()
+    all_responses = db.query(SurveyResponse).filter(SurveyResponse.survey_id == survey.survey_id).all()
+    visible_responses = (
+        all_responses
+        if is_participant(current_user)
+        else [row for row in all_responses if bool(getattr(row, "summitted", False))]
+    )
     response_map = {
         (int(row.project_id), int(row.question_id)): str(row.answer_text or "")
-        for row in responses
+        for row in visible_responses
     }
     multi_response_map = {
         (int(row.project_id), int(row.question_id)): _parse_multi_answer(row)
-        for row in responses
+        for row in visible_responses
     }
+    project_submitted_map: dict[int, bool] = {}
+    for response in all_responses:
+        project_id = int(response.project_id)
+        if bool(getattr(response, "summitted", False)):
+            project_submitted_map[project_id] = True
+        else:
+            project_submitted_map.setdefault(project_id, False)
 
     my_project_ids = (
         _participant_project_ids_for_batch(db, current_user, survey.batch_id)
@@ -451,6 +512,7 @@ def get_detail(db: Session, *, survey_id: int, current_user: User) -> dict:
         and my_project_ids
     )
 
+    can_view_result = bool(is_admin(current_user) or is_coach(current_user))
     if is_participant(current_user):
         # [FEEDBACK7] 참여자는 설문에서 본인 소속 과제만 노출
         ordered_projects = [row for row in projects if int(row.project_id) in my_project_ids]
@@ -466,13 +528,16 @@ def get_detail(db: Session, *, survey_id: int, current_user: User) -> dict:
             str(question.question_id): multi_response_map.get((int(project.project_id), int(question.question_id)), [])
             for question in questions
         }
+        is_submitted = bool(project_submitted_map.get(int(project.project_id), False))
         rows.append(
             {
                 "project_id": int(project.project_id),
                 "project_name": project.project_name,
                 "representative": project.representative,
                 "is_my_project": int(project.project_id) in my_project_ids,
-                "can_edit": can_answer and int(project.project_id) in my_project_ids,
+                "can_edit": can_answer and int(project.project_id) in my_project_ids and not is_submitted,
+                "can_cancel": can_answer and int(project.project_id) in my_project_ids and is_submitted,
+                "summitted": is_submitted,
                 "answers": answers,
                 "multi_answers": multi_answers,
             }
@@ -489,9 +554,9 @@ def get_detail(db: Session, *, survey_id: int, current_user: User) -> dict:
             survey=survey,
             questions=questions,
             projects=projects,
-            responses=responses,
+            responses=[row for row in all_responses if bool(getattr(row, "summitted", False))],
         )
-        if is_admin(current_user)
+        if can_view_result
         else None,
     }
     return payload
@@ -554,7 +619,23 @@ def upsert_responses(
     if not question_map:
         raise HTTPException(status_code=400, detail="응답할 문항이 없습니다.")
 
-    answer_map = {}
+    existing_rows = (
+        db.query(SurveyResponse)
+        .filter(
+            SurveyResponse.survey_id == survey.survey_id,
+            SurveyResponse.project_id == project.project_id,
+        )
+        .all()
+    )
+    existing_by_qid = {int(row.question_id): row for row in existing_rows}
+    answer_map = {
+        qid: {
+            "answer_text": str(row.answer_text or "").strip(),
+            "selected_options": _parse_multi_answer(row),
+        }
+        for qid, row in existing_by_qid.items()
+    }
+
     for answer in data.answers:
         qid = int(answer.question_id)
         question = question_map.get(qid)
@@ -592,35 +673,31 @@ def upsert_responses(
             "selected_options": selected_options,
         }
 
-    required_ids = {qid for qid, row in question_map.items() if row.is_required}
-    missing_required = []
-    for qid in required_ids:
-        row = answer_map.get(qid)
-        if not row:
-            missing_required.append(qid)
-            continue
-        if not _to_non_empty_response(row["answer_text"], row["selected_options"]):
-            missing_required.append(qid)
-    if missing_required:
-        raise HTTPException(status_code=400, detail="필수 문항에 모두 응답해야 제출할 수 있습니다.")
+    if bool(data.summitted):
+        required_ids = {qid for qid, row in question_map.items() if row.is_required}
+        missing_required = []
+        for qid in required_ids:
+            row = answer_map.get(qid)
+            if not row:
+                missing_required.append(qid)
+                continue
+            if not _to_non_empty_response(row["answer_text"], row["selected_options"]):
+                missing_required.append(qid)
+        if missing_required:
+            raise HTTPException(status_code=400, detail="필수 문항에 모두 응답해야 제출할 수 있습니다.")
 
     for qid, answer_row in answer_map.items():
-        existing = (
-            db.query(SurveyResponse)
-            .filter(
-                SurveyResponse.survey_id == survey.survey_id,
-                SurveyResponse.question_id == qid,
-                SurveyResponse.project_id == project.project_id,
-            )
-            .first()
-        )
+        existing = existing_by_qid.get(qid)
         answer_text = str(answer_row["answer_text"] or "").strip()
         selected_options = answer_row["selected_options"]
         answer_json = json.dumps(selected_options, ensure_ascii=False) if selected_options else None
         if existing:
             existing.answer_text = answer_text
             existing.answer_json = answer_json
+            existing.summitted = bool(data.summitted)  # [feedback8] 저장/제출 상태 동기화
             existing.responded_by = current_user.user_id
+            continue
+        if not _to_non_empty_response(answer_text, selected_options):
             continue
         db.add(
             SurveyResponse(
@@ -629,6 +706,7 @@ def upsert_responses(
                 project_id=project.project_id,
                 answer_text=answer_text,
                 answer_json=answer_json,
+                summitted=bool(data.summitted),  # [feedback8] 저장/제출 상태 동기화
                 responded_by=current_user.user_id,
             )
         )
@@ -644,23 +722,27 @@ def cancel_responses(
     current_user: User,
 ) -> dict:
     survey = _get_survey(db, survey_id)
-    project = _ensure_participant_can_submit(
+    _ensure_participant_can_submit(
         db,
         survey=survey,
         project_id=project_id,
         current_user=current_user,
     )
+    # [feedback8] 제출 취소는 응답값을 유지하고 summitted만 false로 전환
     db.query(SurveyResponse).filter(
         SurveyResponse.survey_id == survey.survey_id,
-        SurveyResponse.project_id == project.project_id,
-    ).delete()
+        SurveyResponse.project_id == int(project_id),
+    ).update(
+        {SurveyResponse.summitted: False},
+        synchronize_session=False,
+    )
     db.commit()
     return get_detail(db, survey_id=survey.survey_id, current_user=current_user)
 
 
 def get_stats(db: Session, *, survey_id: int, current_user: User) -> dict:
-    if not is_admin(current_user):
-        raise HTTPException(status_code=403, detail="설문 결과 조회는 관리자만 가능합니다.")
+    if not (is_admin(current_user) or is_coach(current_user)):
+        raise HTTPException(status_code=403, detail="설문 결과 조회는 관리자/코치만 가능합니다.")
     detail = get_detail(db, survey_id=survey_id, current_user=current_user)
     return detail.get("stats") or {
         "response_rates": [],
@@ -670,8 +752,8 @@ def get_stats(db: Session, *, survey_id: int, current_user: User) -> dict:
 
 
 def export_csv(db: Session, *, survey_id: int, current_user: User) -> str:
-    if not is_admin(current_user):
-        raise HTTPException(status_code=403, detail="설문 결과 내보내기는 관리자만 가능합니다.")
+    if not (is_admin(current_user) or is_coach(current_user)):
+        raise HTTPException(status_code=403, detail="설문 결과 내보내기는 관리자/코치만 가능합니다.")
     detail = get_detail(db, survey_id=survey_id, current_user=current_user)
     questions = detail["questions"]
     rows = detail["rows"]

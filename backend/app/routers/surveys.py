@@ -13,6 +13,7 @@ from app.schemas.survey import (
     SurveyCreate,
     SurveyDetailOut,
     SurveyOut,
+    SurveyQuestionBankItemOut,
     SurveyQuestionCreate,
     SurveyQuestionOut,
     SurveyQuestionUpdate,
@@ -45,6 +46,19 @@ def list_surveys(
         db,
         batch_id=batch_id,
         include_hidden=include_hidden,
+        current_user=current_user,
+    )
+
+
+@router.get("/question-bank", response_model=List[SurveyQuestionBankItemOut])
+def list_question_bank(
+    batch_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return survey_service.list_question_bank(
+        db,
+        batch_id=batch_id,
         current_user=current_user,
     )
 

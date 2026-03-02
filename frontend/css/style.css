@@ -1168,6 +1168,10 @@ body::after {
 }
 /* [FEEDBACK7] 설문 페이지 */
 .survey-page { display: grid; gap: 14px; }
+.survey-mode-tabs {
+  display: inline-flex;
+  gap: 8px;
+}
 .survey-board {
   display: grid;
   /* [FEEDBACK7] 설문 목록/상세는 좌우 배치 유지 */
@@ -1284,10 +1288,37 @@ body::after {
   height: 14px;
   margin: 0;
 }
+.survey-action-col {
+  display: grid;
+  gap: 6px;
+}
 .survey-required-missing {
   outline: 2px solid rgba(239, 68, 68, 0.5);
   outline-offset: -2px;
   background: rgba(255, 235, 238, 0.75);
+}
+.survey-reuse-list {
+  max-height: 52vh;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.34);
+}
+.survey-reuse-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+.survey-reuse-item p {
+  margin: 2px 0 0;
 }
 .survey-stats {
   border: 1px solid rgba(255, 255, 255, 0.62);

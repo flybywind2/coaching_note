@@ -82,6 +82,8 @@ class SurveyProjectRowOut(BaseModel):
     representative: Optional[str] = None
     is_my_project: bool = False
     can_edit: bool = False
+    can_cancel: bool = False
+    summitted: bool = False  # [feedback8] 제출 상태 플래그
     answers: dict[str, str] = Field(default_factory=dict)
     multi_answers: dict[str, List[str]] = Field(default_factory=dict)
 
@@ -123,4 +125,16 @@ class SurveyAnswerInput(BaseModel):
 
 class SurveyResponseUpsert(BaseModel):
     project_id: int
+    summitted: bool = True  # [feedback8] true=제출, false=저장(초안)
     answers: List[SurveyAnswerInput] = Field(default_factory=list)
+
+
+class SurveyQuestionBankItemOut(BaseModel):
+    question_id: int
+    survey_id: int
+    survey_title: str
+    question_text: str
+    question_type: str
+    is_required: bool
+    is_multi_select: bool
+    options: List[str] = Field(default_factory=list)

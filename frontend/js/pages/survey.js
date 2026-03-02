@@ -5,11 +5,16 @@
 Pages.survey = {
   async render(el, params = {}) {
     const user = Auth.getUser();
-    if (!user || (user.role !== 'admin' && user.role !== 'participant')) {
+    const isAdmin = user?.role === 'admin';
+    const isCoach = !!(user && ['coach', 'internal_coach', 'external_coach'].includes(user.role));
+    const isParticipant = user?.role === 'participant';
+    if (!user || (!isAdmin && !isCoach && !isParticipant)) {
       el.innerHTML = '<div class="error-state">설문 페이지 접근 권한이 없습니다.</div>';
       return;
     }
-    const isAdmin = user.role === 'admin';
+    const mode = isAdmin
+      ? (String(params.mode || '').toLowerCase() === 'result' ? 'result' : 'builder')
+      : (isCoach ? 'result' : 'respond');
     el.innerHTML = '<div class="loading">로딩 중...</div>';
 
     try {
@@ -36,16 +41,18 @@ Pages.survey = {
         .find(Boolean) || surveys[0] || null;
       const detail = selectedSurvey ? await API.getSurveyDetail(selectedSurvey.survey_id) : null;
 
-      const buildUrl = (batchId, surveyId = null) => {
+      const buildUrl = (batchId, surveyId = null, nextMode = mode) => {
         const q = new URLSearchParams();
         if (batchId != null) q.set('batch_id', String(batchId));
         if (surveyId != null) q.set('survey_id', String(surveyId));
+        if (isAdmin) q.set('mode', nextMode === 'result' ? 'result' : 'builder');
         return `/survey${q.toString() ? `?${q.toString()}` : ''}`;
       };
 
-      const showSurveyList = isAdmin;
-      const emptyText = isAdmin ? '설문이 없습니다.' : '현재 진행중인 설문이 없습니다.';
+      const showSurveyList = !isParticipant;
+      const emptyText = (isAdmin || isCoach) ? '설문이 없습니다.' : '현재 진행중인 설문이 없습니다.';
       const stats = detail?.stats || null;
+      const showManageActions = isAdmin && mode === 'builder';
       el.innerHTML = `
         <div class="page-container survey-page">
           <div class="page-header">
@@ -55,9 +62,15 @@ Pages.survey = {
               <select id="survey-batch-select">
                 ${batches.map((b) => `<option value="${b.batch_id}"${b.batch_id === selectedBatchId ? ' selected' : ''}>${Fmt.escape(b.batch_name)}</option>`).join('')}
               </select>
-              ${isAdmin ? '<button id="survey-add-btn" class="btn btn-secondary">설문 추가</button>' : ''}
+              ${showManageActions ? '<button id="survey-add-btn" class="btn btn-secondary">설문 추가</button>' : ''}
             </div>
           </div>
+          ${isAdmin ? `
+            <div class="survey-mode-tabs">
+              <button id="survey-mode-builder" class="btn btn-sm ${mode === 'builder' ? 'btn-primary' : 'btn-secondary'}">구성 화면</button>
+              <button id="survey-mode-result" class="btn btn-sm ${mode === 'result' ? 'btn-primary' : 'btn-secondary'}">결과 화면</button>
+            </div>
+          ` : ''}
           <div class="card survey-board${showSurveyList ? '' : ' survey-board-respondent'}">
             ${showSurveyList ? `
               <aside class="survey-list">
@@ -79,7 +92,7 @@ Pages.survey = {
                     <p class="hint">설문기간: ${Fmt.escape(String(detail.survey.start_date))} ~ ${Fmt.escape(String(detail.survey.end_date))}</p>
                     <p>${Fmt.escape(detail.survey.description || '설문 설명이 없습니다.')}</p>
                   </div>
-                  ${isAdmin ? `
+                  ${showManageActions ? `
                     <div class="inline-actions">
                       <button id="survey-edit-btn" class="btn btn-sm btn-secondary">수정</button>
                       <button id="survey-toggle-btn" class="btn btn-sm btn-secondary">${detail.survey.is_visible ? '비공개' : '공개'}</button>
@@ -87,37 +100,27 @@ Pages.survey = {
                     </div>
                   ` : ''}
                 </div>
-                <div class="inline-actions mb">
-                  ${isAdmin ? '<button id="survey-add-question-btn" class="btn btn-sm btn-secondary">질문 추가</button>' : ''}
-                  ${isAdmin ? '<button id="survey-export-btn" class="btn btn-sm btn-secondary">CSV 다운로드</button>' : ''}
-                  ${detail.can_answer ? '<span class="hint">필수 문항을 포함해 작성 후 저장하세요.</span>' : '<span class="hint">현재 제출 가능한 설문이 아닙니다.</span>'}
-                </div>
-                ${isAdmin && stats ? this._renderStats(stats) : ''}
-                <div class="survey-table-wrap">
-                  <table class="data-table survey-table">
-                    <thead>
-                      <tr>
-                        <th style="width:210px;">과제명</th>
-                        <th>질문 / 답변</th>
-                        ${detail.can_answer ? '<th style="width:140px;">제출</th>' : ''}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${(detail.rows || []).map((row) => `
-                        <tr data-project-id="${row.project_id}" class="${row.is_my_project ? 'my-row' : ''}">
-                          <td>${Fmt.escape(row.project_name)} ${row.is_my_project ? '<span class="tag">내 과제</span>' : ''}</td>
-                          <td class="survey-qa-col">${this._renderQuestionStack(detail.questions || [], row, { isAdmin })}</td>
-                          ${detail.can_answer
-                            ? `<td>
-                                ${row.can_edit ? '<button class="btn btn-xs btn-primary survey-save-row-btn">저장</button>' : ''}
-                                ${row.can_edit ? '<button class="btn btn-xs btn-secondary survey-cancel-row-btn">제출취소</button>' : ''}
-                              </td>`
-                            : ''}
-                        </tr>
-                      `).join('') || '<tr><td colspan="99" class="empty-state">표시할 과제가 없습니다.</td></tr>'}
-                    </tbody>
-                  </table>
-                </div>
+                ${mode === 'builder' ? `
+                  <div class="inline-actions mb">
+                    <button id="survey-add-question-btn" class="btn btn-sm btn-secondary">질문 추가</button>
+                    <button id="survey-reuse-question-btn" class="btn btn-sm btn-secondary">기존 질문 가져오기</button>
+                  </div>
+                  ${this._renderBuilderQuestionList(detail.questions || [], { isAdmin })}
+                ` : ''}
+                ${mode === 'result' ? `
+                  <div class="inline-actions mb">
+                    <button id="survey-export-btn" class="btn btn-sm btn-secondary">CSV 다운로드</button>
+                    <span class="hint">제출완료(Summitted) 기준으로만 집계/표시됩니다.</span>
+                  </div>
+                  ${stats ? this._renderStats(stats) : ''}
+                  ${this._renderResultTable(detail)}
+                ` : ''}
+                ${mode === 'respond' ? `
+                  <div class="inline-actions mb">
+                    ${detail.can_answer ? '<span class="hint">저장(초안) 후 제출하거나, 제출 후 취소할 수 있습니다.</span>' : '<span class="hint">현재 제출 가능한 설문이 아닙니다.</span>'}
+                  </div>
+                  ${this._renderRespondTable(detail, { isAdmin })}
+                ` : ''}
               ` : `<p class="empty-state">${emptyText}</p>`}
             </section>
           </div>
@@ -128,31 +131,41 @@ Pages.survey = {
         const nextBatchId = Number.parseInt(e.target.value, 10);
         if (!Number.isNaN(nextBatchId)) {
           State.set('currentBatchId', nextBatchId);
-          Router.go(buildUrl(nextBatchId));
+          Router.go(buildUrl(nextBatchId, null, mode));
         }
+      });
+
+      document.getElementById('survey-mode-builder')?.addEventListener('click', () => {
+        Router.go(buildUrl(selectedBatchId, detail?.survey?.survey_id || null, 'builder'));
+      });
+      document.getElementById('survey-mode-result')?.addEventListener('click', () => {
+        Router.go(buildUrl(selectedBatchId, detail?.survey?.survey_id || null, 'result'));
       });
 
       el.querySelectorAll('.survey-item-btn').forEach((btn) => btn.addEventListener('click', () => {
         const surveyId = Number.parseInt(btn.dataset.surveyId, 10);
-        if (!Number.isNaN(surveyId)) Router.go(buildUrl(selectedBatchId, surveyId));
+        if (!Number.isNaN(surveyId)) Router.go(buildUrl(selectedBatchId, surveyId, mode));
       }));
 
       document.getElementById('survey-add-btn')?.addEventListener('click', async () => {
-        await this._openSurveyModal({ batchId: selectedBatchId, onSaved: () => this.render(el, params) });
+        await this._openSurveyModal({
+          batchId: selectedBatchId,
+          onSaved: () => this.render(el, { ...params, mode }),
+        });
       });
       document.getElementById('survey-edit-btn')?.addEventListener('click', async () => {
         if (!detail?.survey) return;
         await this._openSurveyModal({
           survey: detail.survey,
           batchId: selectedBatchId,
-          onSaved: () => this.render(el, { ...params, survey_id: detail.survey.survey_id }),
+          onSaved: () => this.render(el, { ...params, mode, survey_id: detail.survey.survey_id }),
         });
       });
       document.getElementById('survey-toggle-btn')?.addEventListener('click', async () => {
         if (!detail?.survey) return;
         try {
           await API.updateSurvey(detail.survey.survey_id, { is_visible: !detail.survey.is_visible });
-          await this.render(el, { ...params, survey_id: detail.survey.survey_id });
+          await this.render(el, { ...params, mode, survey_id: detail.survey.survey_id });
         } catch (err) {
           alert(err.message || '공개 상태 변경 실패');
         }
@@ -161,13 +174,22 @@ Pages.survey = {
         if (!detail?.survey) return;
         if (!confirm('설문을 삭제하시겠습니까?')) return;
         await API.deleteSurvey(detail.survey.survey_id);
-        await this.render(el, { ...params, survey_id: null });
+        await this.render(el, { ...params, mode, survey_id: null });
       });
       document.getElementById('survey-add-question-btn')?.addEventListener('click', async () => {
         if (!detail?.survey) return;
         await this._openQuestionModal({
           surveyId: detail.survey.survey_id,
-          onSaved: () => this.render(el, { ...params, survey_id: detail.survey.survey_id }),
+          onSaved: () => this.render(el, { ...params, mode, survey_id: detail.survey.survey_id }),
+        });
+      });
+      document.getElementById('survey-reuse-question-btn')?.addEventListener('click', async () => {
+        if (!detail?.survey) return;
+        await this._openQuestionReuseModal({
+          batchId: selectedBatchId,
+          surveyId: detail.survey.survey_id,
+          existingQuestions: detail.questions || [],
+          onSaved: () => this.render(el, { ...params, mode, survey_id: detail.survey.survey_id }),
         });
       });
       document.getElementById('survey-export-btn')?.addEventListener('click', async () => {
@@ -182,7 +204,7 @@ Pages.survey = {
         await this._openQuestionModal({
           surveyId: detail.survey.survey_id,
           question,
-          onSaved: () => this.render(el, { ...params, survey_id: detail.survey.survey_id }),
+          onSaved: () => this.render(el, { ...params, mode, survey_id: detail.survey.survey_id }),
         });
       }));
 
@@ -191,10 +213,25 @@ Pages.survey = {
         if (Number.isNaN(qid) || !detail?.survey) return;
         if (!confirm('질문을 삭제하시겠습니까?')) return;
         await API.deleteSurveyQuestion(qid);
-        await this.render(el, { ...params, survey_id: detail.survey.survey_id });
+        await this.render(el, { ...params, mode, survey_id: detail.survey.survey_id });
       }));
 
       el.querySelectorAll('.survey-save-row-btn').forEach((btn) => btn.addEventListener('click', async () => {
+        if (!detail?.survey) return;
+        const tr = btn.closest('tr[data-project-id]');
+        const projectId = Number.parseInt(tr?.dataset.projectId || '', 10);
+        if (Number.isNaN(projectId) || !tr) return;
+        const { answers } = this._collectRowAnswers(tr, detail.questions || []);
+        this._highlightMissingQuestions(tr, []);
+        try {
+          await API.saveSurveyResponses(detail.survey.survey_id, { project_id: projectId, answers });
+          await this.render(el, { ...params, mode, survey_id: detail.survey.survey_id });
+        } catch (err) {
+          alert(err.message || '설문 저장 실패');
+        }
+      }));
+
+      el.querySelectorAll('.survey-submit-row-btn').forEach((btn) => btn.addEventListener('click', async () => {
         if (!detail?.survey) return;
         const tr = btn.closest('tr[data-project-id]');
         const projectId = Number.parseInt(tr?.dataset.projectId || '', 10);
@@ -206,10 +243,10 @@ Pages.survey = {
           return;
         }
         try {
-          await API.upsertSurveyResponses(detail.survey.survey_id, { project_id: projectId, answers });
-          await this.render(el, { ...params, survey_id: detail.survey.survey_id });
+          await API.submitSurveyResponses(detail.survey.survey_id, { project_id: projectId, answers });
+          await this.render(el, { ...params, mode, survey_id: detail.survey.survey_id });
         } catch (err) {
-          alert(err.message || '설문 저장 실패');
+          alert(err.message || '설문 제출 실패');
         }
       }));
 
@@ -221,7 +258,7 @@ Pages.survey = {
         if (!confirm('제출한 응답을 취소하시겠습니까?')) return;
         try {
           await API.cancelSurveyResponses(detail.survey.survey_id, projectId);
-          await this.render(el, { ...params, survey_id: detail.survey.survey_id });
+          await this.render(el, { ...params, mode, survey_id: detail.survey.survey_id });
         } catch (err) {
           alert(err.message || '제출 취소 실패');
         }
@@ -229,6 +266,87 @@ Pages.survey = {
     } catch (err) {
       el.innerHTML = `<div class="error-state">오류: ${Fmt.escape(err.message || '페이지를 불러올 수 없습니다.')}</div>`;
     }
+  },
+
+  _renderBuilderQuestionList(questions, { isAdmin = false } = {}) {
+    if (!questions.length) return '<p class="empty-state">등록된 질문이 없습니다.</p>';
+    return `
+      <div class="survey-question-stack">
+        ${questions.map((question) => `
+          <div class="survey-question-item" data-question-id="${question.question_id}">
+            <div class="survey-question-head">
+              <div class="survey-q-head">
+                <span>${Fmt.escape(question.question_text)}${question.is_required ? ' <em class="required-mark">*</em>' : ''}</span>
+                <em>${this._questionTypeLabel(question)}</em>
+              </div>
+              ${isAdmin
+                ? `<div class="inline-actions survey-question-tools">
+                    <button class="btn btn-xs btn-secondary survey-edit-question-btn" data-question-id="${question.question_id}">수정</button>
+                    <button class="btn btn-xs btn-danger survey-del-question-btn" data-question-id="${question.question_id}">삭제</button>
+                  </div>`
+                : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  },
+
+  _renderResultTable(detail) {
+    return `
+      <div class="survey-table-wrap">
+        <table class="data-table survey-table">
+          <thead>
+            <tr>
+              <th style="width:210px;">과제명</th>
+              <th>질문 / 답변</th>
+              <th style="width:120px;">상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(detail.rows || []).map((row) => `
+              <tr data-project-id="${row.project_id}" class="${row.is_my_project ? 'my-row' : ''}">
+                <td>${Fmt.escape(row.project_name)} ${row.is_my_project ? '<span class="tag">내 과제</span>' : ''}</td>
+                <td class="survey-qa-col">${this._renderQuestionStack(detail.questions || [], row, { isAdmin: false })}</td>
+                <td>${row.summitted ? '<span class="tag">제출완료</span>' : '<span class="hint">미제출</span>'}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="99" class="empty-state">표시할 과제가 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  },
+
+  _renderRespondTable(detail, { isAdmin = false } = {}) {
+    return `
+      <div class="survey-table-wrap">
+        <table class="data-table survey-table">
+          <thead>
+            <tr>
+              <th style="width:210px;">과제명</th>
+              <th>질문 / 답변</th>
+              <th style="width:180px;">상태/동작</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(detail.rows || []).map((row) => `
+              <tr data-project-id="${row.project_id}" class="${row.is_my_project ? 'my-row' : ''}">
+                <td>${Fmt.escape(row.project_name)} ${row.is_my_project ? '<span class="tag">내 과제</span>' : ''}</td>
+                <td class="survey-qa-col">${this._renderQuestionStack(detail.questions || [], row, { isAdmin })}</td>
+                <td>
+                  <div class="survey-action-col">
+                    ${row.summitted ? '<span class="tag">제출완료</span>' : '<span class="hint">저장중(미제출)</span>'}
+                    ${row.can_edit ? '<button class="btn btn-xs btn-secondary survey-save-row-btn">저장</button>' : ''}
+                    ${row.can_edit ? '<button class="btn btn-xs btn-primary survey-submit-row-btn">제출</button>' : ''}
+                    ${row.can_cancel ? '<button class="btn btn-xs btn-secondary survey-cancel-row-btn">제출취소</button>' : ''}
+                  </div>
+                </td>
+              </tr>
+            `).join('') || '<tr><td colspan="99" class="empty-state">표시할 과제가 없습니다.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
   },
 
   _questionTypeLabel(question) {
@@ -495,6 +613,77 @@ Pages.survey = {
         if (onSaved) onSaved();
       } catch (err) {
         errEl.textContent = err.message || '저장 실패';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  async _openQuestionReuseModal({ batchId, surveyId, existingQuestions = [], onSaved }) {
+    // [feedback8] 기존 질문 재활용 모달
+    let bank = [];
+    try {
+      bank = await API.getSurveyQuestionBank(batchId);
+    } catch (err) {
+      alert(err.message || '질문 목록을 불러오지 못했습니다.');
+      return;
+    }
+    const existingKeys = new Set(
+      existingQuestions.map((q) => `${String(q.question_text || '').trim()}::${String(q.question_type || '').trim()}`)
+    );
+    const rows = (bank || []).filter((row) => {
+      const key = `${String(row.question_text || '').trim()}::${String(row.question_type || '').trim()}`;
+      return !existingKeys.has(key);
+    });
+
+    Modal.open(`
+      <h2>기존 질문 가져오기</h2>
+      <form id="survey-question-reuse-form">
+        <div class="survey-reuse-list">
+          ${rows.length
+            ? rows.map((row) => `
+                <label class="survey-reuse-item">
+                  <input type="checkbox" name="question_ids" value="${row.question_id}" />
+                  <div>
+                    <strong>${Fmt.escape(row.question_text)}</strong>
+                    <p class="hint">${Fmt.escape(row.survey_title)} · ${Fmt.escape(this._questionTypeLabel(row))}</p>
+                  </div>
+                </label>
+              `).join('')
+            : '<p class="empty-state">재활용 가능한 질문이 없습니다.</p>'}
+        </div>
+        <button type="submit" class="btn btn-primary">선택 질문 추가</button>
+        <p id="survey-question-reuse-err" class="form-error" style="display:none;"></p>
+      </form>
+    `, null, { className: 'modal-box-xl' });
+
+    document.getElementById('survey-question-reuse-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const selectedIds = fd.getAll('question_ids').map((v) => Number.parseInt(String(v), 10)).filter((v) => !Number.isNaN(v));
+      const errEl = document.getElementById('survey-question-reuse-err');
+      if (!selectedIds.length) {
+        errEl.textContent = '질문을 1개 이상 선택하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      const selectedRows = rows.filter((row) => selectedIds.includes(Number.parseInt(String(row.question_id), 10)));
+      let nextOrder = (existingQuestions || []).reduce((acc, row) => Math.max(acc, Number.parseInt(String(row.display_order || 0), 10) || 0), 0) + 1;
+      try {
+        for (const row of selectedRows) {
+          await API.createSurveyQuestion(surveyId, {
+            question_text: String(row.question_text || '').trim(),
+            question_type: String(row.question_type || 'subjective'),
+            is_required: !!row.is_required,
+            is_multi_select: !!row.is_multi_select,
+            options: Array.isArray(row.options) ? row.options : [],
+            display_order: nextOrder,
+          });
+          nextOrder += 1;
+        }
+        Modal.close();
+        if (onSaved) onSaved();
+      } catch (err) {
+        errEl.textContent = err.message || '질문 재활용 실패';
         errEl.style.display = 'block';
       }
     });

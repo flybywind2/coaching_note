@@ -194,6 +194,7 @@ const API = {
     if (params.include_hidden != null) q.set('include_hidden', params.include_hidden ? 'true' : 'false');
     return apiFetch(`/api/surveys${q.toString() ? `?${q.toString()}` : ''}`);
   },
+  getSurveyQuestionBank: (batchId) => apiFetch(`/api/surveys/question-bank?batch_id=${encodeURIComponent(String(batchId))}`),
   createSurvey: (data) => apiFetch('/api/surveys', { method: 'POST', body: JSON.stringify(data) }),
   updateSurvey: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteSurvey: (surveyId) => apiFetch(`/api/surveys/${surveyId}`, { method: 'DELETE' }),
@@ -202,6 +203,8 @@ const API = {
   updateSurveyQuestion: (questionId, data) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteSurveyQuestion: (questionId) => apiFetch(`/api/surveys/questions/${questionId}`, { method: 'DELETE' }),
   upsertSurveyResponses: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/responses`, { method: 'PUT', body: JSON.stringify(data) }),
+  saveSurveyResponses: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/responses`, { method: 'PUT', body: JSON.stringify({ ...data, summitted: false }) }),
+  submitSurveyResponses: (surveyId, data) => apiFetch(`/api/surveys/${surveyId}/responses`, { method: 'PUT', body: JSON.stringify({ ...data, summitted: true }) }),
   cancelSurveyResponses: (surveyId, projectId) => apiFetch(`/api/surveys/${surveyId}/responses?project_id=${encodeURIComponent(String(projectId))}`, { method: 'DELETE' }),
   getSurveyStats: (surveyId) => apiFetch(`/api/surveys/${surveyId}/stats`),
   downloadSurveyCsv: async (surveyId) => {

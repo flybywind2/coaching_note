@@ -85,6 +85,7 @@ class SurveyResponse(Base):
     project_id = Column(Integer, ForeignKey("projects.project_id", ondelete="CASCADE"), nullable=False)
     answer_text = Column(Text, nullable=True)
     answer_json = Column(Text, nullable=True)
+    summitted = Column(Boolean, nullable=False, default=False)  # [feedback8] 저장/제출 상태
     responded_by = Column(Integer, ForeignKey("users.user_id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
