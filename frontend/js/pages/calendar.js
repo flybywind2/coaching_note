@@ -324,6 +324,28 @@ Pages.calendar = {
     return text.slice(0, 5);
   },
 
+  _toDateTimeLocalValue(value) {
+    if (!value) return '';
+    const text = String(value);
+    if (text.includes('T')) return text.slice(0, 16);
+    const parsed = new Date(text);
+    if (Number.isNaN(parsed.getTime())) return '';
+    const yyyy = parsed.getFullYear();
+    const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+    const dd = String(parsed.getDate()).padStart(2, '0');
+    const hh = String(parsed.getHours()).padStart(2, '0');
+    const min = String(parsed.getMinutes()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  },
+
+  _isTenMinuteDateTimeLocal(value) {
+    const text = String(value || '');
+    const match = text.match(/T(\d{2}):(\d{2})/);
+    if (!match) return false;
+    const minute = Number.parseInt(match[2], 10);
+    return !Number.isNaN(minute) && minute % 10 === 0;
+  },
+
   _normalizeTimeValue(value) {
     if (!value) return '';
     const text = String(value).trim();
@@ -685,10 +707,13 @@ Pages.calendar = {
       && event.manage_type === 'session'
     );
     const canEdit = (
+      (policy.isAdmin && ['schedule', 'session', 'lecture'].includes(event.manage_type)) // [feedback8] 관리자 캘린더 강의 수정 허용
+      || canManageProjectSession
+    );
+    const canDelete = (
       (policy.isAdmin && ['schedule', 'session'].includes(event.manage_type))
       || canManageProjectSession
     );
-    const canDelete = canEdit;
     // [FEEDBACK7] 강의 일정 상세에서 강의 소개 페이지 링크 제공
     const canOpenLecturePage = event.manage_type === 'lecture' && !!event.link_url;
 
@@ -710,7 +735,7 @@ Pages.calendar = {
       <div class="info-grid">${lines.join('')}</div>
       ${(canEdit || canDelete || canOpenLecturePage) ? `<div class="page-actions">
         ${canOpenLecturePage ? '<button id="cal-open-lecture-btn" class="btn btn-secondary">강의 소개 페이지 이동</button>' : ''}
-        ${canEdit ? '<button id="cal-edit-event-btn" class="btn btn-secondary">일정 수정</button>' : ''}
+        ${canEdit ? `<button id="cal-edit-event-btn" class="btn btn-secondary">${event.manage_type === 'lecture' ? '강의 수정' : '일정 수정'}</button>` : ''}
         ${canDelete ? '<button id="cal-delete-event-btn" class="btn btn-danger">일정 삭제</button>' : ''}
       </div>` : ''}`);
 
@@ -747,6 +772,7 @@ Pages.calendar = {
 
   async _openEventEditModal(event, batchId, policy) {
     const kind = event.manage_type;
+    const isLecture = kind === 'lecture';
     const initialTitle = this._stripProjectPrefix(event.title || '');
     const initialDesc = event.description || '';
     const initialDate = this._toDateInputValue(event.start);
@@ -754,6 +780,11 @@ Pages.calendar = {
     const initialEnd = this._toTimeInputValue(event.end) || initialStart || '11:00';
     const isSchedule = kind === 'schedule';
     const isSession = kind === 'session';
+
+    if (isLecture) {
+      await this._openLectureEditModal(event, batchId, policy);
+      return;
+    }
 
     if (!isSchedule && !isSession) {
       alert('수정할 수 없는 일정 유형입니다.');
@@ -871,6 +902,90 @@ Pages.calendar = {
         await this._renderView(batchId, policy);
       } catch (err) {
         errEl.textContent = err.message || '일정 수정 실패';
+        errEl.style.display = 'block';
+      }
+    });
+  },
+
+  async _openLectureEditModal(event, batchId, policy) {
+    if (!policy.isAdmin) {
+      alert('강의 수정은 관리자만 가능합니다.');
+      return;
+    }
+    let detail = null;
+    try {
+      detail = await API.getLectureDetail(event.id);
+    } catch (err) {
+      alert(err.message || '강의 정보를 불러올 수 없습니다.');
+      return;
+    }
+    const lecture = detail?.lecture;
+    if (!lecture) {
+      alert('강의 정보를 찾을 수 없습니다.');
+      return;
+    }
+
+    // [feedback8] 캘린더에서 관리자 강의 내용을 직접 편집할 수 있는 전용 모달입니다.
+    Modal.open(`
+      <h2>강의 수정</h2>
+      <form id="calendar-lecture-edit-form">
+        <div class="form-group"><label>강의명 *</label><input name="title" required value="${Fmt.escape(lecture.title || '')}" /></div>
+        <div class="form-group"><label>강의 요약</label><textarea name="summary" rows="3">${Fmt.escape(lecture.summary || '')}</textarea></div>
+        <div class="form-group"><label>강의 상세</label><textarea name="description" rows="4">${Fmt.escape(lecture.description || '')}</textarea></div>
+        <div class="form-group"><label>강사</label><input name="instructor" value="${Fmt.escape(lecture.instructor || '')}" /></div>
+        <div class="form-group"><label>장소</label><input name="location" value="${Fmt.escape(lecture.location || '')}" /></div>
+        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" step="600" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture.start_datetime))}" /></div>
+        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" step="600" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture.end_datetime))}" /></div>
+        <div class="form-group"><label>신청 시작일 *</label><input type="date" name="apply_start_date" required value="${Fmt.escape(String(lecture.apply_start_date || ''))}" /></div>
+        <div class="form-group"><label>신청 종료일 *</label><input type="date" name="apply_end_date" required value="${Fmt.escape(String(lecture.apply_end_date || ''))}" /></div>
+        <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" value="${Fmt.escape(String(lecture.capacity_total || ''))}" /></div>
+        <div class="form-group"><label>팀별 정원</label><input type="number" min="1" name="capacity_team" value="${Fmt.escape(String(lecture.capacity_team || ''))}" /></div>
+        <div class="form-group"><label><input type="checkbox" name="is_visible" ${lecture.is_visible !== false ? 'checked' : ''} /> 공개</label></div>
+        <button type="submit" class="btn btn-primary">저장</button>
+        <p id="calendar-lecture-edit-err" class="form-error" style="display:none;"></p>
+      </form>
+    `, null, { className: 'modal-box-xl' });
+
+    document.getElementById('calendar-lecture-edit-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const startDateTime = String(fd.get('start_datetime') || '').trim();
+      const endDateTime = String(fd.get('end_datetime') || '').trim();
+      const payload = {
+        batch_id: lecture.batch_id,
+        title: String(fd.get('title') || '').trim(),
+        summary: String(fd.get('summary') || '').trim() || null,
+        description: String(fd.get('description') || '').trim() || null,
+        instructor: String(fd.get('instructor') || '').trim() || null,
+        location: String(fd.get('location') || '').trim() || null,
+        start_datetime: startDateTime,
+        end_datetime: endDateTime,
+        apply_start_date: String(fd.get('apply_start_date') || '').trim(),
+        apply_end_date: String(fd.get('apply_end_date') || '').trim(),
+        capacity_total: fd.get('capacity_total') ? Number.parseInt(String(fd.get('capacity_total')), 10) : null,
+        capacity_team: fd.get('capacity_team') ? Number.parseInt(String(fd.get('capacity_team')), 10) : null,
+        is_visible: fd.get('is_visible') === 'on',
+      };
+      const errEl = document.getElementById('calendar-lecture-edit-err');
+      errEl.style.display = 'none';
+
+      if (!payload.title || !payload.start_datetime || !payload.end_datetime || !payload.apply_start_date || !payload.apply_end_date) {
+        errEl.textContent = '필수 값을 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (!this._isTenMinuteDateTimeLocal(startDateTime) || !this._isTenMinuteDateTimeLocal(endDateTime)) {
+        errEl.textContent = '강의 시작/종료 시각은 10분 단위로 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      try {
+        await API.updateLecture(lecture.lecture_id, payload);
+        Modal.close();
+        await this._renderView(batchId, policy);
+      } catch (err) {
+        errEl.textContent = err.message || '강의 수정 실패';
         errEl.style.display = 'block';
       }
     });

@@ -196,20 +196,12 @@ Pages.courseRegistration = {
               </div>
               <div class="cr-summary-grid">
                 <div class="cr-summary-item">
-                  <label>총 정원</label>
-                  <strong>${this._formatCapacity(detail.lecture.capacity_total)}</strong>
-                </div>
-                <div class="cr-summary-item">
-                  <label>팀별 정원</label>
-                  <strong>${this._formatCapacity(detail.lecture.capacity_team)}</strong>
-                </div>
-                <div class="cr-summary-item">
-                  <label>신청 인원</label>
-                  <strong>${Fmt.escape(String(detail.lecture.registered_count || 0))}</strong>
-                </div>
-                <div class="cr-summary-item">
-                  <label>승인 인원</label>
-                  <strong>${Fmt.escape(String(detail.lecture.approved_count || 0))}</strong>
+                  <div class="cr-summary-line"> <!-- [feedback8] 강의 상세 지표를 한 줄 배치 -->
+                    <span class="cr-summary-pill"><label>총 정원</label><strong>${this._formatCapacity(detail.lecture.capacity_total)}</strong></span>
+                    <span class="cr-summary-pill"><label>팀별 정원</label><strong>${this._formatCapacity(detail.lecture.capacity_team)}</strong></span>
+                    <span class="cr-summary-pill"><label>신청 인원</label><strong>${Fmt.escape(String(detail.lecture.registered_count || 0))}</strong></span>
+                    ${isAdmin ? `<span class="cr-summary-pill"><label>승인 인원</label><strong>${Fmt.escape(String(detail.lecture.approved_count || 0))}</strong></span>` : ''}
+                  </div>
                 </div>
               </div>
               <div class="cr-body">

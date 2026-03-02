@@ -191,6 +191,15 @@ Pages.admin = {
     return String(value).slice(0, 16);
   },
 
+  _isTenMinuteDateTimeLocal(value) {
+    // [feedback8] 강의 시간 입력은 10분 단위만 허용합니다.
+    const text = String(value || '');
+    const match = text.match(/T(\d{2}):(\d{2})/);
+    if (!match) return false;
+    const minute = Number.parseInt(match[2], 10);
+    return !Number.isNaN(minute) && minute % 10 === 0;
+  },
+
   async _renderLectures(el) {
     const batches = await API.getBatches().catch(() => []);
     if (!batches.length) {
@@ -325,8 +334,8 @@ Pages.admin = {
         <div class="form-group"><label>강의 상세</label><textarea name="description" rows="4">${Fmt.escape(lecture?.description || '')}</textarea></div>
         <div class="form-group"><label>강사</label><input name="instructor" value="${Fmt.escape(lecture?.instructor || '')}" /></div>
         <div class="form-group"><label>장소</label><input name="location" value="${Fmt.escape(lecture?.location || '')}" /></div>
-        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.start_datetime || nowIso))}" /></div>
-        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.end_datetime || nowIso))}" /></div>
+        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" step="600" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.start_datetime || nowIso))}" /></div>
+        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" step="600" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.end_datetime || nowIso))}" /></div>
         <div class="form-group"><label>신청 시작일 *</label><input type="date" name="apply_start_date" required value="${Fmt.escape(String(lecture?.apply_start_date || todayIso))}" /></div>
         <div class="form-group"><label>신청 종료일 *</label><input type="date" name="apply_end_date" required value="${Fmt.escape(String(lecture?.apply_end_date || todayIso))}" /></div>
         <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" value="${Fmt.escape(String(lecture?.capacity_total || ''))}" /></div>
@@ -361,6 +370,11 @@ Pages.admin = {
         errEl.style.display = 'block';
         return;
       }
+      if (!this._isTenMinuteDateTimeLocal(payload.start_datetime) || !this._isTenMinuteDateTimeLocal(payload.end_datetime)) {
+        errEl.textContent = '강의 시작/종료 시각은 10분 단위로 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
       try {
         if (isEdit) await API.updateLecture(lecture.lecture_id, payload);
         else await API.createLecture(payload);
@@ -379,8 +393,8 @@ Pages.admin = {
       <form id="admin-lecture-bulk-form">
         <p class="hint">선택한 ${lectureIds.length}개 강의에 입력한 항목만 반영됩니다.</p>
         <div class="form-group"><label>장소</label><input name="location" placeholder="입력 시 반영" /></div>
-        <div class="form-group"><label>강의 시작</label><input type="datetime-local" name="start_datetime" /></div>
-        <div class="form-group"><label>강의 종료</label><input type="datetime-local" name="end_datetime" /></div>
+        <div class="form-group"><label>강의 시작</label><input type="datetime-local" step="600" name="start_datetime" /></div>
+        <div class="form-group"><label>강의 종료</label><input type="datetime-local" step="600" name="end_datetime" /></div>
         <div class="form-group"><label>신청 시작일</label><input type="date" name="apply_start_date" /></div>
         <div class="form-group"><label>신청 종료일</label><input type="date" name="apply_end_date" /></div>
         <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" /></div>
@@ -420,6 +434,16 @@ Pages.admin = {
       if (isVisibleRaw === 'true') payload.is_visible = true;
       if (isVisibleRaw === 'false') payload.is_visible = false;
       const errEl = document.getElementById('admin-lecture-bulk-err');
+      if (startDateTime && !this._isTenMinuteDateTimeLocal(startDateTime)) {
+        errEl.textContent = '강의 시작 시각은 10분 단위로 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (endDateTime && !this._isTenMinuteDateTimeLocal(endDateTime)) {
+        errEl.textContent = '강의 종료 시각은 10분 단위로 입력하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
 
       if (Object.keys(payload).length === 1) {
         errEl.textContent = '변경할 항목을 1개 이상 입력하세요.';

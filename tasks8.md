@@ -47,17 +47,17 @@
 
 ### Commit 2. 강의 상세 정보 라인 구성 + 캘린더 편집 + 10분 단위 시간 설정
 
-- [ ] 강의 상세 상단 지표를 한 줄로 정렬
+- [x] 강의 상세 상단 지표를 한 줄로 정렬
   - 후보 파일: `frontend/js/pages/courseRegistration.js`, `frontend/css/*`
   - 지표: `총 정원`, `팀별 정원`, `신청 인원`, `승인 인원(관리자만)`
-- [ ] 승인 인원 관리자 전용 표시 규칙 반영
+- [x] 승인 인원 관리자 전용 표시 규칙 반영
   - 후보 파일: `frontend/js/pages/courseRegistration.js`, `backend/app/routers/lectures.py`
-- [ ] 캘린더 내 강의 내용 편집 권한(관리자) 반영
+- [x] 캘린더 내 강의 내용 편집 권한(관리자) 반영
   - 후보 파일: `frontend/js/pages/calendar.js`, `backend/app/routers/calendar.py`, `backend/app/routers/lectures.py`
-- [ ] 강의 시간 10분 단위 제약 적용
+- [x] 강의 시간 10분 단위 제약 적용
   - 후보 파일: `frontend/js/pages/admin.js`, `frontend/js/pages/calendar.js`, `backend/app/services/*lecture*`
   - UI 입력 제약 + 서버 검증 동시 적용
-- [ ] 테스트 보강
+- [x] 테스트 보강
   - 후보 파일: `backend/tests/test_lecture_feedback8_time_and_calendar_edit.py`
 
 ### Commit 3. 설문 구성/결과 화면 분리 + 코치 결과 조회 + 기존 질문 재활용
@@ -107,7 +107,7 @@
 ### Phase B. 기능 구현(커밋 단위)
 
 - [x] Commit 1: 강의리스트/상세 분리 + 카드형 리스트
-- [ ] Commit 2: 강의 상세 지표/권한 + 캘린더 편집 + 10분 단위 제약
+- [x] Commit 2: 강의 상세 지표/권한 + 캘린더 편집 + 10분 단위 제약
 - [ ] Commit 3: 설문 구성/결과 분리 + 코치 결과 조회 + 질문 재활용
 - [ ] Commit 4: 설문 저장/제출/제출취소 DB 동기화
 - [ ] Commit 5: 문서화/주석 점검/최종 정리

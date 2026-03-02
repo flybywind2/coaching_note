@@ -29,6 +29,16 @@ def _validate_ranges(
 ):
     if end_datetime <= start_datetime:
         raise HTTPException(status_code=400, detail="강의 종료 시각은 시작 시각보다 이후여야 합니다.")
+    # [feedback8] 강의 시작/종료 시각은 10분 단위만 허용합니다.
+    if (
+        start_datetime.minute % 10 != 0
+        or end_datetime.minute % 10 != 0
+        or start_datetime.second != 0
+        or end_datetime.second != 0
+        or start_datetime.microsecond != 0
+        or end_datetime.microsecond != 0
+    ):
+        raise HTTPException(status_code=400, detail="강의 시간은 10분 단위로 설정해야 합니다.")
     if apply_end_date < apply_start_date:
         raise HTTPException(status_code=400, detail="신청 종료일은 신청 시작일보다 이전일 수 없습니다.")
 
