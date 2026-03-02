@@ -19,6 +19,7 @@ Router.register('/board/:boardId/post/:postId', (el, p) => Pages.board.renderPos
 Router.register('/project-research', (el, p) => Pages.projectResearch.render(el, p));
 Router.register('/survey', (el, p) => Pages.survey.render(el, p));
 Router.register('/course-registration', (el, p) => Pages.courseRegistration.render(el, p));
+Router.register('/course-registration/lecture/:lectureId', (el, p) => Pages.courseRegistration.render(el, p)); // [feedback8] 강의리스트/상세 경로 분리
 Router.register('/admin', (el, p) => Pages.admin.render(el, p));
 Router.register('/session/:id', (el, p) => Pages.sessionDetail.render(el, p));
 

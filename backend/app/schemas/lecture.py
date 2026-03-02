@@ -64,6 +64,7 @@ class LectureOut(LectureBase):
     updated_at: Optional[datetime] = None
     registered_count: int = 0
     approved_count: int = 0
+    my_registration_status: Optional[str] = None  # [feedback8] 참여자 강의리스트 신청 여부/상태 표시용
 
     model_config = {"from_attributes": True}
 

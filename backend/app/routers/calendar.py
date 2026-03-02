@@ -255,7 +255,7 @@ def get_calendar(
             "is_all_day": False,
             "manage_type": "lecture",
             "scope": "lecture",
-            "link_url": f"#/course-registration?batch_id={lecture.batch_id}&lecture_id={lecture.lecture_id}",
+            "link_url": f"#/course-registration/lecture/{lecture.lecture_id}?batch_id={lecture.batch_id}",  # [feedback8] 강의 상세 화면 직접 진입 링크
         })
 
     # 2. Coaching sessions
