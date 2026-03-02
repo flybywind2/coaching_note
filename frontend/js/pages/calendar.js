@@ -324,28 +324,6 @@ Pages.calendar = {
     return text.slice(0, 5);
   },
 
-  _toDateTimeLocalValue(value) {
-    if (!value) return '';
-    const text = String(value);
-    if (text.includes('T')) return text.slice(0, 16);
-    const parsed = new Date(text);
-    if (Number.isNaN(parsed.getTime())) return '';
-    const yyyy = parsed.getFullYear();
-    const mm = String(parsed.getMonth() + 1).padStart(2, '0');
-    const dd = String(parsed.getDate()).padStart(2, '0');
-    const hh = String(parsed.getHours()).padStart(2, '0');
-    const min = String(parsed.getMinutes()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
-  },
-
-  _isTenMinuteDateTimeLocal(value) {
-    const text = String(value || '');
-    const match = text.match(/T(\d{2}):(\d{2})/);
-    if (!match) return false;
-    const minute = Number.parseInt(match[2], 10);
-    return !Number.isNaN(minute) && minute % 10 === 0;
-  },
-
   _normalizeTimeValue(value) {
     if (!value) return '';
     const text = String(value).trim();
@@ -924,6 +902,10 @@ Pages.calendar = {
       alert('강의 정보를 찾을 수 없습니다.');
       return;
     }
+    const startDate = this._toDateInputValue(lecture.start_datetime);
+    const startTime = this._toTimeInputValue(lecture.start_datetime) || '10:00';
+    const endDate = this._toDateInputValue(lecture.end_datetime);
+    const endTime = this._toTimeInputValue(lecture.end_datetime) || '11:00';
 
     // [feedback8] 캘린더에서 관리자 강의 내용을 직접 편집할 수 있는 전용 모달입니다.
     Modal.open(`
@@ -934,8 +916,14 @@ Pages.calendar = {
         <div class="form-group"><label>강의 상세</label><textarea name="description" rows="4">${Fmt.escape(lecture.description || '')}</textarea></div>
         <div class="form-group"><label>강사</label><input name="instructor" value="${Fmt.escape(lecture.instructor || '')}" /></div>
         <div class="form-group"><label>장소</label><input name="location" value="${Fmt.escape(lecture.location || '')}" /></div>
-        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" step="600" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture.start_datetime))}" /></div>
-        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" step="600" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture.end_datetime))}" /></div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 시작일 *</label><input type="date" name="start_date" required value="${Fmt.escape(startDate)}" /></div>
+          <div><label>시작 시간 *</label><select name="start_time" required>${this._timeOptions(startTime)}</select></div>
+        </div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 종료일 *</label><input type="date" name="end_date" required value="${Fmt.escape(endDate)}" /></div>
+          <div><label>종료 시간 *</label><select name="end_time" required>${this._timeOptions(endTime)}</select></div>
+        </div>
         <div class="form-group"><label>신청 시작일 *</label><input type="date" name="apply_start_date" required value="${Fmt.escape(String(lecture.apply_start_date || ''))}" /></div>
         <div class="form-group"><label>신청 종료일 *</label><input type="date" name="apply_end_date" required value="${Fmt.escape(String(lecture.apply_end_date || ''))}" /></div>
         <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" value="${Fmt.escape(String(lecture.capacity_total || ''))}" /></div>
@@ -949,8 +937,12 @@ Pages.calendar = {
     document.getElementById('calendar-lecture-edit-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const startDateTime = String(fd.get('start_datetime') || '').trim();
-      const endDateTime = String(fd.get('end_datetime') || '').trim();
+      const startDateValue = String(fd.get('start_date') || '').trim();
+      const startTimeValue = String(fd.get('start_time') || '').trim();
+      const endDateValue = String(fd.get('end_date') || '').trim();
+      const endTimeValue = String(fd.get('end_time') || '').trim();
+      const startDateTime = this._toDateTimeString(startDateValue, startTimeValue);
+      const endDateTime = this._toDateTimeString(endDateValue, endTimeValue);
       const payload = {
         batch_id: lecture.batch_id,
         title: String(fd.get('title') || '').trim(),
@@ -971,11 +963,6 @@ Pages.calendar = {
 
       if (!payload.title || !payload.start_datetime || !payload.end_datetime || !payload.apply_start_date || !payload.apply_end_date) {
         errEl.textContent = '필수 값을 입력하세요.';
-        errEl.style.display = 'block';
-        return;
-      }
-      if (!this._isTenMinuteDateTimeLocal(startDateTime) || !this._isTenMinuteDateTimeLocal(endDateTime)) {
-        errEl.textContent = '강의 시작/종료 시각은 10분 단위로 입력하세요.';
         errEl.style.display = 'block';
         return;
       }
