@@ -29,6 +29,16 @@ def _validate_ranges(
 ):
     if end_datetime <= start_datetime:
         raise HTTPException(status_code=400, detail="강의 종료 시각은 시작 시각보다 이후여야 합니다.")
+    # [feedback8] 강의 시작/종료 시각은 10분 단위만 허용합니다.
+    if (
+        start_datetime.minute % 10 != 0
+        or end_datetime.minute % 10 != 0
+        or start_datetime.second != 0
+        or end_datetime.second != 0
+        or start_datetime.microsecond != 0
+        or end_datetime.microsecond != 0
+    ):
+        raise HTTPException(status_code=400, detail="강의 시간은 10분 단위로 설정해야 합니다.")
     if apply_end_date < apply_start_date:
         raise HTTPException(status_code=400, detail="신청 종료일은 신청 시작일보다 이전일 수 없습니다.")
 
@@ -99,6 +109,52 @@ def _attach_stats(lecture: Lecture, stats: dict[str, int]):
     return lecture
 
 
+def _participant_registration_status_map(
+    db: Session,
+    *,
+    lecture_ids: list[int],
+    current_user: User,
+) -> dict[int, str]:
+    # [feedback8] 참여자 강의리스트에서 강의별 신청 여부/상태를 카드에 표시하기 위한 매핑입니다.
+    if not lecture_ids or not is_participant(current_user):
+        return {}
+    my_project_ids = {
+        int(row[0])
+        for row in db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.user_id)
+        .all()
+    }
+    if not my_project_ids:
+        return {}
+    rows = (
+        db.query(LectureRegistration)
+        .filter(
+            LectureRegistration.lecture_id.in_(lecture_ids),
+            LectureRegistration.project_id.in_(my_project_ids),
+        )
+        .all()
+    )
+    if not rows:
+        return {}
+    priority = {"approved": 4, "pending": 3, "rejected": 2, "cancelled": 1}
+    payload: dict[int, str] = {}
+    for row in rows:
+        lecture_id = int(row.lecture_id)
+        status = str(row.approval_status or "").strip().lower()
+        if not status:
+            continue
+        existing = payload.get(lecture_id)
+        if existing is None or priority.get(status, 0) > priority.get(existing, 0):
+            payload[lecture_id] = status
+    return payload
+
+
+def _attach_my_registration_status(lecture: Lecture, status: str | None):
+    # [feedback8] 리스트 응답 모델(LectureOut) 직렬화를 위해 동적 속성으로 주입합니다.
+    setattr(lecture, "my_registration_status", status if status else None)
+    return lecture
+
+
 def list_lectures(
     db: Session,
     *,
@@ -112,8 +168,20 @@ def list_lectures(
     if not is_admin(current_user) or not include_hidden:
         query = query.filter(Lecture.is_visible == True)  # noqa: E712
     rows = query.order_by(Lecture.start_datetime.asc(), Lecture.lecture_id.asc()).all()
-    stats = _stats_map(db, [int(row.lecture_id) for row in rows])
-    return [_attach_stats(row, stats.get(int(row.lecture_id), {})) for row in rows]
+    lecture_ids = [int(row.lecture_id) for row in rows]
+    stats = _stats_map(db, lecture_ids)
+    my_status_map = _participant_registration_status_map(
+        db,
+        lecture_ids=lecture_ids,
+        current_user=current_user,
+    )
+    return [
+        _attach_my_registration_status(
+            _attach_stats(row, stats.get(int(row.lecture_id), {})),
+            my_status_map.get(int(row.lecture_id)),
+        )
+        for row in rows
+    ]
 
 
 def _get_lecture(db: Session, lecture_id: int) -> Lecture:

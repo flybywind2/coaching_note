@@ -19,7 +19,8 @@ const Header = {
       // [FEEDBACK7] 신규 메뉴: 수강신청/과제 조사/설문
       { path: '/course-registration', label: '수강신청', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant', 'observer'] },
       { path: '/project-research', label: '과제 조사', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant'] },
-      { path: '/survey', label: '설문', roles: ['admin', 'participant'] },
+      // [feedback8] 설문 결과 조회 권한을 코치까지 확장
+      { path: '/survey', label: '설문', roles: ['admin', 'coach', 'internal_coach', 'external_coach', 'participant'] },
       { path: '/dashboard', label: '대시보드', roles: ['admin', 'coach', 'internal_coach'] },
       { path: '/admin', label: '관리자', roles: ['admin'] },
     ];

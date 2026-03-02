@@ -191,6 +191,47 @@ Pages.admin = {
     return String(value).slice(0, 16);
   },
 
+  _normalizeTimeValue(value) {
+    const text = String(value || '').trim();
+    const match = text.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return '';
+    const hour = Number.parseInt(match[1], 10);
+    const minute = Number.parseInt(match[2], 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  },
+
+  _timeOptions(selectedValue, { includeEmpty = false } = {}) {
+    // [feedback8] 강의 시간은 선택 단계에서 10분 단위 옵션만 노출합니다.
+    const selected = this._normalizeTimeValue(selectedValue);
+    const options = [];
+    if (includeEmpty) options.push('<option value="">선택</option>');
+    for (let hour = 0; hour < 24; hour += 1) {
+      for (let minute = 0; minute < 60; minute += 10) {
+        const value = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+        options.push(`<option value="${value}"${value === selected ? ' selected' : ''}>${value}</option>`);
+      }
+    }
+    return options.join('');
+  },
+
+  _splitDateTimeParts(value, fallbackDate) {
+    const text = this._toDateTimeLocalValue(value);
+    const [datePart, timePartRaw] = text.split('T');
+    const timePart = this._normalizeTimeValue(timePartRaw || '');
+    return {
+      date: datePart || fallbackDate || '',
+      time: timePart || '10:00',
+    };
+  },
+
+  _combineDateAndTime(dateValue, timeValue) {
+    const safeDate = String(dateValue || '').trim();
+    const safeTime = this._normalizeTimeValue(timeValue || '');
+    if (!safeDate || !safeTime) return '';
+    return `${safeDate}T${safeTime}:00`;
+  },
+
   async _renderLectures(el) {
     const batches = await API.getBatches().catch(() => []);
     if (!batches.length) {
@@ -317,6 +358,8 @@ Pages.admin = {
     const isEdit = !!lecture;
     const nowIso = new Date().toISOString().slice(0, 16);
     const todayIso = new Date().toISOString().slice(0, 10);
+    const startParts = this._splitDateTimeParts(lecture?.start_datetime || nowIso, todayIso);
+    const endParts = this._splitDateTimeParts(lecture?.end_datetime || nowIso, todayIso);
     Modal.open(`
       <h2>${isEdit ? '강의 수정' : '강의 추가'}</h2>
       <form id="admin-lecture-form">
@@ -325,8 +368,14 @@ Pages.admin = {
         <div class="form-group"><label>강의 상세</label><textarea name="description" rows="4">${Fmt.escape(lecture?.description || '')}</textarea></div>
         <div class="form-group"><label>강사</label><input name="instructor" value="${Fmt.escape(lecture?.instructor || '')}" /></div>
         <div class="form-group"><label>장소</label><input name="location" value="${Fmt.escape(lecture?.location || '')}" /></div>
-        <div class="form-group"><label>강의 시작 *</label><input type="datetime-local" name="start_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.start_datetime || nowIso))}" /></div>
-        <div class="form-group"><label>강의 종료 *</label><input type="datetime-local" name="end_datetime" required value="${Fmt.escape(this._toDateTimeLocalValue(lecture?.end_datetime || nowIso))}" /></div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 시작일 *</label><input type="date" name="start_date" required value="${Fmt.escape(startParts.date)}" /></div>
+          <div><label>시작 시간 *</label><select name="start_time" required>${this._timeOptions(startParts.time)}</select></div>
+        </div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 종료일 *</label><input type="date" name="end_date" required value="${Fmt.escape(endParts.date)}" /></div>
+          <div><label>종료 시간 *</label><select name="end_time" required>${this._timeOptions(endParts.time)}</select></div>
+        </div>
         <div class="form-group"><label>신청 시작일 *</label><input type="date" name="apply_start_date" required value="${Fmt.escape(String(lecture?.apply_start_date || todayIso))}" /></div>
         <div class="form-group"><label>신청 종료일 *</label><input type="date" name="apply_end_date" required value="${Fmt.escape(String(lecture?.apply_end_date || todayIso))}" /></div>
         <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" value="${Fmt.escape(String(lecture?.capacity_total || ''))}" /></div>
@@ -340,6 +389,10 @@ Pages.admin = {
     document.getElementById('admin-lecture-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
+      const startDate = String(fd.get('start_date') || '').trim();
+      const startTime = String(fd.get('start_time') || '').trim();
+      const endDate = String(fd.get('end_date') || '').trim();
+      const endTime = String(fd.get('end_time') || '').trim();
       const payload = {
         batch_id: batchId,
         title: String(fd.get('title') || '').trim(),
@@ -347,8 +400,8 @@ Pages.admin = {
         description: String(fd.get('description') || '').trim() || null,
         instructor: String(fd.get('instructor') || '').trim() || null,
         location: String(fd.get('location') || '').trim() || null,
-        start_datetime: String(fd.get('start_datetime') || ''),
-        end_datetime: String(fd.get('end_datetime') || ''),
+        start_datetime: this._combineDateAndTime(startDate, startTime),
+        end_datetime: this._combineDateAndTime(endDate, endTime),
         apply_start_date: String(fd.get('apply_start_date') || ''),
         apply_end_date: String(fd.get('apply_end_date') || ''),
         capacity_total: fd.get('capacity_total') ? Number.parseInt(String(fd.get('capacity_total')), 10) : null,
@@ -379,8 +432,14 @@ Pages.admin = {
       <form id="admin-lecture-bulk-form">
         <p class="hint">선택한 ${lectureIds.length}개 강의에 입력한 항목만 반영됩니다.</p>
         <div class="form-group"><label>장소</label><input name="location" placeholder="입력 시 반영" /></div>
-        <div class="form-group"><label>강의 시작</label><input type="datetime-local" name="start_datetime" /></div>
-        <div class="form-group"><label>강의 종료</label><input type="datetime-local" name="end_datetime" /></div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 시작일</label><input type="date" name="start_date" /></div>
+          <div><label>시작 시간</label><select name="start_time">${this._timeOptions('', { includeEmpty: true })}</select></div>
+        </div>
+        <div class="form-group cal-time-row">
+          <div><label>강의 종료일</label><input type="date" name="end_date" /></div>
+          <div><label>종료 시간</label><select name="end_time">${this._timeOptions('', { includeEmpty: true })}</select></div>
+        </div>
         <div class="form-group"><label>신청 시작일</label><input type="date" name="apply_start_date" /></div>
         <div class="form-group"><label>신청 종료일</label><input type="date" name="apply_end_date" /></div>
         <div class="form-group"><label>총 정원</label><input type="number" min="1" name="capacity_total" /></div>
@@ -404,10 +463,14 @@ Pages.admin = {
       const payload = { lecture_ids: lectureIds };
       const location = String(fd.get('location') || '').trim();
       if (location) payload.location = location;
-      const startDateTime = String(fd.get('start_datetime') || '').trim();
-      if (startDateTime) payload.start_datetime = startDateTime;
-      const endDateTime = String(fd.get('end_datetime') || '').trim();
-      if (endDateTime) payload.end_datetime = endDateTime;
+      const startDate = String(fd.get('start_date') || '').trim();
+      const startTime = String(fd.get('start_time') || '').trim();
+      const endDate = String(fd.get('end_date') || '').trim();
+      const endTime = String(fd.get('end_time') || '').trim();
+      const startDateTime = this._combineDateAndTime(startDate, startTime);
+      const endDateTime = this._combineDateAndTime(endDate, endTime);
+      if (startDate || startTime) payload.start_datetime = startDateTime;
+      if (endDate || endTime) payload.end_datetime = endDateTime;
       const applyStartDate = String(fd.get('apply_start_date') || '').trim();
       if (applyStartDate) payload.apply_start_date = applyStartDate;
       const applyEndDate = String(fd.get('apply_end_date') || '').trim();
@@ -420,7 +483,16 @@ Pages.admin = {
       if (isVisibleRaw === 'true') payload.is_visible = true;
       if (isVisibleRaw === 'false') payload.is_visible = false;
       const errEl = document.getElementById('admin-lecture-bulk-err');
-
+      if ((startDate || startTime) && !startDateTime) {
+        errEl.textContent = '강의 시작일과 시작 시간을 모두 선택하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if ((endDate || endTime) && !endDateTime) {
+        errEl.textContent = '강의 종료일과 종료 시간을 모두 선택하세요.';
+        errEl.style.display = 'block';
+        return;
+      }
       if (Object.keys(payload).length === 1) {
         errEl.textContent = '변경할 항목을 1개 이상 입력하세요.';
         errEl.style.display = 'block';

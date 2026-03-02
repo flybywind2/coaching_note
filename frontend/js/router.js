@@ -10,7 +10,8 @@ const Router = {
     '/coaching-plan': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
     // [FEEDBACK7] 과제 조사/설문 접근 제어
     '/project-research': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'external_coach' || user.role === 'participant')),
-    '/survey': (user) => !!(user && (user.role === 'admin' || user.role === 'participant')),
+    // [feedback8] 설문 결과 조회 권한을 코치까지 확장
+    '/survey': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach' || user.role === 'external_coach' || user.role === 'participant')),
     '/dashboard': (user) => !!(user && (user.role === 'admin' || user.role === 'coach' || user.role === 'internal_coach')),
   },
 

@@ -280,8 +280,10 @@ def test_survey_required_submit_cancel_and_period(client, db, seed_users, seed_b
         for row in cancel_resp.json()["rows"]
         if int(row["project_id"]) == int(my_project.project_id)
     )
-    assert cancelled_row["answers"][str(q1_id)] == ""
-    assert cancelled_row["multi_answers"][str(q2_id)] == []
+    # [feedback8] 제출 취소는 응답값을 유지하고 summitted만 false로 전환
+    assert cancelled_row["answers"][str(q1_id)] == "주관식 답변"
+    assert cancelled_row["multi_answers"][str(q2_id)] == ["A", "B"]
+    assert cancelled_row["summitted"] is False
 
     close_resp = client.put(
         f"/api/surveys/{survey_id}",

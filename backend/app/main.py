@@ -127,6 +127,12 @@ def ensure_schema():
         if "is_batch_private" not in board_post_columns:
             conn.execute(text("ALTER TABLE board_post ADD COLUMN is_batch_private BOOLEAN"))
             conn.execute(text("UPDATE board_post SET is_batch_private = 0 WHERE is_batch_private IS NULL"))
+        # [feedback8] 설문 응답 저장/제출 상태 컬럼 자동 보정
+        survey_response_rows = conn.execute(text("PRAGMA table_info(survey_response)")).fetchall()
+        survey_response_columns = {str(row[1]) for row in survey_response_rows}
+        if "summitted" not in survey_response_columns:
+            conn.execute(text("ALTER TABLE survey_response ADD COLUMN summitted BOOLEAN"))
+            conn.execute(text("UPDATE survey_response SET summitted = 0 WHERE summitted IS NULL"))
 
 
 @app.get("/api/health")
